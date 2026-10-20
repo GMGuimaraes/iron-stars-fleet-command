@@ -530,8 +530,10 @@ func _spawn_bolt(target: Vector3, color: Color) -> void:
 	mesh.height = 0.56
 	bolt.mesh = mesh
 	bolt.material_override = _material(color, 0.0, 0.1, color)
-	bolt.global_position = target + Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1), 3.0)
+	# No tree, no global transform: global_position lida antes de add_child devolve
+	# Transform3D() e imprime um ERROR por salva (medido no smoke headless).
 	add_child(bolt)
+	bolt.global_position = target + Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1), 3.0)
 	var tween := create_tween()
 	tween.tween_property(bolt, "global_position", target, 0.22)
 	tween.tween_callback(bolt.queue_free)
