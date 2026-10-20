@@ -74,6 +74,17 @@ func _initialize() -> void:
 	hostil_perto.position = Vector3(4.5, -0.6, -34.0)
 	await _fotograma(game, "05_casco_perto")
 
+	# 06 — painel em acordeão: a dobra é pintura, e sonda de lógica não mede se o grupo fechado
+	# ainda cabe na janela. A camada de UI volta a ficar visível de propósito: os quadros 04 e 05 a
+	# esconderam.
+	for filho in game.get_children():
+		if filho is CanvasLayer:
+			filho.visible = true
+	game._toggle_grupo("MANOBRA")
+	await _fotograma(game, "06_painel_grupo_aberto")
+	game._toggle_grupo("MANOBRA")
+	await _fotograma(game, "07_painel_recolhido")
+
 	for note in notes:
 		print("SONDA-FOTOGRAMA: " + note)
 	print("SONDA-FOTOGRAMA: veredito • quebras=%d • conferências=%d" % [breaks, notes.size()])

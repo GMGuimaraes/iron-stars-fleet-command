@@ -59,6 +59,13 @@ const HULL_RADIUS := 2.4
 ## Passo lateral de qualquer posto de formação: tem de ficar acima de 2 * HULL_RADIUS, senão a
 ## própria formação dispara o abalroamento que ela deveria evitar.
 const FORMATION_STEP := 5.5
+## Raio do anel de agrupamento: é o passo de formação, não um número menor. Agrupar o mais
+## fechado que a física permite ainda deixa corda de 5,5 entre vizinhos — abaixo disso a ordem
+## de "fechar" produziria um abalroamento em cadeia.
+const AGRUPAR_RAIO := 5.5
+## Dispersar abre para três vezes o passo: o suficiente para um lance concentrado não cobrir dois
+## cascos de uma vez, sem espalhar a força para fora do alcance da própria salva.
+const DISPERSAR_RAIO := 16.5
 const CAPITAL_RADIUS := 6.0
 ## Abalroamento: abaixo desta velocidade de aproximação os cascos apenas se empurram.
 const RAM_SPEED := 3.0
@@ -164,6 +171,15 @@ var position_x_input: SpinBox
 var position_z_input: SpinBox
 var move_x := 0.0
 var move_z := -55.0
+## O painel é um acordeão, não uma lista de dezenove botões: um grupo aberto por vez, e o
+## grupo aberto é o da última ordem que o comandante deu. Vinte botões vistos de uma vez transformam
+## a ponte em formulário — a leitura rápida do quadro vale mais que o acesso simultâneo a tudo.
+var group_heads: Dictionary = {}
+var group_bodies: Dictionary = {}
+var grupo_aberto := "FORMAÇÕES"
+## O corpo do painel mora num `ScrollContainer`: abrir um grupo abaixo da dobra sem rolar até ele
+## deixaria o comandante clicando num cabeçalho que não mostra o que abriu.
+var painel_scroll: ScrollContainer
 ## Leitura da IA hostil, atualizada a cada salva: postura da frota, alvo concentrado e a
 ## frase que a ponte devolve ao comandante. Com `hostile_posture == "AVANÇAR"` a frota
 ## hostil se comporta como antes deste recurso — nenhuma fórmula paralela, só a decisão
@@ -721,6 +737,7 @@ func _build_ui() -> void:
 	scroll.custom_minimum_size = Vector2(372, 600)
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	panel.add_child(scroll)
+	painel_scroll = scroll
 	var col := VBoxContainer.new()
 	col.custom_minimum_size.x = 280
 	col.add_theme_constant_override("separation", 8)
@@ -778,25 +795,40 @@ func _build_ui() -> void:
 	destination_row.add_child(position_x_input)
 	destination_row.add_child(position_z_input)
 	col.add_child(destination_row)
-	_add_button(col, "ATACAR ALVO / SUBSISTEMA", func(): _give_order("ATACAR"))
-	_add_button(col, "MOVER PARA POSIÇÃO", func(): _give_order("MOVER"))
-	_add_button(col, "AVANÇAR", func(): _give_order("AVANÇAR"))
-	_add_button(col, "MANTER POSIÇÃO", func(): _give_order("MANTER"))
-	_add_button(col, "RECUAR", func(): _give_order("RECUAR"))
-	_add_button(col, "CONCENTRAR FOGO", func(): _give_order("ATACAR"))
-	_add_button(col, "ESCOLTAR CAPITÂNIA", func(): _give_order("ESCOLTAR"))
-	_add_button(col, "SONDAS DE RECONHECIMENTO", func(): _give_order("RECONHECER"))
-	_add_button(col, "RESERVA TÁTICA", func(): _give_order("RESERVA"))
-	_add_button(col, "ABORDAR ALVO DANIFICADO", func(): _give_order("ABORDAR"))
-	_add_button(col, "REPAROS: PRIORIDADE MOTORES", func(): _set_repair_priority("MOTORES"))
-	_add_button(col, "REPAROS: PRIORIDADE ARMAS", func(): _set_repair_priority("ARMAS"))
-	_add_button(col, "REPAROS: PRIORIDADE CASCO", func(): _set_repair_priority("CASCO"))
-	_add_button(col, "REPAROS: PRIORIDADE TRIPULAÇÃO", func(): _set_repair_priority("TRIPULAÇÃO"))
-	_add_button(col, "REPAROS: AUTOMÁTICOS", func(): _set_repair_priority("AUTO"))
-	_add_button(col, "FORMAÇÃO: LINHA", func(): _set_formation("LINHA"))
-	_add_button(col, "FORMAÇÃO: COLUNA", func(): _set_formation("COLUNA"))
-	_add_button(col, "FORMAÇÃO: CUNHA", func(): _set_formation("CUNHA"))
-	_add_button(col, "FORMAÇÃO: ANEL", func(): _set_formation("ANEL"))
+	# ---- Grupos recolhíveis. Um clique no cabeçalho abre a categoria; abrir uma fecha a outra.
+	# O botão "CONCENTRAR FOGO" que existia aqui chamava exatamente o mesmo `_give_order("ATACAR")`
+	# do botão de ataque, então era ruído de painel, não comando: saiu de cena com o agrupamento.
+	var grupo_ataque := _add_grupo(col, "ATAQUE")
+	_add_button(grupo_ataque, "ATACAR ALVO / SUBSISTEMA", func(): _give_order("ATACAR"))
+	_add_button(grupo_ataque, "ABORDAR ALVO DANIFICADO", func(): _give_order("ABORDAR"))
+	var grupo_postura := _add_grupo(col, "POSTURA")
+	_add_button(grupo_postura, "AGRESSIVO: AVANÇAR", func(): _give_order("AVANÇAR"))
+	_add_button(grupo_postura, "DEFENSIVO: RECUAR", func(): _give_order("RECUAR"))
+	_add_button(grupo_postura, "MANTER POSIÇÃO", func(): _give_order("MANTER"))
+	_add_button(grupo_postura, "ESCOLTAR CAPITÂNIA", func(): _give_order("ESCOLTAR"))
+	_add_button(grupo_postura, "RESERVA TÁTICA", func(): _give_order("RESERVA"))
+	var grupo_formacao := _add_grupo(col, "FORMAÇÕES")
+	_add_button(grupo_formacao, "LINHA — fogo largo em duas fileiras", func(): _set_formation("LINHA"))
+	_add_button(grupo_formacao, "COLUNA — passagem em fila", func(): _set_formation("COLUNA"))
+	_add_button(grupo_formacao, "CUNHA — ápice adiantado", func(): _set_formation("CUNHA"))
+	_add_button(grupo_formacao, "ANEL — fogo em todas as direções", func(): _set_formation("ANEL"))
+	var grupo_manobra := _add_grupo(col, "MANOBRA")
+	_add_button(grupo_manobra, "MOVER PARA POSIÇÃO", func(): _give_order("MOVER"))
+	_add_button(grupo_manobra, "DISPERSAR TROPAS", func(): _give_order("DISPERSAR"))
+	_add_button(grupo_manobra, "AGRUPAR TROPAS", func(): _give_order("AGRUPAR"))
+	var grupo_reparo := _add_grupo(col, "REPAROS")
+	_add_button(grupo_reparo, "PRIORIDADE MOTORES", func(): _set_repair_priority("MOTORES"))
+	_add_button(grupo_reparo, "PRIORIDADE ARMAS", func(): _set_repair_priority("ARMAS"))
+	_add_button(grupo_reparo, "PRIORIDADE CASCO", func(): _set_repair_priority("CASCO"))
+	_add_button(grupo_reparo, "PRIORIDADE TRIPULAÇÃO", func(): _set_repair_priority("TRIPULAÇÃO"))
+	_add_button(grupo_reparo, "AUTOMÁTICO EQUILIBRADO", func(): _set_repair_priority("AUTO"))
+	var grupo_rec := _add_grupo(col, "RECONHECIMENTO")
+	_add_button(grupo_rec, "SONDAS DE RECONHECIMENTO", func(): _give_order("RECONHECER"))
+	# O grupo aberto na abertura é escolhido aqui, não por `_toggle_grupo`, porque o relatório
+	# ainda não existe nesta altura da montagem do painel.
+	if group_bodies.has(grupo_aberto):
+		(group_bodies[grupo_aberto] as Control).visible = true
+		(group_heads[grupo_aberto] as Button).text = "▾  " + grupo_aberto
 	var hint := Label.new()
 	hint.text = ("W avante  •  S ré (a ré tem teto)\nA / D guinada  •  ↑ / ↓ arfagem  •  "
 		+ "Q / E rolagem\nR sobe  •  V desce  •  ESPAÇO pausa tática")
@@ -990,7 +1022,10 @@ func _update_fleet(delta: float) -> void:
 			continue
 		var mobility: float = 0.25 + float(ally["engines"]) / 100.0 * 0.75
 		var partida := ship.position
-		if ally["order"] == "MOVER" and ally.has("destination"):
+		# MOVER, DISPERSAR e AGRUPAR compartilham o mesmo timão: todos escrevem `destination` e
+		# nenhum teleporta. A diferença entre eles é só a geometria do posto, não a execução.
+		var ordem := String(ally["order"])
+		if (ordem == "MOVER" or ordem == "DISPERSAR" or ordem == "AGRUPAR") and ally.has("destination"):
 			ship.position = ship.position.move_toward(ally["destination"], delta * 8.0 * mobility)
 		elif ally["order"] == "AVANÇAR":
 			ship.position.z -= delta * 1.2 * mobility
@@ -1643,11 +1678,21 @@ func _give_order(order: String) -> void:
 	if order == "MOVER":
 		move_x = position_x_input.value if is_instance_valid(position_x_input) else 0.0
 		move_z = position_z_input.value if is_instance_valid(position_z_input) else -65.0
-	for i in selected:
+	# Dispersar e agrupar são densidade, não desenho: o raio do anel vem da ordem, não da formação.
+	var raio_anel := 0.0
+	if order == "DISPERSAR":
+		raio_anel = DISPERSAR_RAIO
+	elif order == "AGRUPAR":
+		raio_anel = AGRUPAR_RAIO
+	var centro := _centro_selecao(selected) if raio_anel > 0.0 else Vector3.ZERO
+	for k in range(selected.size()):
+		var i: int = selected[k]
 		var unit: Dictionary = fleet[i]
 		unit["order"] = order
 		if order == "MOVER":
 			unit["destination"] = Vector3(move_x + (float(i) - 2.5) * FORMATION_STEP, 0.0, move_z)
+		elif raio_anel > 0.0:
+			unit["destination"] = _anel_posto(k, selected.size(), centro, raio_anel)
 		fleet[i] = unit
 	if order == "ATACAR":
 		report_label.text = "%d unidade(s) atacando %s / %s. Combate contínuo." % [selected.size(), enemies[selected_target]["name"], subsystem_selector.get_item_text(subsystem_selector.selected)]
@@ -1663,6 +1708,9 @@ func _give_order(order: String) -> void:
 		report_label.text = "RESERVA TÁTICA // unidades selecionadas preservam força e posição."
 	elif order == "MOVER":
 		report_label.text = "NAVEGAÇÃO TÁTICA // unidades selecionadas receberam posição de destino."
+	elif order == "DISPERSAR" or order == "AGRUPAR":
+		report_label.text = "%s EM EXECUÇÃO // %d casco(s) navegando para o anel de %.1f u." % [
+			order, selected.size(), raio_anel]
 	else:
 		report_label.text = "ORDEM %s TRANSMITIDA A %d UNIDADE(S). A BATALHA CONTINUA." % [order, selected.size()]
 	_update_hud()
@@ -1776,6 +1824,52 @@ func _set_formation(new_formation: String) -> void:
 	report_label.text = "FORMAÇÃO %s EM EXECUÇÃO // %d casco(s) navegando para os postos." % [
 		new_formation, postos]
 	_update_hud()
+
+## Posto sobre um anel de raio dado — a mesma geometria do ANEL de formação, com o raio vindo por
+## parâmetro. Agrupar e dispersar não são formações (não descrevem um desenho de fogo, descrevem
+## densidade), então entram como ordem de navegação com anel próprio.
+func _anel_posto(posicao: int, total: int, centro: Vector3, raio: float) -> Vector3:
+	if total <= 1:
+		return centro
+	var angulo := float(posicao) / float(total) * TAU
+	return centro + Vector3(cos(angulo) * raio, 0.0, sin(angulo) * raio)
+
+## Abre e fecha um grupo do painel. Abrir um fecha o outro de propósito: com dois abertos a lista
+## volta a ser longa, e o ponto do agrupamento é justamente não mostrar o que não foi pedido.
+func _toggle_grupo(nome: String) -> void:
+	if grupo_aberto == nome:
+		_fecha_grupo(nome)
+		grupo_aberto = ""
+		report_label.text = "PAINEL RECOLHIDO // nenhuma categoria aberta."
+		return
+	if grupo_aberto != "" and group_bodies.has(grupo_aberto):
+		_fecha_grupo(grupo_aberto)
+	grupo_aberto = nome
+	var corpo := group_bodies[nome] as Control
+	corpo.visible = true
+	(group_heads[nome] as Button).text = "▾  " + nome
+	# `call_deferred` porque o corpo acabou de ficar visível: medir o retângulo dele antes do passe
+	# de layout devolveria o tamanho velho (zero, para quem nunca foi mostrado) e a rolagem não
+	# andaria um pixel.
+	if is_instance_valid(painel_scroll):
+		painel_scroll.ensure_control_visible.call_deferred(corpo)
+	report_label.text = "PAINEL: %s. As ordens do grupo estão à vista." % nome
+
+func _fecha_grupo(nome: String) -> void:
+	(group_bodies[nome] as Control).visible = false
+	(group_heads[nome] as Button).text = "▸  " + nome
+
+## Cria o cabeçalho clicável e o corpo vazio do grupo; quem chama adiciona os botões no corpo.
+func _add_grupo(pai: VBoxContainer, nome: String) -> VBoxContainer:
+	var cabecalho := _add_button(pai, "▸  " + nome, func(): _toggle_grupo(nome))
+	cabecalho.add_theme_color_override("font_color", Color(0.42, 0.86, 1.0))
+	group_heads[nome] = cabecalho
+	var corpo := VBoxContainer.new()
+	corpo.add_theme_constant_override("separation", 6)
+	corpo.visible = false
+	pai.add_child(corpo)
+	group_bodies[nome] = corpo
+	return corpo
 
 func _toggle_pause() -> void:
 	paused = not paused
