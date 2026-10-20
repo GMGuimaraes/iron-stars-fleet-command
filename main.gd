@@ -3,6 +3,11 @@ extends Node3D
 const BLUE := Color(0.12, 0.72, 1.0)
 const RED := Color(1.0, 0.22, 0.18)
 const GOLD := Color(1.0, 0.72, 0.28)
+## A frota hostil avança até esta linha e para: engajamento à vista da ponte, não
+## atravesso do tabuleiro.
+const HOSTILE_ADVANCE_Z := -60.0
+## Recuo tem fundo: na linha de reunião a esquadra se reorganiza em vez de sair do mapa.
+const HOSTILE_RALLY_Z := -92.0
 var paused := false
 var throttle := 0.0
 var yaw_rate := 0.0
@@ -32,6 +37,13 @@ var position_x_input: SpinBox
 var position_z_input: SpinBox
 var move_x := 0.0
 var move_z := -55.0
+## Leitura da IA hostil, atualizada a cada salva: postura da frota, alvo concentrado e a
+## frase que a ponte devolve ao comandante. Com `hostile_posture == "AVANÇAR"` a frota
+## hostil se comporta como antes deste recurso — nenhuma fórmula paralela, só a decisão
+## de quem escolhe alvo e posição.
+var hostile_posture := "AVANÇAR"
+var hostile_focus := -1
+var tactical_note := "POSTURA HOSTIL: AVANÇAR"
 
 func _ready() -> void:
 	rng.randomize()
@@ -146,8 +158,12 @@ func _build_fleets() -> void:
 	for i in range(6):
 		var x := (float(i) - 2.5) * 6.0
 		var z := -82.0 - (i % 2) * 7.0
-		var ship := _make_ship(Vector3(x, rng.randf_range(-3, 3), z), RED, 1.1, "HOSTIL %02d" % (i + 1))
-		enemies.append({"node": ship, "order": "AVANÇAR", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "team": "enemy", "name": "HOSTIL %02d" % (i + 1), "squadron": "INIMIGO"})
+		var is_command := i == 0
+		var ship := _make_ship(Vector3(x, rng.randf_range(-3, 3), z), RED, 1.45 if is_command else 1.1, "HOSTIL %02d" % (i + 1))
+		if is_command:
+			# Torre de comando mais alta: é a silhueta que o jogador aprende a procurar.
+			_box(Vector3(0, 1.05, 0.35), Vector3(0.7, 0.95, 1.5), _material(GOLD.darkened(0.35), 0.4, 0.3, GOLD * 0.35), ship)
+		enemies.append({"node": ship, "order": "AVANÇAR", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "team": "enemy", "name": "CAPITÂNIA HOSTIL" if is_command else "HOSTIL %02d" % (i + 1), "squadron": "INIMIGO", "role": "COMANDO" if is_command else "LINE"})
 
 func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: String) -> Node3D:
 	var ship := Node3D.new()
@@ -397,23 +413,151 @@ func _update_fleet(delta: float) -> void:
 			if ally["crew"] < 100.0:
 				ally["crew"] = minf(100.0, float(ally["crew"]) + repair_rate * 0.2)
 		fleet[i] = ally
+	# A escolta hostil estaciona em torno da própria capitânia, então a âncora é lida uma
+	# vez por quadro — não por nave.
+	var hostile_anchor := Vector3.ZERO
+	var hostile_command := _hostile_command_index()
+	if hostile_command >= 0 and is_instance_valid(enemies[hostile_command]["node"]):
+		hostile_anchor = (enemies[hostile_command]["node"] as Node3D).position
 	for enemy in enemies:
 		var foe: Node3D = enemy["node"]
 		if enemy["hp"] <= 0.0 or not is_instance_valid(foe):
 			continue
+		var mobility: float = 0.25 + float(enemy["engines"]) / 100.0 * 0.75
 		if enemy["order"] == "AVANÇAR":
-			foe.position.z += delta * 0.65 * (0.3 + float(enemy["engines"]) / 100.0)
+			foe.position.z += delta * 0.85 * mobility
 		elif enemy["order"] == "RECUAR":
-			foe.position.z -= delta * 0.45
-		if enemy["hp"] < 35.0 and rng.randf() < delta * 0.08:
-			enemy["order"] = "RECUAR"
+			foe.position.z -= delta * 0.45 * mobility
+		elif enemy["order"] == "ESCOLTAR":
+			# Posto alternado pela IA (-3 / +3): duas escoltas no mesmo ponto se tapariam.
+			var side: float = float(enemy.get("escort_offset", 3.0))
+			foe.position = foe.position.move_toward(hostile_anchor + Vector3(side, 0.0, 7.0), delta * 1.1 * mobility)
+		# Qualquer que seja a ordem, o casco hostil fica entre a linha de reunião e a de
+		# avanço: a batalha não migra para fora da vista da ponte.
+		foe.position.z = clampf(foe.position.z, HOSTILE_RALLY_Z, HOSTILE_ADVANCE_Z)
 	if _has_order("RECONHECER"):
 		recon_progress = minf(100.0, recon_progress + delta * 2.0)
+
+func _combat_power(unit: Dictionary) -> float:
+	return float(unit["hp"]) * 0.5 + float(unit["weapons"]) * 0.3 + float(unit["engines"]) * 0.15 + float(unit["crew"]) * 0.05
+
+func _hostile_command_index() -> int:
+	for i in range(enemies.size()):
+		if enemies[i].get("role", "") == "COMANDO":
+			return i
+	return -1
+
+func _enemy_distance(index: int, anchor: Vector3) -> float:
+	var node: Node3D = enemies[index]["node"]
+	return node.global_position.distance_to(anchor)
+
+## Função pura: lê o tabuleiro e devolve a decisão sem mover nada. É por ela que a sonda
+## confere postura e alvo sem depender de frames nem do RNG.
+func _assess_hostiles() -> Dictionary:
+	var hostile_power := 0.0
+	for enemy in enemies:
+		if float(enemy["hp"]) > 0.0 and enemy["order"] != "CAPTURADO":
+			hostile_power += _combat_power(enemy)
+	var friendly_power := 0.0
+	for ally in fleet:
+		if float(ally["hp"]) > 0.0 and ally["order"] != "RESERVA":
+			friendly_power += _combat_power(ally)
+	var ratio := hostile_power / maxf(1.0, hostile_power + friendly_power)
+	var command_index := _hostile_command_index()
+	var command_alive := command_index >= 0 and float(enemies[command_index]["hp"]) > 0.0
+	# Sem capitânia entre os vivos, a esquadra perde coesão: debandada, não manobra.
+	var rout := not command_alive
+	var command_hurt := command_alive and float(enemies[command_index]["hp"]) < 60.0
+	var posture := "AVANÇAR"
+	# 0.42 de força relativa = os hostis valem menos de ~72% do que a linha aliada. Forças
+	# iguais dão 0.50 e ficam em AVANÇAR: sem essa margem a IA recuaria ainda na linha de
+	# partida.
+	if rout or ratio < 0.42:
+		posture = "RECUAR"
+	if command_hurt:
+		posture = "ESCOLTA"
+	return {
+		"hostile_power": hostile_power,
+		"friendly_power": friendly_power,
+		"ratio": ratio,
+		"posture": posture,
+		"command_index": command_index,
+		"command_hurt": command_hurt,
+		"rout": rout,
+	}
+
+## Alvo vulnerável e que ameaça: casco baixo pesa mais, armamento pesado pesa junto, e
+## quem está em reserva tática não é lido como alvo.
+func _hostile_victim_index() -> int:
+	var best := -1
+	var best_value := -1.0
+	for i in range(fleet.size()):
+		var ally: Dictionary = fleet[i]
+		if float(ally["hp"]) <= 0.0 or ally["order"] == "RESERVA":
+			continue
+		var value := (100.0 - float(ally["hp"])) + float(ally["weapons"]) * 0.3
+		if ally["order"] == "ATACAR":
+			value += 25.0
+		if value > best_value:
+			best_value = value
+			best = i
+	if best >= 0:
+		return best
+	for i in range(fleet.size()):
+		if float(fleet[i]["hp"]) > 0.0:
+			return i
+	return -1
+
+## Converte a leitura em ordens, uma vez por salva. Não toca em casco, armamento nem
+## posição: só em `order`, e o resto do combate continua automático.
+func _apply_hostile_tactics() -> void:
+	var read := _assess_hostiles()
+	var previous := hostile_posture
+	hostile_posture = String(read["posture"])
+	var base := hostile_posture if hostile_posture != "ESCOLTA" else "RECUAR"
+	var living: Array[int] = []
+	for i in range(enemies.size()):
+		if float(enemies[i]["hp"]) > 0.0 and enemies[i]["order"] != "CAPTURADO":
+			living.append(i)
+	for i in living:
+		var unit: Dictionary = enemies[i]
+		unit["order"] = base
+		enemies[i] = unit
+	var guards := 0
+	if hostile_posture == "ESCOLTA":
+		var command_index := int(read["command_index"])
+		var anchor: Vector3 = (enemies[command_index]["node"] as Node3D).global_position
+		var near := living.duplicate()
+		near.sort_custom(func(a, b): return _enemy_distance(a, anchor) < _enemy_distance(b, anchor))
+		for i in near:
+			if i == command_index:
+				continue
+			var escort: Dictionary = enemies[i]
+			escort["order"] = "ESCOLTAR"
+			escort["escort_offset"] = -3.0 if guards == 0 else 3.0
+			enemies[i] = escort
+			guards += 1
+			if guards >= 2:
+				break
+	hostile_focus = _hostile_victim_index()
+	var focus_name := "nenhum contato aliado vivo"
+	if hostile_focus >= 0:
+		focus_name = String(fleet[hostile_focus]["name"])
+	if bool(read["rout"]):
+		tactical_note = "POSTURA HOSTIL: DEBACLA // capitânia sem casco; fogo residual em %s" % focus_name
+	elif hostile_posture == "ESCOLTA":
+		tactical_note = "POSTURA HOSTIL: ESCOLTA // %d casco(s) fechando em torno da capitânia; fogo em %s" % [guards, focus_name]
+	else:
+		tactical_note = "POSTURA HOSTIL: %s // %.0f%% de força relativa; fogo em %s" % [hostile_posture, float(read["ratio"]) * 100.0, focus_name]
+	if previous != hostile_posture and is_instance_valid(report_label):
+		report_label.text = "INTELIGÊNCIA // " + tactical_note
 
 func _resolve_volley() -> void:
 	# Primeiro incorpora as presas da salva anterior: a contagem de vitória abaixo lê
 	# `enemies`, e uma presa que ainda consta como hostil adia a batalha para sempre.
 	_integrate_captured_ships()
+	# Depois a IA hostil relê o tabuleiro; a retaliação desta salva usa o alvo escolhido aqui.
+	_apply_hostile_tactics()
 	var living_enemies := 0
 	var living_allies := 0
 	for enemy in enemies:
@@ -493,17 +637,9 @@ func _resolve_volley() -> void:
 	for enemy in enemies:
 		if enemy["order"] == "CAPTURADO" or enemy["hp"] <= 0.0 or enemy["weapons"] <= 0.0:
 			continue
-		var victim_index := -1
-		var lowest_hp := 101.0
-		for i in range(fleet.size()):
-			if fleet[i]["hp"] > 0.0 and fleet[i]["order"] != "RESERVA" and float(fleet[i]["hp"]) < lowest_hp:
-				lowest_hp = float(fleet[i]["hp"])
-				victim_index = i
-		if victim_index < 0:
-			for i in range(fleet.size()):
-				if fleet[i]["hp"] > 0.0:
-					victim_index = i
-					break
+		var victim_index := hostile_focus
+		if victim_index < 0 or victim_index >= fleet.size() or float(fleet[victim_index]["hp"]) <= 0.0:
+			victim_index = _hostile_victim_index()
 		if victim_index < 0:
 			break
 		var victim: Dictionary = fleet[victim_index]
@@ -715,7 +851,7 @@ func _update_hud() -> void:
 				living += 1
 				if item["engines"] < 70.0 or item["weapons"] < 70.0 or item["crew"] < 60.0:
 					damaged += 1
-		command_label.text = "FROTA: %d/%d NAVES | SELEÇÃO: %s\nFORMAÇÃO: %s | DANIFICADAS: %d\nRECONHECIMENTO: %d%%\nESTADO: %s // TEMPO REAL" % [living, fleet.size(), selection_scope, formation, damaged, int(recon_progress), "PAUSADO" if paused else "EM COMBATE"]
+		command_label.text = "FROTA: %d/%d NAVES | SELEÇÃO: %s\nFORMAÇÃO: %s | DANIFICADAS: %d\nRECONHECIMENTO: %d%%\nESTADO: %s // TEMPO REAL\n%s" % [living, fleet.size(), selection_scope, formation, damaged, int(recon_progress), "PAUSADO" if paused else "EM COMBATE", tactical_note]
 	if is_instance_valid(target_selector):
 		for i in range(enemies.size()):
 			var state := "CAPTURADO" if enemies[i]["order"] == "CAPTURADO" else ("CASCO %d%%" % int(enemies[i]["hp"]) if recon_progress >= 20.0 else "CONTATO")
