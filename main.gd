@@ -213,16 +213,12 @@ func _build_ui() -> void:
 	scope_title.text = "UNIDADES SOB COMANDO"
 	col.add_child(scope_title)
 	scope_selector = OptionButton.new()
-	for scope in ["FROTA", "ESQUADRÃO ALFA", "ESQUADRÃO BETA", "NAVE 1", "NAVE 2", "NAVE 3", "NAVE 4", "NAVE 5", "NAVE 6"]:
-		scope_selector.add_item(scope)
 	scope_selector.item_selected.connect(_on_scope_selected)
 	col.add_child(scope_selector)
 	var target_title := Label.new()
 	target_title.text = "ALVO HOSTIL"
 	col.add_child(target_title)
 	target_selector = OptionButton.new()
-	for enemy in enemies:
-		target_selector.add_item(enemy["name"])
 	target_selector.item_selected.connect(_on_target_selected)
 	col.add_child(target_selector)
 	var subsystem_title := Label.new()
@@ -236,9 +232,6 @@ func _build_ui() -> void:
 	protect_title.text = "UNIDADE A PROTEGER / ESCOLTAR"
 	col.add_child(protect_title)
 	protected_selector = OptionButton.new()
-	protected_selector.add_item("CAPITÂNIA")
-	for i in range(fleet.size()):
-		protected_selector.add_item("ALIADA %02d" % (i + 1))
 	protected_selector.item_selected.connect(_on_protected_selected)
 	col.add_child(protected_selector)
 	var destination_title := Label.new()
@@ -291,6 +284,9 @@ func _build_ui() -> void:
 	report_label.text = "PONTE DE COMANDO ONLINE  //  Contatos hostis detectados à frente."
 	report_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	report_panel.add_child(report_label)
+	# Os três seletores leem a frota real; construir os itens por aqui mantém a lista
+	# verdadeira quando uma presa é incorporada.
+	_rebuild_selectors()
 
 func _add_button(parent: Node, text_value: String, action: Callable) -> Button:
 	var button := Button.new()
@@ -415,6 +411,9 @@ func _update_fleet(delta: float) -> void:
 		recon_progress = minf(100.0, recon_progress + delta * 2.0)
 
 func _resolve_volley() -> void:
+	# Primeiro incorpora as presas da salva anterior: a contagem de vitória abaixo lê
+	# `enemies`, e uma presa que ainda consta como hostil adia a batalha para sempre.
+	_integrate_captured_ships()
 	var living_enemies := 0
 	var living_allies := 0
 	for enemy in enemies:
@@ -523,6 +522,79 @@ func _resolve_volley() -> void:
 			report_label.text = "ALERTA // %s foi perdida." % victim["name"]
 		fleet[victim_index] = victim
 
+## Uma presa só vira unidade quando sai de `enemies` e entra em `fleet`: enquanto fica na
+## lista de hostis ela não recebe ordem nenhuma e o jogador assiste à captura de fora.
+func _integrate_captured_ships() -> void:
+	var gained := 0
+	var i := enemies.size() - 1
+	while i >= 0:
+		if enemies[i]["order"] != "CAPTURADO":
+			i -= 1
+			continue
+		var prize: Dictionary = enemies[i]
+		enemies.remove_at(i)
+		prize["team"] = "friendly"
+		prize["order"] = "LINHA"
+		prize["squadron"] = "PRESA"
+		prize["repair_priority"] = "AUTO"
+		prize["name"] = "PRESA %02d" % (fleet.size() + 1)
+		fleet.append(prize)
+		_mark_as_prize(prize["node"] as Node3D)
+		gained += 1
+		i -= 1
+	if gained > 0:
+		_rebuild_selectors()
+		report_label.text = "INCORPORAÇÃO // %d presa(s) sob comando da frota; reparo automático em curso." % gained
+
+func _mark_as_prize(ship: Node3D) -> void:
+	_box(Vector3(0, 0.95, 0.0), Vector3(0.55, 0.4, 0.55), _material(GOLD, 0.3, 0.25, GOLD * 0.8), ship)
+
+## Escopo, alvo e escolta leem os arrays reais. add_item não reemite item_selected, então a
+## escolha do comandante sobrevive à reconstrução enquanto o item correspondente existir.
+func _rebuild_selectors() -> void:
+	if is_instance_valid(scope_selector):
+		var scopes: Array[String] = ["FROTA", "ESQUADRÃO ALFA", "ESQUADRÃO BETA"]
+		for unit in fleet:
+			if unit["squadron"] == "PRESA":
+				scopes.append("ESQUADRÃO PRESA")
+				break
+		for n in range(1, fleet.size() + 1):
+			scopes.append("NAVE %d" % n)
+		scope_selector.clear()
+		for scope in scopes:
+			scope_selector.add_item(scope)
+		var keep_scope := scopes.find(selection_scope)
+		if keep_scope < 0:
+			selection_scope = "FROTA"
+			keep_scope = 0
+		scope_selector.select(keep_scope)
+	if is_instance_valid(target_selector):
+		target_selector.clear()
+		if enemies.is_empty():
+			target_selector.add_item("SEM CONTATO HOSTIL")
+			target_selector.select(0)
+		else:
+			for enemy in enemies:
+				target_selector.add_item(enemy["name"])
+			if selected_target >= enemies.size():
+				selected_target = maxi(0, enemies.size() - 1)
+			target_selector.select(selected_target)
+	if is_instance_valid(protected_selector):
+		var wanted := "CAPITÂNIA"
+		if protected_selector.item_count > 0 and protected_selector.selected >= 0:
+			wanted = protected_selector.get_item_text(protected_selector.selected)
+		protected_selector.clear()
+		protected_selector.add_item("CAPITÂNIA")
+		for unit in fleet:
+			protected_selector.add_item(unit["name"])
+		var keep_prot := 0
+		for idx in range(protected_selector.item_count):
+			if protected_selector.get_item_text(idx) == wanted:
+				keep_prot = idx
+				break
+		protected_selector.select(keep_prot)
+		protected_unit_index = keep_prot - 1
+
 func _spawn_bolt(target: Vector3, color: Color) -> void:
 	var bolt := MeshInstance3D.new()
 	var mesh := SphereMesh.new()
@@ -580,6 +652,8 @@ func _selected_indices() -> Array[int]:
 			include_unit = fleet[i]["squadron"] == "ALFA"
 		elif selection_scope == "ESQUADRÃO BETA":
 			include_unit = fleet[i]["squadron"] == "BETA"
+		elif selection_scope == "ESQUADRÃO PRESA":
+			include_unit = fleet[i]["squadron"] == "PRESA"
 		elif selection_scope.begins_with("NAVE "):
 			include_unit = i == int(selection_scope.trim_prefix("NAVE ")) - 1
 		if include_unit and fleet[i]["hp"] > 0.0:
@@ -641,7 +715,7 @@ func _update_hud() -> void:
 				living += 1
 				if item["engines"] < 70.0 or item["weapons"] < 70.0 or item["crew"] < 60.0:
 					damaged += 1
-		command_label.text = "FROTA: %d/6 NAVES | SELEÇÃO: %s\nFORMAÇÃO: %s | DANIFICADAS: %d\nRECONHECIMENTO: %d%%\nESTADO: %s // TEMPO REAL" % [living, selection_scope, formation, damaged, int(recon_progress), "PAUSADO" if paused else "EM COMBATE"]
+		command_label.text = "FROTA: %d/%d NAVES | SELEÇÃO: %s\nFORMAÇÃO: %s | DANIFICADAS: %d\nRECONHECIMENTO: %d%%\nESTADO: %s // TEMPO REAL" % [living, fleet.size(), selection_scope, formation, damaged, int(recon_progress), "PAUSADO" if paused else "EM COMBATE"]
 	if is_instance_valid(target_selector):
 		for i in range(enemies.size()):
 			var state := "CAPTURADO" if enemies[i]["order"] == "CAPTURADO" else ("CASCO %d%%" % int(enemies[i]["hp"]) if recon_progress >= 20.0 else "CONTATO")

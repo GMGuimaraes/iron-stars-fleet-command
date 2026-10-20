@@ -19,7 +19,7 @@ A batalha nunca espera o jogador. Naves aliadas e inimigas detectam, manobram, a
 - Manter posição e alterar formação.
 - Recuar/fugir.
 - Escoltar e proteger a capitânia ou outra unidade.
-- Abordar e capturar naves inimigas neutralizadas/danificadas.
+- Abordar e capturar naves inimigas neutralizadas/danificadas. A abordagem exige aproximação e casco do alvo em 55% ou menos; ao cair a tripulação inimiga, a nave deixa de ser hostil e entra na frota como unidade controlável (esquadrão PRESA), com armamentos zerados que a própria tripulação de reparo devolve.
 - Manter naves em reserva tática.
 - Reconhecimento e lançamento de sondas.
 
@@ -43,4 +43,17 @@ A batalha nunca espera o jogador. Naves aliadas e inimigas detectam, manobram, a
 - **Painel esquerdo**: selecionar frota, esquadrões ou nave, selecionar alvo/subsistema e emitir ordens.
 
 ## Estado atual e limites
-O projeto usa geometria procedural provisória. É um protótipo mecânico, não uma versão final. Já há seleção da frota/esquadrões/naves, ordens de movimento, ataque por subsistema, escolta, reserva, reconhecimento, prioridades de reparo e uma primeira captura por abordagem. Essas mecânicas são simplificações iniciais e ainda precisam de testes de equilíbrio e de interface. A IA tática avançada, a integração das naves capturadas como unidades controláveis, sondas visíveis, campanha, áudio e arte final continuam pendentes.
+O projeto usa geometria procedural provisória. É um protótipo mecânico, não uma versão final. Já há seleção da frota/esquadrões/naves, ordens de movimento, ataque por subsistema, escolta, reserva, reconhecimento, prioridades de reparo e captura por abordagem com a presa incorporada como unidade controlável. Essas mecânicas são simplificações iniciais e ainda precisam de testes de equilíbrio e de interface. A IA tática avançada, sondas visíveis, campanha, áudio e arte final continuam pendentes.
+
+O tamanho da frota não é mais fixo: os seletores de unidade, alvo e escolta e o HUD são reconstruídos a partir das listas reais quando uma presa é incorporada, e a batalha só termina depois que a incorporação retira o casco da lista de hostis.
+
+## Validação
+Cada mudança mecânica é provada por uma sonda headless antes do commit:
+
+```
+godot --headless --path . --quit-after 1800 -s res://tools/probes/captura.gd
+```
+
+`tools/probes/captura.gd` confere 23 pontos do ciclo de captura — o alvo abordado sai de `enemies` e entra em `fleet` como PRESA mantendo o mesmo nó da cena, obedece a uma ordem dada só ao seu esquadrão sem contaminar o ALFA, sai do fogo hostil, tem os armamentos devolvidos pelo reparo automático, e os três seletores e o HUD passam a contar `7/7` e depois `12` naves quando a batalha inteira termina por captura. Veredito da última rodada: `quebras=0 • conferências=23`, com `--quit-after 1200` no jogo real fechando sem nenhuma linha de `ERROR` ou vazamento de recurso no encerramento.
+
+O protótipo ainda não grava progresso em disco, então as sondas não têm save a corromper; mesmo assim rodam com `APPDATA` apontando para um diretório descartável (`D:/Downloads/tmp-userdata`), que é onde aparece o `app_userdata/Iron Stars- Fleet Command` de teste.
