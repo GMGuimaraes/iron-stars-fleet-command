@@ -18,6 +18,24 @@ const PROBE_LIFE := 30.0
 ## Raio curto de propósito: com a linha hostil espaçada em 6 unidades, uma sonda confirma o
 ## próprio corredor e, no máximo, um vizinho. Cobertura total exige varredura de verdade.
 const PROBE_SCAN_RADIUS := 9.0
+
+## ---- Paleta da batalha (referência: Legend of the Galactic Heroes) ----
+## O anime resolve naves de guerra com aço frio e só uma faixa de cor por nação; o que brilha
+## é o escapamento e a arma, nunca o casco inteiro. Por isso `ACO` é neutro e `BLUE`/`RED`
+## descem para a função de filete e de torreta.
+const ACO := Color(0.34, 0.38, 0.44)
+const ACO_ESCURO := Color(0.11, 0.13, 0.17)
+const CARVAO := Color(0.05, 0.045, 0.055)
+const BRASA := Color(0.72, 0.2, 0.05)
+## Cor de escape: fria na linha aliada, quente na hostil. É a distância que se lê no visor.
+const ESCOAMENTO_ALIADO := Color(0.34, 0.72, 1.0)
+const ESCOAMENTO_HOSTIL := Color(1.0, 0.44, 0.16)
+## Ouro de gala da capitânia — usado em filetes, no mastro e na moldura da ponte.
+const HUD_OURO := Color(0.82, 0.68, 0.34)
+## Offsets fixos da detonação: cinco billets, nenhuma sorteio. Sortear a explosão empurraria a
+## cauda de `rng` igual sorteio de estrela — ver `visual_rng`.
+const DETONACAO: Array[Vector3] = [Vector3(0, 0, 0), Vector3(1.1, 0.5, -0.7), Vector3(-1.2, -0.4, 0.6),
+	Vector3(0.5, -1.0, 1.2), Vector3(-0.7, 0.9, -1.1)]
 var paused := false
 var throttle := 0.0
 var yaw_rate := 0.0
@@ -32,6 +50,23 @@ var speed_label: Label
 var command_label: Label
 var bridge_rig: Node3D
 var rng := RandomNumberGenerator.new()
+## Gerador exclusivo da camada visual. Estrela, tracer ou detrito sorteado por `rng` empurraria
+## a cauda de combate: cada sorteio a mais reescreve todo o dano da salva seguinte (é o que a
+## corrida A/B de `tools/probes/sondas.gd` mede). Nada aqui consome `rng`.
+var visual_rng := RandomNumberGenerator.new()
+## Blips da mesa holográfica: `id do nó lógico` -> `MeshInstance3D`. A mesa espelha o tabuleiro
+## real, então ela é construída a partir das listas vivas e não de um cadastro paralelo.
+var holo_blips: Dictionary = {}
+var holo_root: Node3D
+## Anel que gira sobre a mesa: o movimento é o que denuncia a pausa tática como pausa, não
+## como jogo congelado.
+var holo_anel: Node3D
+## Os quatro materiais dos blips são criados uma vez. O blip troca de material, nunca ganha um
+## novo por quadro — material novo em loop é exatamente como se vaza recurso no encerramento.
+var mat_holo_aliado: StandardMaterial3D
+var mat_holo_hostil: StandardMaterial3D
+var mat_holo_presa: StandardMaterial3D
+var mat_holo_morto: StandardMaterial3D
 var selected_target := 0
 var formation := "LINHA"
 ## Sondas táticas vivas: cada entrada é um nó visível que atravessa o tabuleiro varrendo
@@ -67,9 +102,13 @@ var tactical_note := "POSTURA HOSTIL: AVANÇAR"
 
 func _ready() -> void:
 	rng.randomize()
+	# Semente cravada de propósito: o céu e os fachos são os mesmos em toda partida, e nada do
+	# que se vê depende do sorteio da batalha.
+	visual_rng.seed = 20261020
 	_build_environment()
 	_build_bridge()
 	_build_fleets()
+	_rebuild_holo()
 	# Antes da primeira UI: sem isto a ponte abriria com 0/0 quando o tabuleiro já tem seis
 	# cascos hostis a confirmar.
 	_recompute_recon()
@@ -77,6 +116,9 @@ func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 func _process(delta: float) -> void:
+	# A mesa holográfica continua acesa na pausa tática: é exatamente ali que o comandante
+	# precisa ler o tabuleiro. Nada aqui move casco, motor, arma nem tripulação.
+	_update_bridge(delta)
 	if paused:
 		return
 	battle_clock += delta
@@ -103,107 +145,452 @@ func _input(event: InputEvent) -> void:
 func _build_environment() -> void:
 	var world_env := WorldEnvironment.new()
 	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.003, 0.008, 0.025)
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.18, 0.25, 0.42)
-	env.ambient_light_energy = 0.5
+	# Céu quase preto com horizonte azul-frio: sem SSR e sem SDFI no Compatibility, é a
+	# radiância do céu que dá ao aço do casco o degradê que uma luz ambiente chapada nunca deu.
+	var sky := Sky.new()
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.004, 0.008, 0.02)
+	sky_mat.sky_horizon_color = Color(0.055, 0.11, 0.22)
+	sky_mat.ground_bottom_color = Color(0.004, 0.006, 0.012)
+	sky_mat.ground_horizon_color = Color(0.04, 0.085, 0.17)
+	sky_mat.sky_curve = 0.22
+	sky_mat.ground_curve = 0.24
+	sky_mat.ground_energy_multiplier = 0.6
+	sky.sky_material = sky_mat
+	env.background_mode = Environment.BG_SKY
+	env.background_sky = sky
+	# O ambient é o único "reflexo" que o Compatibility tem de sobra: com o céu preto abaixo,
+	# o aço pintado não recebia nada e o casco afundava no fundo do quadro.
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_energy = 0.85
+	# Névoa rasa: a linha hostil a cem unidades afunda no escuro em vez de chegar à ponte com a
+	# mesma nitidez da capitânia ao lado. Densidade baixa de propósito — céu alto some com mais.
+	env.fog_enabled = true
+	env.fog_light_color = Color(0.05, 0.09, 0.17)
+	env.fog_density = 0.0013
+	env.fog_sky_affect = 0.15
+	# ACES + glow. No Compatibility o glow é a implementação simples (sem níveis nem `glow_map`),
+	# e é dela que vivem os fachos de motor e os lances — por isso os emissivos são ligados
+	# acima de 1,0 em energia: abaixo do limiar o bloom não pega nada.
+	env.tonemap_mode = Environment.TONE_MAPPER_ACES
+	env.tonemap_exposure = 1.25
+	env.glow_enabled = true
+	env.glow_intensity = 0.85
+	env.glow_strength = 0.55
+	env.glow_bloom = 0.05
+	env.glow_hdr_threshold = 1.3
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
 	world_env.environment = env
 	add_child(world_env)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-28, -32, 0)
-	sun.light_color = Color(0.56, 0.72, 1.0)
-	sun.light_energy = 0.65
+	sun.rotation_degrees = Vector3(-24, -36, 0)
+	sun.light_color = Color(0.72, 0.84, 1.0)
+	sun.light_energy = 1.55
+	sun.shadow_enabled = false
 	add_child(sun)
-	# A distant planet provides scale and a memorable first view.
+	# Contraluz frio vindo de trás da linha hostil: é o que separa a silhueta do céu.
+	var rim := DirectionalLight3D.new()
+	rim.rotation_degrees = Vector3(14, 148, 0)
+	rim.light_color = Color(0.35, 0.55, 0.95)
+	rim.light_energy = 0.5
+	rim.shadow_enabled = false
+	add_child(rim)
+	_build_backdrop()
+	_build_starfield()
+
+## O fundo do sistema: um planeta escuro com terminador e uma aurora aditiva no limbo, mais o
+## disco de luz da estrela chave fora de quadro. Escala e leitura de profundidade, não decoração.
+func _build_backdrop() -> void:
 	var planet := MeshInstance3D.new()
 	var sphere := SphereMesh.new()
-	sphere.radius = 18.0
-	sphere.height = 36.0
+	sphere.radius = 22.0
+	sphere.height = 44.0
 	planet.mesh = sphere
-	planet.position = Vector3(38, 10, -145)
+	planet.position = Vector3(42, 8, -165)
 	var pm := StandardMaterial3D.new()
-	pm.albedo_color = Color(0.10, 0.22, 0.42)
-	pm.metallic = 0.2
-	pm.roughness = 0.82
+	pm.albedo_color = Color(0.09, 0.15, 0.26)
+	pm.metallic = 0.05
+	pm.roughness = 0.95
 	pm.emission_enabled = true
-	pm.emission = Color(0.015, 0.07, 0.16)
-	pm.emission_energy_multiplier = 0.6
+	pm.emission = Color(0.008, 0.022, 0.05)
+	pm.emission_energy_multiplier = 1.0
 	planet.material_override = pm
 	add_child(planet)
-	# Procedural starfield: no external assets required.
-	var star_mesh := SphereMesh.new()
-	star_mesh.radius = 0.12
-	star_mesh.height = 0.24
-	var star_mat := StandardMaterial3D.new()
-	star_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	star_mat.albedo_color = Color(0.65, 0.82, 1.0)
-	for i in range(260):
-		var star := MeshInstance3D.new()
-		star.mesh = star_mesh
-		star.material_override = star_mat
-		star.position = Vector3(rng.randf_range(-170, 170), rng.randf_range(-90, 90), rng.randf_range(-220, -45))
-		star.scale = Vector3.ONE * rng.randf_range(0.35, 1.7)
-		add_child(star)
+	# Aurora no limbo: um disco aditivo um pouco maior que o planeta, visto de frente.
+	var haze := _flare(Vector3(42, 8, -164.0), 52.0, Color(0.1, 0.34, 0.62, 0.34), self)
+	haze.rotation_degrees = Vector3.ZERO
+	# A estrela do sistema fica fora do visor, mas o núcleo dela entra pela borda.
+	_flare(Vector3(-118.0, 44.0, -190.0), 30.0, Color(0.85, 0.9, 1.0, 0.55), self)
+
+## Campo de estrelas em um único MultiMesh. Antes eram 260 nós sortidos por `rng`, o que
+## empurrava a cauda de combate antes de a primeira nave existir; agora é uma drawn call e o
+## sorteio é do gerador visual, com semente cravada.
+func _build_starfield() -> void:
+	var stars := MultiMeshInstance3D.new()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	var quad := PlaneMesh.new()
+	quad.size = Vector2(1.0, 1.0)
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.vertex_color_use_as_albedo = true
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	mat.billboard_keep_scale = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.roughness = 1.0
+	quad.material = mat
+	mm.mesh = quad
+	mm.instance_count = 900
+	for i in range(mm.instance_count):
+		var pos := Vector3(visual_rng.randf_range(-280.0, 280.0), visual_rng.randf_range(-150.0, 150.0),
+			visual_rng.randf_range(-340.0, -55.0))
+		var brilho := visual_rng.randf_range(0.2, 1.0)
+		var tam := visual_rng.randf_range(0.3, 1.4)
+		# Um em cada trinta e sete é largo e estoura no glow: são as que dão profundidade ao céu.
+		if i % 37 == 0:
+			tam *= 3.4
+			brilho = minf(1.0, brilho * 1.6)
+		mm.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * tam), pos))
+		mm.set_instance_color(i, Color(brilho, brilho * 1.05, brilho * 1.18))
+	stars.multimesh = mm
+	add_child(stars)
 
 func _build_bridge() -> void:
 	bridge_rig = Node3D.new()
 	bridge_rig.name = "Capitânia - Ponte"
 	add_child(bridge_rig)
-	var floor_mat := _material(Color(0.035, 0.055, 0.085), 0.72, 0.25)
-	var trim_mat := _material(Color(0.08, 0.35, 0.48), 0.45, 0.2, Color(0.02, 0.24, 0.38))
-	_box(Vector3(0, -2.1, 1), Vector3(15, 0.5, 22), floor_mat, bridge_rig)
-	_box(Vector3(0, 5.2, -7), Vector3(15, 0.5, 0.7), floor_mat, bridge_rig)
-	_box(Vector3(-7.1, 1.0, -7), Vector3(0.55, 7, 0.65), floor_mat, bridge_rig)
-	_box(Vector3(7.1, 1.0, -7), Vector3(0.55, 7, 0.65), floor_mat, bridge_rig)
-	_box(Vector3(0, 4.8, -7), Vector3(14.5, 0.16, 0.22), trim_mat, bridge_rig)
-	# Sloped command consoles frame the tactical view.
-	for side in [-1.0, 1.0]:
-		var console := _box(Vector3(side * 3.6, -0.8, -0.4), Vector3(3.0, 0.32, 2.0), floor_mat, bridge_rig)
-		console.rotation.x = -0.12
-		_box(Vector3(side * 3.6, -0.61, -0.4), Vector3(2.3, 0.035, 1.25), trim_mat, bridge_rig)
-		for i in range(4):
-			_box(Vector3(side * 3.0 + i * side * 0.32, -0.57, -0.35), Vector3(0.12, 0.025, 0.45), _material(BLUE, 0.2, 0.1, BLUE), bridge_rig)
-	# Camera sits behind the forward command rail.
+	var piso := _material(Color(0.03, 0.045, 0.07), 0.62, 0.38)
+	var casco_ponte := _material(Color(0.045, 0.062, 0.09), 0.5, 0.48)
+	var trim := _material(Color(0.1, 0.14, 0.2), 0.55, 0.42)
+	# Ouro é acento de filete, não luminária: a 0.45 de emissão ele competia com a holografia e a
+	# ponte virava cenário de neon. LotGH usa o dourado na régua, discreto.
+	var ouro := _material(HUD_OURO.darkened(0.62), 0.6, 0.34, HUD_OURO * 0.2)
+	var tela := _material(Color(0.02, 0.06, 0.09), 0.2, 0.6, Color(0.03, 0.22, 0.34))
+	# Costado, soalho e teto: sem eles a câmera flutua no vácuo em vez de estar dentro de um
+	# navio. Tudo fecha no anteparo de vante, onde o visor se abre.
+	_box(Vector3(0, -2.1, 2.2), Vector3(15, 0.5, 20), piso, bridge_rig)
+	_box(Vector3(0, 5.4, 2.2), Vector3(15, 0.4, 20), casco_ponte, bridge_rig)
+	for lado in [-1.0, 1.0]:
+		_box(Vector3(lado * 7.4, 1.6, 2.2), Vector3(0.5, 8, 20), casco_ponte, bridge_rig)
+		_box(Vector3(lado * 7.1, 3.4, 2.2), Vector3(0.14, 0.1, 19.4), ouro, bridge_rig)
+	# Anteparo de vante com o visor escancarado: verga, peitoril e montantes, moldura em ouro.
+	_box(Vector3(0, 4.65, -7.6), Vector3(15, 1.7, 0.55), casco_ponte, bridge_rig)
+	_box(Vector3(0, -1.9, -7.6), Vector3(15, 1.4, 0.55), casco_ponte, bridge_rig)
+	for lado in [-1.0, 1.0]:
+		_box(Vector3(lado * 7.15, 1.5, -7.6), Vector3(0.9, 7.2, 0.55), casco_ponte, bridge_rig)
+	_box(Vector3(0, 3.68, -7.75), Vector3(13.4, 0.13, 0.2), ouro, bridge_rig)
+	_box(Vector3(0, -1.05, -7.75), Vector3(13.4, 0.13, 0.2), ouro, bridge_rig)
+	for lado in [-1.0, 1.0]:
+		_box(Vector3(lado * 2.3, 1.3, -7.7), Vector3(0.11, 4.7, 0.16), trim, bridge_rig)
+	# O vidro quase não existe: só o brilho do canto, para a moldura segurar o quadro sem
+	# esconder a batalha.
+	var vidro := StandardMaterial3D.new()
+	vidro.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	vidro.albedo_color = Color(0.3, 0.55, 0.8, 0.05)
+	vidro.metallic = 0.85
+	vidro.roughness = 0.08
+	vidro.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_box(Vector3(0, 1.3, -7.85), Vector3(13.2, 4.6, 0.05), vidro, bridge_rig)
+	# Postos de trabalho em duas linhas de cada bordo: o console inclinado e a tela de leitura.
+	for lado in [-1.0, 1.0]:
+		for profundidade in [-0.8, -3.6]:
+			var console := _box(Vector3(lado * 4.4, -0.85, profundidade), Vector3(3.4, 0.3, 2.1),
+				trim, bridge_rig)
+			console.rotation.x = -0.14
+			_box(Vector3(lado * 4.4, -0.62, profundidade), Vector3(2.7, 0.04, 1.4), tela, bridge_rig)
+			for tecla in range(5):
+				_box(Vector3(lado * 4.4 + (float(tecla) - 2.0) * 0.44 * lado, -0.58, profundidade - 0.45),
+					Vector3(0.16, 0.03, 0.5), _material(BLUE, 0.2, 0.3, BLUE * 0.4), bridge_rig)
+	# trilho de comando abaixo do visor, onde a ponte apoia o olhar. A régua passa abaixo da
+	# linha de vista da mesa: a 8 unidades de largura e y -1.1 ela fatiava a holografia ao meio
+	# e escondia a segunda fila de blips, que é justamente a do inimigo.
+	_box(Vector3(0, -1.66, -2.2), Vector3(6.6, 0.18, 0.35), ouro, bridge_rig)
+	_build_holo_table()
+	# Luz de trabalho: âmbar sobre os postos, fria sob a holografia. Sem sombra — o
+	# Compatibility não shadowa, e ligar shadow aqui só imprimisse aviso por luz.
+	var lampada := OmniLight3D.new()
+	lampada.position = Vector3(0, 4.2, 1.5)
+	lampada.light_color = Color(0.95, 0.72, 0.4)
+	lampada.light_energy = 0.55
+	lampada.omni_range = 14.0
+	lampada.shadow_enabled = false
+	bridge_rig.add_child(lampada)
+	var fria := OmniLight3D.new()
+	fria.position = Vector3(0, -0.6, -2.6)
+	fria.light_color = Color(0.35, 0.8, 1.0)
+	fria.light_energy = 0.5
+	fria.omni_range = 8.0
+	fria.shadow_enabled = false
+	bridge_rig.add_child(fria)
+	# Câmera atrás do trilho de comando: o parapeito entra no quadro como moldura inferior.
 	var camera := Camera3D.new()
 	camera.name = "BridgeCamera"
 	camera.position = Vector3(0, 1.0, 3.0)
 	camera.rotation_degrees = Vector3(-3, 0, 0)
 	camera.fov = 78
 	bridge_rig.add_child(camera)
-	_box(Vector3(0, -1.1, -2.2), Vector3(8, 0.18, 0.35), trim_mat, bridge_rig)
+
+## Mesa holográfica de ponte: disco, anéis e o cone do projetor. Os blips não são decoração —
+## `_rebuild_holo` os monta a partir das listas vivas, então a mesa mostra exatamente a frota
+## que o HUD conta.
+func _build_holo_table() -> void:
+	var base := _material(Color(0.04, 0.06, 0.085), 0.75, 0.35)
+	_cylinder(Vector3(0, -1.52, -2.6), 3.05, 3.05, 0.14, base, bridge_rig, Vector3.ZERO, 24)
+	for lado in [-1.0, 1.0]:
+		_box(Vector3(lado * 2.6, -1.0, -1.4), Vector3(0.16, 1.1, 0.16), base, bridge_rig)
+		_box(Vector3(lado * 2.6, -1.0, -3.8), Vector3(0.16, 1.1, 0.16), base, bridge_rig)
+	var aro := MeshInstance3D.new()
+	var toro := TorusMesh.new()
+	toro.inner_radius = 2.95
+	toro.outer_radius = 3.1
+	aro.mesh = toro
+	aro.position = Vector3(0, -1.44, -2.6)
+	aro.material_override = _material(HUD_OURO.darkened(0.5), 0.8, 0.3, HUD_OURO * 0.6)
+	bridge_rig.add_child(aro)
+	holo_anel = Node3D.new()
+	holo_anel.position = Vector3(0, -1.4, -2.6)
+	bridge_rig.add_child(holo_anel)
+	for raio in [1.0, 1.9, 2.75]:
+		var anel := MeshInstance3D.new()
+		var torus := TorusMesh.new()
+		torus.inner_radius = raio - 0.035
+		torus.outer_radius = raio + 0.035
+		anel.mesh = torus
+		anel.material_override = _material(Color(0.1, 0.5, 0.7), 0.1, 0.4, Color(0.12, 0.62, 0.85))
+		holo_anel.add_child(anel)
+	# Cone do projetor: o volume de luz que sai do disco e segura os blips no ar.
+	var cone := _cylinder(Vector3(0, -0.85, -2.6), 2.7, 0.35, 1.2, _glasm(Color(0.2, 0.62, 0.9, 0.07)),
+		bridge_rig, Vector3.ZERO, 24)
+	cone.rotation.x = PI
+	holo_root = Node3D.new()
+	holo_root.name = "Blips"
+	holo_root.position = Vector3(0, -1.34, -2.6)
+	bridge_rig.add_child(holo_root)
+	mat_holo_aliado = _holo_mat(ESCOAMENTO_ALIADO)
+	mat_holo_hostil = _holo_mat(Color(1.0, 0.34, 0.24))
+	mat_holo_presa = _holo_mat(GOLD)
+	mat_holo_morto = _holo_mat(Color(0.22, 0.24, 0.28))
+
+func _holo_mat(cor: Color) -> StandardMaterial3D:
+	# Emissão abaixo do limiar de bloom de propósito: o blip tem de ler como holograma colorido
+	# da própria facção, não como lâmpada. A 1,6× o ACES estourava tudo em branco e a mesa
+	# perdia a única informação que ela carrega — de que lado é o contato.
+	return _material(cor.darkened(0.3), 0.0, 0.6, cor * 0.45)
+
+func _glasm(cor: Color) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.albedo_color = cor
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return mat
+
+## Posição de tabuleiro -> posição na mesa: o mesmo mundo, escalado para caber sob o visor.
+func _holo_de(pos: Vector3) -> Vector3:
+	return Vector3(pos.x * 0.16, 0.1, (pos.z + 66.0) * 0.045)
+
+func _rebuild_holo() -> void:
+	if not is_instance_valid(holo_root):
+		return
+	for blip in holo_blips.values():
+		var ping: MeshInstance3D = blip
+		if is_instance_valid(ping):
+			ping.queue_free()
+	holo_blips.clear()
+	for grupo in [fleet, enemies]:
+		for unit in grupo:
+			var node: Node3D = unit["node"]
+			if not is_instance_valid(node):
+				continue
+			var ping := _cylinder(_holo_de(node.position), 0.085, 0.0, 0.22, mat_holo_aliado,
+				holo_root, Vector3.ZERO, 6)
+			holo_blips[node.get_instance_id()] = ping
+
+func _atualiza_blip(unit: Dictionary, aliada: bool) -> void:
+	var node: Node3D = unit["node"]
+	if not is_instance_valid(node) or not holo_blips.has(node.get_instance_id()):
+		return
+	var ping: MeshInstance3D = holo_blips[node.get_instance_id()]
+	ping.position = _holo_de(node.position)
+	if float(unit["hp"]) <= 0.0:
+		ping.material_override = mat_holo_morto
+	elif String(unit.get("squadron", "")) == "PRESA":
+		ping.material_override = mat_holo_presa
+	else:
+		ping.material_override = mat_holo_aliado if aliada else mat_holo_hostil
+
+## Acorda a ponte: anel girando e blip em dia com o tabuleiro. Roda também na pausa, porque a
+## mesa existe para o comandante ler a batalha enquanto dá ordem.
+func _update_bridge(_delta: float) -> void:
+	if not is_instance_valid(holo_root):
+		return
+	holo_anel.rotation.y += _delta * 0.32
+	for unit in fleet:
+		_atualiza_blip(unit, true)
+	for unit in enemies:
+		_atualiza_blip(unit, false)
 
 func _build_fleets() -> void:
 	for i in range(6):
 		var x := (float(i) - 2.5) * 5.0
 		var z := -38.0 - (i % 2) * 5.0
-		var ship := _make_ship(Vector3(x, rng.randf_range(-2, 2), z), BLUE, 1.0 + float(i % 3) * 0.12, "ALIADA %02d" % (i + 1))
+		var ship := _make_ship(Vector3(x, rng.randf_range(-2, 2), z), BLUE,
+			1.1 + float(i % 3) * 0.06, "ALIADA %02d" % (i + 1))
 		fleet.append({"node": ship, "order": "LINHA", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "repair_priority": "AUTO", "team": "friendly", "name": "ALIADA %02d" % (i + 1), "squadron": "ALFA" if i < 3 else "BETA"})
 	for i in range(6):
 		var x := (float(i) - 2.5) * 6.0
 		var z := -82.0 - (i % 2) * 7.0
 		var is_command := i == 0
-		var ship := _make_ship(Vector3(x, rng.randf_range(-3, 3), z), RED, 1.45 if is_command else 1.1, "HOSTIL %02d" % (i + 1))
-		if is_command:
-			# Torre de comando mais alta: é a silhueta que o jogador aprende a procurar.
-			_box(Vector3(0, 1.05, 0.35), Vector3(0.7, 0.95, 1.5), _material(GOLD.darkened(0.35), 0.4, 0.3, GOLD * 0.35), ship)
+		var ship := _make_ship(Vector3(x, rng.randf_range(-3, 3), z), RED,
+			1.55 if is_command else 1.3, "HOSTIL %02d" % (i + 1), is_command)
 		enemies.append({"node": ship, "order": "AVANÇAR", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "team": "enemy", "name": "CAPITÂNIA HOSTIL" if is_command else "HOSTIL %02d" % (i + 1), "squadron": "INIMIGO", "role": "COMANDO" if is_command else "LINE"})
 
-func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: String) -> Node3D:
+## Casco de linha em leitura Legend of the Galactic Heroes: aço neutro, um só filete de cor por
+## nação, e o brilho guardado para motor e torre — nunca para o casco inteiro. Toda a geometria
+## mora num filho "Casco": o nó raiz continua sendo a peça de xadrez que a sonda assina, e o
+## balanço visual acontece no filho, sem mover um centímetro de tabuleiro.
+func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: String,
+		comando := false) -> Node3D:
 	var ship := Node3D.new()
+	ship.name = ship_name
 	ship.position = pos
 	ship.scale = Vector3.ONE * scale_factor
 	add_child(ship)
-	var hull_mat := _material(color.darkened(0.58), 0.62, 0.3)
-	var edge_mat := _material(color, 0.25, 0.22, color * 0.55)
-	_box(Vector3(0, 0, 0), Vector3(2.3, 0.7, 5.4), hull_mat, ship)
-	_box(Vector3(0, 0.42, -0.65), Vector3(1.0, 0.3, 1.5), edge_mat, ship)
-	_box(Vector3(0, 0.02, -3.0), Vector3(0.65, 0.42, 1.5), hull_mat, ship)
-	_box(Vector3(-1.55, -0.05, 0.6), Vector3(1.0, 0.16, 2.7), edge_mat, ship)
-	_box(Vector3(1.55, -0.05, 0.6), Vector3(1.0, 0.16, 2.7), edge_mat, ship)
-	for side in [-1.0, 1.0]:
-		_box(Vector3(side * 0.62, 0.0, 2.78), Vector3(0.32, 0.32, 0.15), _material(Color(0.15, 0.8, 1.0), 0.1, 0.1, Color(0.1, 0.7, 1.0)), ship)
+	var casco := Node3D.new()
+	casco.name = "Casco"
+	ship.add_child(casco)
+	var escape := ESCOAMENTO_HOSTIL if color == RED else ESCOAMENTO_ALIADO
+	# Metal abaixo de 0.5 de propósito: no Compatibility a superfície metálica só brilha com
+	# reflexão, e o nosso ambient é um céu quase preto. A 0.72 o casco não recebia o sol e a
+	# linha inteira virava ponto de motor no escuro — o aço precisa de difusa para ter volume.
+	var mat_hull := _material(ACO, 0.28, 0.62)
+	var mat_steel := _material(ACO_ESCURO, 0.42, 0.5)
+	var mat_trim := _material(color.darkened(0.35), 0.5, 0.3, color * 0.7)
+	var mat_gun := _material(ACO_ESCURO.lightened(0.12), 0.8, 0.3, color * 0.4)
+	var mat_engine := _material(escape.darkened(0.65), 0.6, 0.3, escape)
+	var mat_flare := _glasm(Color(escape, 0.55))
+	var mat_luz := _glasm(Color(escape, 0.75))
+	var plumas: Array[MeshInstance3D] = []
+	# Espinha comprida: é o volume que lê a nave como lâmina mesmo de fora do visor.
+	_box(Vector3(0, 0, 0), Vector3(1.5, 0.66, 5.4), mat_hull, casco)
+	# Proa em cone: sem caixa no nariz, a silhueta afila.
+	_cylinder(Vector3(0, 0, -4.02), 0.74, 0.05, 2.6, mat_hull, casco, Vector3(-PI / 2, 0, 0), 8)
+	_box(Vector3(0, 0.02, 2.5), Vector3(1.9, 0.78, 1.4), mat_steel, casco)
+	_box(Vector3(0, 0.5, -0.8), Vector3(0.78, 0.34, 3.3), mat_steel, casco)
+	# Torre de comando: na capitânia ela sobe e leva o mastro dourado, a silhueta que se
+	# aprende a procurar no meio da linha.
+	if comando:
+		_box(Vector3(0, 1.05, 0.25), Vector3(0.7, 0.95, 1.45), mat_hull, casco)
+		_box(Vector3(0, 1.75, 0.25), Vector3(0.16, 0.75, 0.16),
+			_material(HUD_OURO.darkened(0.3), 0.6, 0.28, HUD_OURO * 0.5), casco)
+	else:
+		_box(Vector3(0, 0.86, 0.25), Vector3(0.62, 0.5, 1.15), mat_hull, casco)
+	for lado in [-1.0, 1.0]:
+		# Asa varrida para trás: o ângulo é o que separa cruzador de tijolo. A largura é a
+		# conta: a linha fecha a 5 unidades de passo, então casco com envergadura acima de
+		# ~4 unidades faz a frota se sobrepor e o tabuleiro vira uma mancha só.
+		var asa := _box(Vector3(lado * 1.28, -0.02, 0.75), Vector3(1.5, 0.15, 2.6), mat_hull, casco)
+		asa.rotation.y = lado * 0.42
+		var filete := _box(Vector3(lado * 1.32, 0.09, 0.75), Vector3(1.42, 0.06, 0.34), mat_trim, casco)
+		filete.rotation.y = lado * 0.42
+		# Nacele gêmea, bocal fechado e pluma por trás do bocal.
+		_cylinder(Vector3(lado * 1.72, 0.14, 1.5), 0.28, 0.2, 3.4, mat_steel, casco,
+			Vector3(-PI / 2, 0, 0), 8)
+		_cylinder(Vector3(lado * 1.72, 0.14, 3.35), 0.2, 0.17, 0.4, mat_engine, casco,
+			Vector3(-PI / 2, 0, 0), 8)
+		plumas.append(_quad(Vector3(lado * 1.72, 0.14, 3.9), 0.8, mat_flare, casco))
+	# Torres por toda a dorsal: é a parte que acende com o `weapons` e apaga com ele.
+	for z in [-1.9, -0.4, 1.1, 2.0]:
+		_box(Vector3(0, 0.72, z), Vector3(0.4, 0.2, 0.6), mat_gun, casco)
+	# Luz de proa: o mesmo billete da pluma, com material próprio para a presa reacender azul.
+	_quad(Vector3(0, 0.0, -3.2), 0.3, mat_luz, casco)
+	ship.set_meta("casco", casco)
+	ship.set_meta("mat", {"hull": mat_hull, "steel": mat_steel, "trim": mat_trim,
+		"gun": mat_gun, "engine": mat_engine, "flare": mat_flare, "luz": mat_luz})
+	ship.set_meta("escape", escape)
+	ship.set_meta("plumas", plumas)
+	# O hostil encara a linha aliada: -Z é a proa de quem ataca, então a frota de fora gira
+	# meia-volta em vez de virar as costas para a própria batalha.
+	if color == RED:
+		ship.rotation.y = PI
 	return ship
+
+## A leitura de dano é feita de material, não de geometria: o aço escurece e acende brasa com o
+## casco, a pluma emagrece com o motor, a torre apaga com a arma e o filete com a tripulação.
+## Roda só em casco vivo, mexe só em nós e recursos que já existem. Nenhum sorteio.
+func _tune_ship_look(unit: Dictionary) -> void:
+	var ship: Node3D = unit["node"]
+	if not is_instance_valid(ship):
+		return
+	var mats: Dictionary = ship.get_meta("mat")
+	var hull := clampf(float(unit["hp"]), 0.0, 100.0) / 100.0
+	var engines := clampf(float(unit["engines"]), 0.0, 100.0) / 100.0
+	var weapons := clampf(float(unit["weapons"]), 0.0, 100.0) / 100.0
+	var crew := clampf(float(unit["crew"]), 0.0, 100.0) / 100.0
+	var mat_hull: StandardMaterial3D = mats["hull"]
+	mat_hull.albedo_color = ACO.lerp(CARVAO, (1.0 - hull) * 0.62)
+	mat_hull.emission_enabled = true
+	mat_hull.emission = BRASA
+	# A brasa acende exatamente na porta dos 55% e sobe até o fundo do casco: a mesma porta que
+	# `_resolve_volley` e `_give_order` já cobram (`hp > 55.0` recusa a abordagem). Ramp linear a
+	# partir de 0 nesse ponto daria 0,0000 em 55% e 0,026 em 54% — invisível da ponte.
+	mat_hull.emission_energy_multiplier = 0.0 if hull > 0.55 else 0.35 + (0.55 - hull) * 2.0
+	var mat_engine: StandardMaterial3D = mats["engine"]
+	mat_engine.emission_energy_multiplier = 0.2 + engines * engines * 2.8
+	var mat_flare: StandardMaterial3D = mats["flare"]
+	mat_flare.albedo_color = Color(ship.get_meta("escape"), 0.08 + engines * 0.5)
+	for pluma in ship.get_meta("plumas"):
+		var q: MeshInstance3D = pluma
+		q.scale = Vector3(0.45 + engines * 1.05, 1.0, 0.45 + engines * 1.05)
+	var mat_gun: StandardMaterial3D = mats["gun"]
+	mat_gun.emission_energy_multiplier = 0.15 + weapons * 1.6
+	var mat_trim: StandardMaterial3D = mats["trim"]
+	mat_trim.emission_energy_multiplier = 0.1 + crew * 0.9
+	# Balanço de deriva no filho "Casco": a peça de xadrez não se move, quem ondula é a
+	# silhueta. `position` da raiz continua sendo a assinatura que as sondas conferem.
+	var casco: Node3D = ship.get_meta("casco")
+	casco.position.y = sin(battle_clock * 0.55 + ship.position.x * 0.35) * 0.1
+	casco.rotation.z = sin(battle_clock * 0.33 + ship.position.z * 0.21) * 0.045
+
+## Destroço que permanece no tabuleiro: casco carvão, brasa baixa, luzes mortas e a inclinação
+## de quem perdeu propulsão. Some a leitura de vida, não a nave — esconder o corpo tirava a
+## baixa do campo de visão da ponte.
+func _mark_wreck(ship: Node3D) -> void:
+	if not is_instance_valid(ship):
+		return
+	var mats: Dictionary = ship.get_meta("mat")
+	for chave in mats:
+		var mat: StandardMaterial3D = mats[chave]
+		mat.emission_energy_multiplier = 0.0
+	var mat_hull: StandardMaterial3D = mats["hull"]
+	mat_hull.albedo_color = CARVAO
+	mat_hull.emission = BRASA
+	mat_hull.emission_energy_multiplier = 0.14
+	# Billete aditivo não obedece a `emission_energy`: o que apaga a luz é o alfa.
+	(mats["flare"] as StandardMaterial3D).albedo_color.a = 0.0
+	(mats["luz"] as StandardMaterial3D).albedo_color.a = 0.0
+	for pluma in ship.get_meta("plumas"):
+		var q: MeshInstance3D = pluma
+		q.scale = Vector3.ONE * 0.2
+	var casco: Node3D = ship.get_meta("casco")
+	casco.rotation.z = 0.42
+	casco.rotation.x = -0.18
+	_spawn_explosion(ship.position, ship.get_meta("escape"))
+
+## Detonação em billets aditivos com deslocamentos fixos: cinco clarões que abrem e apagam em
+## meio segundo. Nada aqui sorteia — é o que separa efeito visual de regressão de economia.
+func _spawn_explosion(pos: Vector3, cor: Color) -> void:
+	for i in range(DETONACAO.size()):
+		var estouro := _flare(pos + DETONACAO[i], 1.4 + float(i) * 0.4, Color(cor, 0.85), self)
+		var tween := create_tween()
+		tween.set_parallel(true)
+		tween.tween_property(estouro, "scale", Vector3.ONE * (3.2 + float(i) * 0.9), 0.5)
+		tween.tween_property(estouro.material_override, "albedo_color:a", 0.0, 0.5)
+		tween.chain().tween_callback(estouro.queue_free)
 
 func _build_ui() -> void:
 	var layer := CanvasLayer.new()
@@ -211,14 +598,14 @@ func _build_ui() -> void:
 	var top := PanelContainer.new()
 	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	top.offset_bottom = 64
-	top.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.035, 0.07, 0.92), Color(0.12, 0.55, 0.8)))
+	top.add_theme_stylebox_override("panel", _panel_style(Color(0.018, 0.026, 0.042, 0.92), HUD_OURO.darkened(0.45)))
 	layer.add_child(top)
 	var top_row := HBoxContainer.new()
 	top_row.add_theme_constant_override("separation", 24)
 	top.add_child(top_row)
 	var title := Label.new()
 	title.text = "I R O N   S T A R S   //   FLEET COMMAND"
-	title.add_theme_color_override("font_color", Color(0.45, 0.82, 1.0))
+	title.add_theme_color_override("font_color", HUD_OURO.lightened(0.35))
 	title.add_theme_font_size_override("font_size", 19)
 	top_row.add_child(title)
 	speed_label = Label.new()
@@ -228,12 +615,12 @@ func _build_ui() -> void:
 	pause_button = _add_button(top_row, "PAUSAR [ESPAÇO]", _toggle_pause)
 	var panel := PanelContainer.new()
 	panel.position = Vector2(24, 94)
-	panel.custom_minimum_size = Vector2(320, 620)
-	panel.size = Vector2(320, 620)
-	panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.03, 0.07, 0.88), Color(0.1, 0.5, 0.75)))
+	panel.custom_minimum_size = Vector2(396, 620)
+	panel.size = Vector2(396, 620)
+	panel.add_theme_stylebox_override("panel", _panel_style(Color(0.016, 0.024, 0.04, 0.9), Color(0.1, 0.42, 0.62)))
 	layer.add_child(panel)
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(300, 600)
+	scroll.custom_minimum_size = Vector2(372, 600)
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	panel.add_child(scroll)
 	var col := VBoxContainer.new()
@@ -318,7 +705,7 @@ func _build_ui() -> void:
 	var report_panel := PanelContainer.new()
 	report_panel.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	report_panel.offset_top = -58
-	report_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.025, 0.05, 0.85), Color(0.12, 0.45, 0.65)))
+	report_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.02, 0.026, 0.04, 0.88), HUD_OURO.darkened(0.5)))
 	layer.add_child(report_panel)
 	report_label = Label.new()
 	report_label.text = "PONTE DE COMANDO ONLINE  //  Contatos hostis detectados à frente."
@@ -374,6 +761,60 @@ func _box(pos: Vector3, size: Vector3, mat: Material, parent: Node = null) -> Me
 		add_child(mesh_instance)
 	else:
 		parent.add_child(mesh_instance)
+	return mesh_instance
+
+## Prisma com os dois raios: é com ele que a proa afila e o bocal de motor fecha em disco.
+## Em `_cylinder` o eixo local é +Y, então `rot = Vector3(-PI/2, 0, 0)` aponta o topo para -Z.
+func _cylinder(pos: Vector3, r_base: float, r_top: float, height: float, mat: Material,
+		parent: Node, rot: Vector3 = Vector3.ZERO, radial: int = 10) -> MeshInstance3D:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.bottom_radius = r_base
+	mesh.top_radius = r_top
+	mesh.height = height
+	# A propriedade se chama `radial_segments`: o nome errado não falha no parse, aborta a
+	# função em runtime e devolve Nil — a mesa holográfica inteira desapareceu assim por uma
+	# rodada, com as três sondas de lógica passando verdes.
+	mesh.rings = 2
+	mesh.radial_segments = radial
+	mesh_instance.mesh = mesh
+	mesh_instance.position = pos
+	mesh_instance.rotation = rot
+	mesh_instance.material_override = mat
+	parent.add_child(mesh_instance)
+	return mesh_instance
+
+## Bilhete aditivo sempre de frente para a câmera: sem pós-processamento caro é assim que o
+## motor, o lance e a explosão estouram no glow do Compatibility.
+func _flare(pos: Vector3, size: float, color: Color, parent: Node) -> MeshInstance3D:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := PlaneMesh.new()
+	mesh.size = Vector2(size, size)
+	mesh_instance.mesh = mesh
+	mesh_instance.position = pos
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = color
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	mat.billboard_keep_scale = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.roughness = 1.0
+	mesh_instance.material_override = mat
+	parent.add_child(mesh_instance)
+	return mesh_instance
+
+## Mesmo billet de `_flare`, mas com o material vindo de fora: é assim que a pluma de cada
+## motor queima sozinha (o material pertence à nave) sem criar material novo por quadro.
+func _quad(pos: Vector3, size: float, mat: Material, parent: Node) -> MeshInstance3D:
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := PlaneMesh.new()
+	mesh.size = Vector2(size, size)
+	mesh_instance.mesh = mesh
+	mesh_instance.position = pos
+	mesh_instance.material_override = mat
+	parent.add_child(mesh_instance)
 	return mesh_instance
 
 func _update_capital_ship(delta: float) -> void:
@@ -437,6 +878,7 @@ func _update_fleet(delta: float) -> void:
 			if ally["crew"] < 100.0:
 				ally["crew"] = minf(100.0, float(ally["crew"]) + repair_rate * 0.2)
 		fleet[i] = ally
+		_tune_ship_look(ally)
 	# A escolta hostil estaciona em torno da própria capitânia, então a âncora é lida uma
 	# vez por quadro — não por nave.
 	var hostile_anchor := Vector3.ZERO
@@ -459,6 +901,7 @@ func _update_fleet(delta: float) -> void:
 		# Qualquer que seja a ordem, o casco hostil fica entre a linha de reunião e a de
 		# avanço: a batalha não migra para fora da vista da ponte.
 		foe.position.z = clampf(foe.position.z, HOSTILE_RALLY_Z, HOSTILE_ADVANCE_Z)
+		_tune_ship_look(enemy)
 
 ## Lança uma sonda por casco vivo selecionado que ainda não tenha outra em órbita. Não há
 ## custo em números: a moeda da sonda é a cobertura do tabuleiro, e o teto é um objeto por
@@ -722,9 +1165,10 @@ func _resolve_volley() -> void:
 			enemies[target_index]["crew"] = maxf(0.0, float(enemies[target_index]["crew"]) - damage * 1.5)
 		else:
 			enemies[target_index]["hp"] = maxf(0.0, float(enemies[target_index]["hp"]) - damage)
-		_spawn_bolt((enemies[target_index]["node"] as Node3D).global_position, BLUE)
+		_spawn_bolt((enemies[target_index]["node"] as Node3D).global_position, BLUE,
+			(ally["node"] as Node3D).global_position)
 		if enemies[target_index]["hp"] <= 0.0:
-			(enemies[target_index]["node"] as Node3D).visible = false
+			_mark_wreck(enemies[target_index]["node"] as Node3D)
 			report_label.text = "ALVO DESTRUÍDO // %s neutralizado." % enemies[target_index]["name"]
 		elif float(enemies[target_index]["engines"]) <= 0.0:
 			enemies[target_index]["order"] = "RECUAR"
@@ -763,6 +1207,8 @@ func _resolve_volley() -> void:
 		if victim["order"] == "ESCOLTAR":
 			damage *= 0.7
 		victim["hp"] = maxf(0.0, float(victim["hp"]) - damage)
+		_spawn_bolt((victim["node"] as Node3D).global_position, RED,
+			(enemy["node"] as Node3D).global_position, false)
 		if rng.randf() < 0.12:
 			victim["engines"] = maxf(0.0, float(victim["engines"]) - 4.0)
 		elif rng.randf() < 0.1:
@@ -770,7 +1216,7 @@ func _resolve_volley() -> void:
 		elif rng.randf() < 0.08:
 			victim["crew"] = maxf(0.0, float(victim["crew"]) - 3.0)
 		if victim["hp"] <= 0.0:
-			(victim["node"] as Node3D).visible = false
+			_mark_wreck(victim["node"] as Node3D)
 			report_label.text = "ALERTA // %s foi perdida." % victim["name"]
 		fleet[victim_index] = victim
 
@@ -798,8 +1244,25 @@ func _integrate_captured_ships() -> void:
 		_rebuild_selectors()
 		report_label.text = "INCORPORAÇÃO // %d presa(s) sob comando da frota; reparo automático em curso." % gained
 
+## A incorporação é visual antes de ser burocrática: o filete vira azul, o escapamento esfria, a
+## meia-volta aponta a proa para a própria linha e a marca dourada entra no filho "Casco", junto
+## do resto do navio. Nenhum número muda aqui — só material e rotação do nó raiz.
 func _mark_as_prize(ship: Node3D) -> void:
-	_box(Vector3(0, 0.95, 0.0), Vector3(0.55, 0.4, 0.55), _material(GOLD, 0.3, 0.25, GOLD * 0.8), ship)
+	var mats: Dictionary = ship.get_meta("mat")
+	var mat_trim: StandardMaterial3D = mats["trim"]
+	mat_trim.albedo_color = BLUE.darkened(0.35)
+	mat_trim.emission = BLUE * 0.7
+	var mat_gun: StandardMaterial3D = mats["gun"]
+	mat_gun.emission = BLUE * 0.4
+	var mat_engine: StandardMaterial3D = mats["engine"]
+	mat_engine.emission = ESCOAMENTO_ALIADO
+	(mats["luz"] as StandardMaterial3D).albedo_color = Color(BLUE, 0.75)
+	# O material da pluma é reescrito todo quadro a partir desta chave: trocá-la é trocar a cor
+	# do escapamento sem encostar em nenhum dos dois nós.
+	ship.set_meta("escape", ESCOAMENTO_ALIADO)
+	_box(Vector3(0, 0.95, 0.0), Vector3(0.55, 0.4, 0.55), _material(GOLD, 0.3, 0.25, GOLD * 0.8),
+		ship.get_meta("casco"))
+	ship.rotation.y = 0.0
 
 ## Escopo, alvo e escolta leem os arrays reais. add_item não reemite item_selected, então a
 ## escolha do comandante sobrevive à reconstrução enquanto o item correspondente existir.
@@ -846,21 +1309,48 @@ func _rebuild_selectors() -> void:
 				break
 		protected_selector.select(keep_prot)
 		protected_unit_index = keep_prot - 1
+	# A mesa holográfica lê as mesmas listas dos seletores: incorporar presa reemite os blips
+	# pelo mesmo caminho que reemite os itens, sem cadastro paralelo.
+	_rebuild_holo()
 
-func _spawn_bolt(target: Vector3, color: Color) -> void:
-	var bolt := MeshInstance3D.new()
-	var mesh := SphereMesh.new()
-	mesh.radius = 0.28
-	mesh.height = 0.56
-	bolt.mesh = mesh
-	bolt.material_override = _material(color, 0.0, 0.1, color)
+## O traço de fogo: um prisma fino e emissivo que corre do atirador ao alvo. A trilha aliada
+## paga exatamente os dois sorteios de `rng` de sempre, na mesma ordem — é o orçamento que a
+## cauda de combate cobra e que `tools/probes/sondas.gd` confere. O lance hostil sai de
+## `visual_rng`, então inimigo passando a atirar na tela não reescreve um dano sequer.
+func _spawn_bolt(destino: Vector3, cor: Color, origem: Vector3, cauda_de_combate := true) -> void:
+	var dx := 0.0
+	var dy := 0.0
+	if cauda_de_combate:
+		dx = rng.randf_range(-1, 1)
+		dy = rng.randf_range(-1, 1)
+	else:
+		dx = visual_rng.randf_range(-1, 1)
+		dy = visual_rng.randf_range(-1, 1)
+	var saida := origem + Vector3(dx, dy, 0.0)
+	var vetor := destino - saida
+	var distancia := vetor.length()
+	var lance := MeshInstance3D.new()
+	var corpo := CylinderMesh.new()
+	corpo.bottom_radius = 0.22
+	corpo.top_radius = 0.06
+	corpo.height = minf(maxf(distancia * 0.32, 2.2), 16.0)
+	corpo.radial_segments = 4
+	corpo.rings = 1
+	lance.mesh = corpo
+	lance.material_override = _material(cor, 0.0, 0.2, cor * 1.4)
+	lance.material_override.emission_energy_multiplier = 2.4
 	# No tree, no global transform: global_position lida antes de add_child devolve
 	# Transform3D() e imprime um ERROR por salva (medido no smoke headless).
-	add_child(bolt)
-	bolt.global_position = target + Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1), 3.0)
+	add_child(lance)
+	lance.global_position = saida
+	# Direção nula faz look_at reclamar; dois cascos colados é um caso real de abordagem.
+	if distancia > 0.001:
+		lance.look_at(destino, Vector3.UP)
+		# O eixo do prisma é +Y e `look_at` aponta -Z para o alvo: -90° em X alinha os dois.
+		lance.rotate_x(-PI / 2)
 	var tween := create_tween()
-	tween.tween_property(bolt, "global_position", target, 0.22)
-	tween.tween_callback(bolt.queue_free)
+	tween.tween_property(lance, "global_position", destino, 0.22)
+	tween.tween_callback(lance.queue_free)
 
 func _give_order(order: String) -> void:
 	var selected := _selected_indices()
