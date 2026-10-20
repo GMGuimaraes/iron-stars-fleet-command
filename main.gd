@@ -122,6 +122,22 @@ const ESTRELA_CALOR_FATOR := 1.25
 const ESTRELA_CORONA_RAIO := 30.0
 const ESTRELA_QUEIMA_POR_SEGUNDO := 6.0
 
+## ---- Tripulação de ponte ----
+## Seis corpos na ponte: quatro operadores sentados nos consoles de bordo e dois oficiais de pé nas
+## asas do visor, com holograma de leitura na mão. Tripulante não é unidade — não entra em `fleet`
+## nem em `enemies`, não tem casco, não é puxado por poço nem chocado por rocha, e a conta da mesa
+## continua um blip por casco vivo. A pose sai do `battle_clock` com fase por índice: zero sorteio,
+## e é por isso que a pausa tática congela a tripulação junto com a batalha.
+const TRIPULANTES_SENTADOS := 4
+const TRIPULANTES_EM_PE := 2
+const BOB_TRONCO := 0.035
+const TAP_MAO := 0.05
+const FASE_POR_POSTO := 0.7
+const ALARME_CASCO := 60.0
+const INCLINACAO_ALARME := 0.13
+const COR_TELA_CALMA := Color(0.03, 0.22, 0.34)
+const COR_TELA_ALARME := Color(0.5, 0.07, 0.05)
+
 ## ---- Paleta da batalha (referência: Legend of the Galactic Heroes) ----
 ## O anime resolve naves de guerra com aço frio e só uma faixa de cor por nação; o que brilha
 ## é o escapamento e a arma, nunca o casco inteiro. Por isso `ACO` é neutro e `BLUE`/`RED`
@@ -221,6 +237,14 @@ var estrela_ativa := false
 ## no tabuleiro (e sem deixar recurso pendurado no encerramento).
 var cenario_root: Node3D
 var holo_cenario: Array[MeshInstance3D] = []
+## Tripulação pintada na ponte: cada posto guarda o nó e as peças que se mexem, mais a posição
+## crua delas. Sem a base guardada, a animação acumularia um empurrão por quadro e o operador
+## desceria pelo soalho em dois minutos de batalha.
+var tripulacao: Array[Dictionary] = []
+## Material único das quatro telas de console: o alarme tinge uma vez, no flanco do estado, e não
+## por quadro — escrever `emission` a cada frame é a ponte piscando para a GPU.
+var ponte_telas: StandardMaterial3D
+var ponte_em_alarme := false
 var selection_scope := "FROTA"
 var target_selector: OptionButton
 var protected_selector: OptionButton
@@ -283,6 +307,7 @@ func _process(delta: float) -> void:
 	_update_capital_ship(delta)
 	_update_fleet(delta)
 	_update_probes(delta)
+	_update_tripulacao()
 	if fire_clock >= 1.6:
 		fire_clock = 0.0
 		_resolve_volley()
@@ -428,7 +453,8 @@ func _build_bridge() -> void:
 	# Ouro é acento de filete, não luminária: a 0.45 de emissão ele competia com a holografia e a
 	# ponte virava cenário de neon. LotGH usa o dourado na régua, discreto.
 	var ouro := _material(HUD_OURO.darkened(0.62), 0.6, 0.34, HUD_OURO * 0.2)
-	var tela := _material(Color(0.02, 0.06, 0.09), 0.2, 0.6, Color(0.03, 0.22, 0.34))
+	var tela := _material(Color(0.02, 0.06, 0.09), 0.2, 0.6, COR_TELA_CALMA)
+	ponte_telas = tela
 	# Costado, soalho e teto: sem eles a câmera flutua no vácuo em vez de estar dentro de um
 	# navio. Tudo fecha no anteparo de vante, onde o visor se abre.
 	_box(Vector3(0, -2.1, 2.2), Vector3(15, 0.5, 20), piso, bridge_rig)
@@ -485,6 +511,7 @@ func _build_bridge() -> void:
 	fria.omni_range = 8.0
 	fria.shadow_enabled = false
 	bridge_rig.add_child(fria)
+	_build_tripulacao()
 	# Câmera atrás do trilho de comando: o parapeito entra no quadro como moldura inferior.
 	var camera := Camera3D.new()
 	camera.name = "BridgeCamera"
@@ -492,6 +519,115 @@ func _build_bridge() -> void:
 	camera.rotation_degrees = Vector3(-3, 0, 0)
 	camera.fov = 78
 	bridge_rig.add_child(camera)
+
+## Postos da tripulação: quatro operadores sentados nos consoles de bordo (x ±3,5, de frente para a
+## própria bancada) e dois oficiais de pé nas asas do visor com holograma de leitura na mão. Os
+## sentados ficam a 3,5 do eixo da mesa e os de pé a 6,6 — nenhum corpo dentro do disco de 3,05,
+## porque tripulante cobrindo blip é a ponte escondendo o tabuleiro. Nada aqui sorteia: a fase vem
+## do índice do posto, e é por isso que a pausa congela a ponte inteira junto com a batalha.
+func _build_tripulacao() -> void:
+	var uniforme := _material(Color(0.13, 0.16, 0.23), 0.3, 0.62)
+	var filete := _material(HUD_OURO.darkened(0.58), 0.4, 0.5)
+	var pele := _material(Color(0.44, 0.33, 0.28), 0.0, 0.78)
+	var assento := _material(Color(0.055, 0.07, 0.1), 0.4, 0.6)
+	var brilho := _glasm(Color(0.22, 0.66, 0.9, 0.5))
+	var postos: Array[Dictionary] = [
+		{"pos": Vector3(-3.5, 0.0, -0.8), "gira": PI / 2.0, "em_pe": false},
+		{"pos": Vector3(-3.5, 0.0, -3.6), "gira": PI / 2.0, "em_pe": false},
+		{"pos": Vector3(3.5, 0.0, -0.8), "gira": -PI / 2.0, "em_pe": false},
+		{"pos": Vector3(3.5, 0.0, -3.6), "gira": -PI / 2.0, "em_pe": false},
+		{"pos": Vector3(-5.5, 0.0, -6.1), "gira": 0.0, "em_pe": true},
+		{"pos": Vector3(5.5, 0.0, -6.1), "gira": 0.0, "em_pe": true},
+	]
+	for i in range(postos.size()):
+		var posto: Dictionary = postos[i]
+		var ancorado: Vector3 = posto["pos"]
+		var corpo := Node3D.new()
+		corpo.name = "Tripulante %02d" % (i + 1)
+		corpo.position = Vector3(ancorado.x, -1.85, ancorado.z)
+		corpo.rotation.y = float(posto["gira"])
+		bridge_rig.add_child(corpo)
+		var em_pe := bool(posto["em_pe"])
+		var tronco: MeshInstance3D
+		var mao: MeshInstance3D = null
+		var anel: MeshInstance3D = null
+		if em_pe:
+			_box(Vector3(0, 0.42, 0), Vector3(0.4, 0.84, 0.26), uniforme, corpo)
+			tronco = _box(Vector3(0, 1.18, 0), Vector3(0.44, 0.7, 0.28), uniforme, corpo)
+			_box(Vector3(0, 0.3, 0), Vector3(0.46, 0.06, 0.3), filete, tronco)
+			_cabeca(tronco, pele, 0.5)
+			for lado in [-1.0, 1.0]:
+				_box(Vector3(lado * 0.26, -0.06, -0.22), Vector3(0.11, 0.11, 0.5), uniforme, tronco)
+			# O holograma de leitura: pastilha na mão e o volume de luz subindo dela.
+			_cylinder(Vector3(0, -0.12, -0.44), 0.16, 0.16, 0.04, filete, tronco, Vector3.ZERO, 12)
+			var cone := _cylinder(Vector3(0, 0.12, -0.44), 0.05, 0.15, 0.42, brilho, tronco,
+				Vector3.ZERO, 12)
+			cone.rotation.x = PI
+			anel = MeshInstance3D.new()
+			var toro := TorusMesh.new()
+			toro.inner_radius = 0.09
+			toro.outer_radius = 0.12
+			anel.mesh = toro
+			anel.position = Vector3(0, 0.2, -0.44)
+			anel.material_override = brilho
+			tronco.add_child(anel)
+		else:
+			_box(Vector3(0, 0.28, 0.05), Vector3(0.16, 0.56, 0.16), assento, corpo)
+			_box(Vector3(0, 0.6, 0.05), Vector3(0.52, 0.1, 0.52), assento, corpo)
+			_box(Vector3(0, 1.0, 0.3), Vector3(0.5, 0.74, 0.1), assento, corpo)
+			tronco = _box(Vector3(0, 1.06, -0.02), Vector3(0.44, 0.62, 0.28), uniforme, corpo)
+			_box(Vector3(0, 0.26, -0.02), Vector3(0.46, 0.06, 0.3), filete, tronco)
+			_cabeca(tronco, pele, 0.46)
+			for lado in [-1.0, 1.0]:
+				var braco := _box(Vector3(lado * 0.26, -0.04, -0.24), Vector3(0.11, 0.11, 0.52),
+					uniforme, tronco)
+				braco.rotation.x = 0.16
+			mao = _box(Vector3(0.26, -0.12, -0.5), Vector3(0.1, 0.08, 0.14), pele, tronco)
+		tripulacao.append({"no": corpo, "tronco": tronco, "mao": mao, "anel": anel,
+			"em_pe": em_pe, "base_tronco": float(tronco.position.y),
+			"base_mao": float(mao.position.z) if mao != null else 0.0,
+			"fase": float(i) * FASE_POR_POSTO})
+
+
+## Cabeça do tripulante: esfera filha do tronco, porque o bob do corpo tem de levar a cabeça junto
+## — cabeça solta no nó raiz seria um crânio flutuando enquanto o operador respira.
+func _cabeca(pai: Node3D, pele: Material, altura: float) -> MeshInstance3D:
+	var cabeca := MeshInstance3D.new()
+	var esfera := SphereMesh.new()
+	esfera.radius = 0.15
+	esfera.height = 0.3
+	esfera.radial_segments = 10
+	esfera.rings = 6
+	cabeca.mesh = esfera
+	cabeca.position = Vector3(0, altura, -0.02)
+	cabeca.material_override = pele
+	pai.add_child(cabeca)
+	return cabeca
+
+
+## A pose da ponte. Tudo sai de `battle_clock`, que congela na pausa tática: o quadro para, a
+## tripulação para. O alarme é lido no casco da capitânia e escrito UMA vez no material compartilhado
+## das quatro telas — escrever `emission` por quadro seria a ponte piscando para a GPU.
+func _update_tripulacao() -> void:
+	var alerta := capital_hp < ALARME_CASCO
+	if alerta != ponte_em_alarme:
+		ponte_em_alarme = alerta
+		if is_instance_valid(ponte_telas) and ponte_telas.emission_enabled:
+			ponte_telas.emission = COR_TELA_ALARME if alerta else COR_TELA_CALMA
+	for posto in tripulacao:
+		var tronco: MeshInstance3D = posto["tronco"]
+		if not is_instance_valid(tronco):
+			continue
+		var fase: float = float(posto["fase"])
+		tronco.position.y = float(posto["base_tronco"]) + sin(battle_clock * 1.7 + fase) * BOB_TRONCO
+		tronco.rotation.x = INCLINACAO_ALARME if (alerta and not bool(posto["em_pe"])) else 0.0
+		var mao: MeshInstance3D = posto["mao"]
+		if is_instance_valid(mao):
+			mao.position.z = float(posto["base_mao"]) + sin(battle_clock * 3.1 + fase) * TAP_MAO
+		var anel: MeshInstance3D = posto["anel"]
+		if is_instance_valid(anel):
+			anel.rotation.y = battle_clock * 0.8 + fase
+
 
 ## Mesa holográfica de ponte: disco, anéis e o cone do projetor. Os blips não são decoração —
 ## `_rebuild_holo` os monta a partir das listas vivas, então a mesa mostra exatamente a frota

@@ -123,6 +123,16 @@ func _initialize() -> void:
 	game.batalha_encerrada = false
 	await _fotograma(game, "10_estrela")
 
+	# 11 — tripulação em alarme: com a capitânia ferida, as quatro telas de console viram vermelhas
+	# e os operadores sentados se debruçam. É pintura, e pintura só se julga em PNG — mas a contagem
+	# dos seis corpos e o flanco do alarme são conferidos aqui, para o quadro não ser tela de fundo.
+	game.capital_hp = 40.0
+	await _frames(4)
+	_assert("a ponte fotografada tem seis tripulantes e o alarme aceso",
+		int(game.tripulacao.size()) == 6 and bool(game.ponte_em_alarme),
+		"%d corpos, alarme=%s" % [game.tripulacao.size(), game.ponte_em_alarme])
+	await _fotograma(game, "11_tripulacao_alarme")
+
 	for note in notes:
 		print("SONDA-FOTOGRAMA: " + note)
 	print("SONDA-FOTOGRAMA: veredito • quebras=%d • conferências=%d" % [breaks, notes.size()])
