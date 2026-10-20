@@ -8,6 +8,16 @@ const GOLD := Color(1.0, 0.72, 0.28)
 const HOSTILE_ADVANCE_Z := -60.0
 ## Recuo tem fundo: na linha de reunião a esquadra se reorganiza em vez de sair do mapa.
 const HOSTILE_RALLY_Z := -92.0
+## Fundo da varredura: a sonda vai além do último casco hostil e volta, em vez de sumir para
+## fora do campo de visão da ponte.
+const PROBE_FAR_Z := -104.0
+## Base da varredura, logo à frente da linha aliada: é para onde a sonda retorna.
+const PROBE_NEAR_Z := -34.0
+const PROBE_SPEED := 16.0
+const PROBE_LIFE := 30.0
+## Raio curto de propósito: com a linha hostil espaçada em 6 unidades, uma sonda confirma o
+## próprio corredor e, no máximo, um vizinho. Cobertura total exige varredura de verdade.
+const PROBE_SCAN_RADIUS := 9.0
 var paused := false
 var throttle := 0.0
 var yaw_rate := 0.0
@@ -24,7 +34,17 @@ var bridge_rig: Node3D
 var rng := RandomNumberGenerator.new()
 var selected_target := 0
 var formation := "LINHA"
+## Sondas táticas vivas: cada entrada é um nó visível que atravessa o tabuleiro varrendo
+## cascos com o próprio corpo. Enquanto nenhuma sonda passa sobre um hull, ele continua
+## "não identificado" na ponte — a informação é efeito de um objeto no mapa, não de um
+## cronômetro. Nada aqui sorteia: ver a cauda de RNG em `_update_probes`.
+var probes: Array[Dictionary] = []
+## Cobertura da varredura, medida em contatos e não em tempo: `recon_progress` passou a ser
+## 100 * recon_contacts / recon_total. Sem casco hostil vivo o par fica 0/0 e a barra em 0,
+## porque não há linha a cobrir.
 var recon_progress := 0.0
+var recon_contacts := 0
+var recon_total := 0
 var reserve_mode := false
 var selection_scope := "FROTA"
 var target_selector: OptionButton
@@ -50,6 +70,9 @@ func _ready() -> void:
 	_build_environment()
 	_build_bridge()
 	_build_fleets()
+	# Antes da primeira UI: sem isto a ponte abriria com 0/0 quando o tabuleiro já tem seis
+	# cascos hostis a confirmar.
+	_recompute_recon()
 	_build_ui()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
@@ -60,6 +83,7 @@ func _process(delta: float) -> void:
 	fire_clock += delta
 	_update_capital_ship(delta)
 	_update_fleet(delta)
+	_update_probes(delta)
 	if fire_clock >= 1.6:
 		fire_clock = 0.0
 		_resolve_volley()
@@ -435,8 +459,100 @@ func _update_fleet(delta: float) -> void:
 		# Qualquer que seja a ordem, o casco hostil fica entre a linha de reunião e a de
 		# avanço: a batalha não migra para fora da vista da ponte.
 		foe.position.z = clampf(foe.position.z, HOSTILE_RALLY_Z, HOSTILE_ADVANCE_Z)
-	if _has_order("RECONHECER"):
-		recon_progress = minf(100.0, recon_progress + delta * 2.0)
+
+## Lança uma sonda por casco vivo selecionado que ainda não tenha outra em órbita. Não há
+## custo em números: a moeda da sonda é a cobertura do tabuleiro, e o teto é um objeto por
+## navio — por isso o segundo clique na mesma seleção não empilha nada.
+func _launch_probes(indices: Array[int]) -> int:
+	var launched := 0
+	for i in indices:
+		if float(fleet[i]["hp"]) <= 0.0 or not is_instance_valid(fleet[i]["node"]):
+			continue
+		var busy := false
+		for probe in probes:
+			if int(probe["from"]) == i:
+				busy = true
+				break
+		if busy:
+			continue
+		var origin: Node3D = fleet[i]["node"]
+		# Corredor determinístico: a sonda desce a linha no x do hostil da mesma ordem, então
+		# cada navio cobre o seu próprio setor e a cobertura total exige a frota lançada.
+		var lane_x := (float(i) - 2.5) * 6.0
+		var node := _make_probe(origin.position + Vector3(0.0, 1.4, -3.0))
+		probes.append({"node": node, "from": i, "lane_x": lane_x, "outbound": true,
+			"waypoint": Vector3(lane_x, 0.0, PROBE_FAR_Z), "life": PROBE_LIFE,
+			"launcher": String(fleet[i]["name"])})
+		launched += 1
+	return launched
+
+func _make_probe(pos: Vector3) -> Node3D:
+	var probe := Node3D.new()
+	probe.position = pos
+	add_child(probe)
+	var glow := Color(0.35, 0.9, 1.0)
+	_box(Vector3(0, 0, 0), Vector3(0.5, 0.5, 0.9), _material(glow.darkened(0.55), 0.5, 0.3, glow * 0.7), probe)
+	var ring := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	torus.inner_radius = 1.15
+	torus.outer_radius = 1.75
+	ring.mesh = torus
+	ring.rotation_degrees = Vector3(90, 0, 0)
+	ring.material_override = _material(glow, 0.1, 0.2, glow * 0.55)
+	probe.add_child(ring)
+	return probe
+
+## Varredura em si: a sonda é um corpo no tabuleiro, então o que ela confirma é o casco que
+## ela fisicamente alcança. Nada aqui consome `rng` nem escreve em subsistema — só em
+## `seen`, que é informação, não força de combate.
+func _update_probes(delta: float) -> void:
+	var i := probes.size() - 1
+	while i >= 0:
+		var probe: Dictionary = probes[i]
+		var node: Node3D = probe["node"]
+		probe["life"] = float(probe["life"]) - delta
+		if float(probe["life"]) <= 0.0 or not is_instance_valid(node):
+			if is_instance_valid(node):
+				node.queue_free()
+			probes.remove_at(i)
+			i -= 1
+			continue
+		var waypoint: Vector3 = probe["waypoint"]
+		node.position = node.position.move_toward(waypoint, delta * PROBE_SPEED)
+		if node.position.distance_to(waypoint) < 0.6:
+			probe["outbound"] = not bool(probe["outbound"])
+			probe["waypoint"] = Vector3(float(probe["lane_x"]), 0.0,
+				PROBE_FAR_Z if bool(probe["outbound"]) else PROBE_NEAR_Z)
+		_scan_with_probe(node)
+		probes[i] = probe
+		i -= 1
+	_recompute_recon()
+
+func _scan_with_probe(node: Node3D) -> void:
+	for i in range(enemies.size()):
+		var foe: Dictionary = enemies[i]
+		if float(foe["hp"]) <= 0.0 or String(foe["order"]) == "CAPTURADO" or bool(foe.get("seen", false)):
+			continue
+		if not is_instance_valid(foe["node"]):
+			continue
+		if (foe["node"] as Node3D).global_position.distance_to(node.global_position) <= PROBE_SCAN_RADIUS:
+			foe["seen"] = true
+			enemies[i] = foe
+
+## Uma fórmula só para o reconhecimento: a barra da ponte é a fração da linha hostil viva que
+## já foi encostada por uma sonda. Quem morre sai do denominador, quem é capturado também.
+func _recompute_recon() -> void:
+	var living := 0
+	var known := 0
+	for foe in enemies:
+		if float(foe["hp"]) <= 0.0 or String(foe["order"]) == "CAPTURADO":
+			continue
+		living += 1
+		if bool(foe.get("seen", false)):
+			known += 1
+	recon_total = living
+	recon_contacts = known
+	recon_progress = 0.0 if living == 0 else 100.0 * float(known) / float(living)
 
 func _combat_power(unit: Dictionary) -> float:
 	return float(unit["hp"]) * 0.5 + float(unit["weapons"]) * 0.3 + float(unit["engines"]) * 0.15 + float(unit["crew"]) * 0.05
@@ -767,7 +883,11 @@ func _give_order(order: String) -> void:
 	if order == "ATACAR":
 		report_label.text = "%d unidade(s) atacando %s / %s. Combate contínuo." % [selected.size(), enemies[selected_target]["name"], subsystem_selector.get_item_text(subsystem_selector.selected)]
 	elif order == "RECONHECER":
-		report_label.text = "SONDAS LANÇADAS // reconhecimento em curso durante o combate."
+		var launched := _launch_probes(selected)
+		if launched == 0:
+			report_label.text = "SONDAS JÁ EM VARREDURA // %d sonda(s) no ar; lançar de novo não empilha." % probes.size()
+		else:
+			report_label.text = "SONDAS LANÇADAS // %d sonda(s) em varredura; %d/%d contato(s) confirmado(s)." % [launched, recon_contacts, recon_total]
 	elif order == "ABORDAR":
 		report_label.text = "ABORDAGEM INICIADA // unidades selecionadas aproximam-se de %s." % enemies[selected_target]["name"]
 	elif order == "RESERVA":
@@ -816,12 +936,6 @@ func _set_repair_priority(priority: String) -> void:
 		fleet[i] = unit
 	report_label.text = "PRIORIDADE DE REPARO: %s para %s. Reparos continuam automáticos." % [priority, selection_scope]
 
-func _has_order(order: String) -> bool:
-	for item in fleet:
-		if item["hp"] > 0.0 and item["order"] == order:
-			return true
-	return false
-
 func _set_formation(new_formation: String) -> void:
 	formation = new_formation
 	for i in _selected_indices():
@@ -851,8 +965,10 @@ func _update_hud() -> void:
 				living += 1
 				if item["engines"] < 70.0 or item["weapons"] < 70.0 or item["crew"] < 60.0:
 					damaged += 1
-		command_label.text = "FROTA: %d/%d NAVES | SELEÇÃO: %s\nFORMAÇÃO: %s | DANIFICADAS: %d\nRECONHECIMENTO: %d%%\nESTADO: %s // TEMPO REAL\n%s" % [living, fleet.size(), selection_scope, formation, damaged, int(recon_progress), "PAUSADO" if paused else "EM COMBATE", tactical_note]
+		command_label.text = "FROTA: %d/%d NAVES | SELEÇÃO: %s\nFORMAÇÃO: %s | DANIFICADAS: %d\nRECONHECIMENTO: %d%% // %d sonda(s) • %d/%d contato(s) confirmado(s)\nESTADO: %s // TEMPO REAL\n%s" % [living, fleet.size(), selection_scope, formation, damaged, int(recon_progress), probes.size(), recon_contacts, recon_total, "PAUSADO" if paused else "EM COMBATE", tactical_note]
 	if is_instance_valid(target_selector):
 		for i in range(enemies.size()):
-			var state := "CAPTURADO" if enemies[i]["order"] == "CAPTURADO" else ("CASCO %d%%" % int(enemies[i]["hp"]) if recon_progress >= 20.0 else "CONTATO")
+			# O casco só aparece para a ponte quando uma sonda encostou naquele hull: a
+			# linha de baixa é o estado real do contato, não uma barra de tempo.
+			var state := "CAPTURADO" if enemies[i]["order"] == "CAPTURADO" else ("CASCO %d%%" % int(enemies[i]["hp"]) if bool(enemies[i].get("seen", false)) else "NÃO IDENTIFICADO")
 			target_selector.set_item_text(i, "%s [%s]" % [enemies[i]["name"], state])
