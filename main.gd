@@ -794,7 +794,9 @@ func _build_ui() -> void:
 	_add_button(col, "REPAROS: PRIORIDADE TRIPULAÇÃO", func(): _set_repair_priority("TRIPULAÇÃO"))
 	_add_button(col, "REPAROS: AUTOMÁTICOS", func(): _set_repair_priority("AUTO"))
 	_add_button(col, "FORMAÇÃO: LINHA", func(): _set_formation("LINHA"))
+	_add_button(col, "FORMAÇÃO: COLUNA", func(): _set_formation("COLUNA"))
 	_add_button(col, "FORMAÇÃO: CUNHA", func(): _set_formation("CUNHA"))
+	_add_button(col, "FORMAÇÃO: ANEL", func(): _set_formation("ANEL"))
 	var hint := Label.new()
 	hint.text = ("W avante  •  S ré (a ré tem teto)\nA / D guinada  •  ↑ / ↓ arfagem  •  "
 		+ "Q / E rolagem\nR sobe  •  V desce  •  ESPAÇO pausa tática")
@@ -1116,6 +1118,12 @@ func _separate_pair(a: Dictionary, b: Dictionary) -> void:
 	var vel_b := _body_velocity(b)
 	var aproximacao := (vel_a - vel_b).dot(normal)
 	if aproximacao <= RAM_SPEED:
+		return
+	# Casco aliado contra casco aliado não cobra: separar é física, fere é combate. A formação que
+	# acaba de ser mandada navegar atravessa a própria linha, e punir isso tiraria do jogador o
+	# preço de uma manobra que ele não controla quadro a quadro. A ponte é exceção: quem segura o
+	# timão é o comandante, e abalroar a própria frota custa.
+	if not bool(a["hostil"]) and not bool(b["hostil"]) and a["unidade"] != null and b["unidade"] != null:
 		return
 	var chave := _pair_key(a, b)
 	if battle_clock - float(ram_windows.get(chave, -RAM_WINDOW)) < RAM_WINDOW:
@@ -1697,18 +1705,76 @@ func _set_repair_priority(priority: String) -> void:
 		fleet[i] = unit
 	report_label.text = "PRIORIDADE DE REPARO: %s para %s. Reparos continuam automáticos." % [priority, selection_scope]
 
+## Postos de formação, medidos a partir do CENTRO REAL da seleção. Cravar z = -38 (como fazia a
+## versão antiga) teletransportava a frota de volta para uma linha do cadastro: a formação passou a
+## ser uma ordem de navegação, executada na velocidade do próprio motor, e é por isso que o posto é
+## um deslocamento em torno de onde os cascos realmente estão.
+func _formacao_posto(posicao: int, total: int, centro: Vector3) -> Vector3:
+	if total <= 0:
+		return centro
+	var meio := float(total - 1) / 2.0
+	match formation:
+		"COLUNA":
+			# Um atrás do outro no eixo de avanço: a coluna é a formação de passagem, não de fogo.
+			return centro + Vector3(0.0, 0.0, -float(posicao) * FORMATION_STEP)
+		"ANEL":
+			# Círculo fechado com passo garantido: o raio cresce com o número de cascos para que
+			# vizinhos nunca fiquem a menos de 2 * HULL_RADIUS, senão a formação se abalroa sozinha.
+			var raio := maxf(FORMATION_STEP, float(total) * FORMATION_STEP / (2.0 * PI))
+			var angulo := float(posicao) / float(total) * TAU
+			return centro + Vector3(cos(angulo) * raio, 0.0, sin(angulo) * raio)
+		"CUNHA":
+			# Ápice adiantado (-Z é a direção do inimigo), flancos varridos para trás. O protótipo
+			# fazia o contrário — `-absf(i - meio)` — e o resultado era um cálice: as asas na frente
+			# e o centro atrás, que é a formação de receber fogo, não de aplicá-lo.
+			return centro + Vector3((float(posicao) - meio) * FORMATION_STEP, 0.0,
+				-(meio - absf(float(posicao) - meio)) * FORMATION_STEP)
+		_:
+			# LINHA: leque lateral com alternância de profundidade, para dois cascos não taparem o
+			# mesmo arco na mesa.
+			return centro + Vector3((float(posicao) - meio) * FORMATION_STEP, 0.0,
+				-float(posicao % 2) * FORMATION_STEP)
+
+## Centro geométrico dos cascos vivos da seleção — a âncora da formação. Destroço fica de fora:
+## corpo sem motor não entra em conta de manobra.
+func _centro_selecao(selected: Array[int]) -> Vector3:
+	var soma := Vector3.ZERO
+	var vivos := 0
+	for i in selected:
+		var unit: Dictionary = fleet[i]
+		if float(unit["hp"]) <= 0.0:
+			continue
+		soma += (unit["node"] as Node3D).position
+		vivos += 1
+	if vivos == 0:
+		return Vector3.ZERO
+	return soma / float(vivos)
+
+## Formação é ordem de navegação, não alinhamento de cadastro: escreve o posto como destino e
+## manda o casco andar até lá. O tempo de locomoção é o preço da manobra — uma linha que se refaz
+## em um quadro não pode ser punida nem aproveitada taticamente.
 func _set_formation(new_formation: String) -> void:
+	var selected := _selected_indices()
+	if selected.is_empty():
+		report_label.text = "NENHUMA UNIDADE VIVA NA SELEÇÃO."
+		return
+	# A formação só é gravada depois da ordem ter para quem ir: cravar o rótulo antes faria o
+	# painel anunciar "ANEL" enquanto nenhum casco se moveu, e painel que anuncia o que não
+	# aconteceu deixa de ser leitura do campo para virar desejo do comandante.
 	formation = new_formation
-	for i in _selected_indices():
-		var ship: Node3D = fleet[i]["node"]
-		if formation == "LINHA":
-			ship.position.x = (float(i) - 2.5) * 5.0
-			ship.position.z = -38.0 - float(i % 2) * 5.0
-		else:
-			ship.position.x = (float(i) - 2.5) * 2.7
-			ship.position.z = -38.0 - absf(float(i) - 2.5) * 4.5
-		fleet[i]["formation"] = formation
-	report_label.text = "FORMAÇÃO %s APLICADA A %s. Outras ordens permanecem ativas." % [formation, selection_scope]
+	var centro := _centro_selecao(selected)
+	var postos := 0
+	for k in range(selected.size()):
+		var unit: Dictionary = fleet[selected[k]]
+		if float(unit["hp"]) <= 0.0:
+			continue
+		unit["formation"] = new_formation
+		unit["order"] = "MOVER"
+		unit["destination"] = _formacao_posto(postos, selected.size(), centro)
+		fleet[selected[k]] = unit
+		postos += 1
+	report_label.text = "FORMAÇÃO %s EM EXECUÇÃO // %d casco(s) navegando para os postos." % [
+		new_formation, postos]
 	_update_hud()
 
 func _toggle_pause() -> void:

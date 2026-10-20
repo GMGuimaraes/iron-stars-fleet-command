@@ -300,16 +300,33 @@ func _initialize() -> void:
 		and is_equal_approx(float(game.fleet[1]["hp"]), 100.0),
 		"hp %.1f e %.1f sem velocidade de aproximação" % [float(game.fleet[0]["hp"]), float(game.fleet[1]["hp"])])
 
-	# 11 — Abalroamento cobra dos dois lados, com a MESMA conta, e satura no teto.
+	# 10b — Aliado contra aliado é manobra, não combate: separa e não cobra, MESMO a 60 u/s de
+	# fecho. A formação agora navega e atravessa a própria linha; sem esta asserção o jogador
+	# pagaria casco por uma ordem que ele mesmo deu, e a exemptação seria invisível.
 	_zerar(game)
 	vivo_a.position = Vector3(0.0, 0.0, -200.0)
 	vivo_b.position = Vector3(0.0, 0.0, -196.0)
 	game.fleet[0]["veloc"] = Vector3(0.0, 0.0, 30.0)
 	game.fleet[1]["veloc"] = Vector3(0.0, 0.0, -30.0)
+	game.battle_clock = 480.0
+	game._resolve_collisions()
+	_assert("aliado encosta em aliado, separa e não fere", is_equal_approx(float(game.fleet[0]["hp"]), 100.0)
+		and is_equal_approx(float(game.fleet[1]["hp"]), 100.0)
+		and _igual(vivo_a.position.distance_to(vivo_b.position), 2.0 * HULL_RADIUS, 0.01),
+		"hp %.1f e %.1f a 60 u/s de fecho, abertos para %.3f" % [float(game.fleet[0]["hp"]),
+		float(game.fleet[1]["hp"]), vivo_a.position.distance_to(vivo_b.position)])
+
+	# 11 — Abalroamento hostil cobra dos dois lados, com a MESMA conta, e satura no teto.
+	_zerar(game)
+	var presa: Node3D = game.enemies[0]["node"]
+	vivo_a.position = Vector3(0.0, 0.0, -200.0)
+	presa.position = Vector3(0.0, 0.0, -196.0)
+	game.fleet[0]["veloc"] = Vector3(0.0, 0.0, 30.0)
+	game.enemies[0]["veloc"] = Vector3(0.0, 0.0, -30.0)
 	game.battle_clock = 500.0
 	game._resolve_collisions()
 	var perda_a := 100.0 - float(game.fleet[0]["hp"])
-	var perda_b := 100.0 - float(game.fleet[1]["hp"])
+	var perda_b := 100.0 - float(game.enemies[0]["hp"])
 	_assert("abalroamento fere os dois", perda_a > 0.0 and perda_b > 0.0,
 		"-%.2f e -%.2f" % [perda_a, perda_b])
 	_assert("o dano é simétrico", _igual(perda_a, perda_b, 0.001),
@@ -323,11 +340,11 @@ func _initialize() -> void:
 	# 12 — Fórmula abaixo do teto: aproximação de 8 u/s deve dar (8-3)*1,9 = 9,5 e não o teto.
 	_zerar(game)
 	var meio_a: Node3D = game.fleet[2]["node"]
-	var meio_b: Node3D = game.fleet[3]["node"]
+	var meio_b: Node3D = game.enemies[1]["node"]
 	meio_a.position = Vector3(0.0, 0.0, -220.0)
 	meio_b.position = Vector3(0.0, 0.0, -216.5)
 	game.fleet[2]["veloc"] = Vector3(0.0, 0.0, 5.0)
-	game.fleet[3]["veloc"] = Vector3(0.0, 0.0, -3.0)
+	game.enemies[1]["veloc"] = Vector3(0.0, 0.0, -3.0)
 	game.battle_clock = 700.0
 	game._resolve_collisions()
 	var esperado := (8.0 - RAM_SPEED) * RAM_DAMAGE
