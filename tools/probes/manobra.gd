@@ -26,9 +26,9 @@ extends SceneTree
 ## Espelho das constantes de `main.gd`: a instância do jogo é não tipada e elas não são
 ## alcançáveis por ela (mesmo motivo em `tools/probes/graficos.gd`). Mudar uma aqui e não lá é
 ## exatamente o tipo de desvio que esta sonda reprova.
-const MAP_X := 160.0
-const MAP_Y := 90.0
-const MAP_Z_FAR := -300.0
+const MAP_X := 320.0
+const MAP_Y := 180.0
+const MAP_Z_FAR := -600.0
 const CAPITAL_SPEED := 22.0
 const CAPITAL_REVERSE := -0.6
 const CAPITAL_LIFT := 12.0

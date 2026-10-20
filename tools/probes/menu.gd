@@ -2,8 +2,10 @@ extends SceneTree
 
 ## Sonda do painel em grupos e das duas ordens de densidade (DISPERSAR / AGRUPAR).
 ##
-## O pedido do comandante foi «menos poluição»: o painel tinha 22 botões empilhados, sempre todos
-## à vista, e dois deles faziam a mesma coisa. Agora são seis categorias, uma aberta por vez. Isso
+## O pedido do comandante foi «menos poluição»: o painel tinha dezenove botões de ordem empilhados,
+## sempre todos à vista, e dois deles faziam a mesma coisa. Agora são sete categorias, uma aberta
+## por vez — a sétima (CENÁRIO) entrou depois, com os quatro mapas, e é contada aqui pelo mesmo
+## vara-pau. Isso
 ## é pintura — mas pintura que esconde comando, e painel que esconde sem dizer o que escondeu
 ## deixa de ser instrumento. Então esta sonda mede as duas margens:
 ##
@@ -32,9 +34,10 @@ const DISPERSAR_RAIO := 16.5
 const VELOCIDADE_MOVER := 8.0
 const PASSO := 0.1
 
-const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "REPAROS", "RECONHECIMENTO"]
+const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "REPAROS", "RECONHECIMENTO",
+	"CENÁRIO"]
 const TAMANHOS := {"ATAQUE": 2, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "REPAROS": 5,
-	"RECONHECIMENTO": 1}
+	"RECONHECIMENTO": 1, "CENÁRIO": 4}
 
 var breaks := 0
 var notes: Array[String] = []
@@ -148,17 +151,17 @@ func _initialize() -> void:
 	_zerar(game)
 	game.rng.seed = 424242
 
-	# 1 — A lista de grupos: seis categorias, cada uma com cabeçalho e corpo, com o tamanho que o
+	# 1 — A lista de grupos: sete categorias, cada uma com cabeçalho e corpo, com o tamanho que o
 	# painel anuncia. Um grupo digitado com nome errado some da UI sem dar erro de parse.
 	var cabecalhos: Dictionary = game.group_heads
 	var corpos: Dictionary = game.group_bodies
-	_assert("seis grupos no painel", cabecalhos.size() == 6 and corpos.size() == 6,
+	_assert("sete grupos no painel", cabecalhos.size() == 7 and corpos.size() == 7,
 		"%d cabeçalhos / %d corpos" % [cabecalhos.size(), corpos.size()])
 	var faltam := ""
 	for nome in NOMES_GRUPOS:
 		if not cabecalhos.has(nome) or not corpos.has(nome):
 			faltam += nome + " "
-	_assert("os seis nomes pedidos existem", faltam == "", "faltando: [%s]" % faltam)
+	_assert("os sete nomes pedidos existem", faltam == "", "faltando: [%s]" % faltam)
 	var tamanhos_ok := true
 	var medido := ""
 	for nome in NOMES_GRUPOS:
@@ -170,11 +173,11 @@ func _initialize() -> void:
 	var total_botoes := 0
 	for nome in NOMES_GRUPOS:
 		total_botoes += _botoes(game, nome).size()
-	_assert("vinte comandos agrupados", total_botoes == 20,
-		"%d botões de comando em 6 grupos" % total_botoes)
+	_assert("vinte e quatro comandos agrupados", total_botoes == 24,
+		"%d botões de comando em 7 grupos" % total_botoes)
 
 	# 2 — Menos poluição: o que se vê é um grupo, não a lista toda. Este era o número da rodada
-	# anterior: 22 botões sempre à vista.
+	# anterior, medido no `main.gd` de antes do acordeão: dezenove botões de ordem sempre à vista.
 	_assert("abre com um único grupo à vista", _a_vista(game) == 4,
 		"%d botões visíveis contra 4 do grupo FORMAÇÕES" % _a_vista(game))
 	_assert("o grupo aberto na abertura é FORMAÇÕES", String(game.grupo_aberto) == "FORMAÇÕES"

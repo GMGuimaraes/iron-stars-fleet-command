@@ -2,7 +2,9 @@ extends SceneTree
 
 ## Fotogramas reais da ponte para ajuste de pintura. Headless usa o renderizador dummy e devolve
 ## tela preta: neblina, exposição, glow e recorte da janela só se medem com PNG de verdade, e
-## estes quatro quadros são o material de leitura. Não move número nenhum do jogo — só olha.
+## estes dez quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
+## mas os três últimos quadros montam cenário de verdade, e cenário engole e queima: por isso a
+## sonda devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção.
 ##
 ## Uso (janela real, sem --headless):
 ##   godot --path . --quit-after 1200 -s res://tools/probes/fotograma.gd
@@ -84,6 +86,42 @@ func _initialize() -> void:
 	await _fotograma(game, "06_painel_grupo_aberto")
 	game._toggle_grupo("MANOBRA")
 	await _fotograma(game, "07_painel_recolhido")
+
+	# 08, 09, 10 — os três cenários novos pintados em janela real. A sonda de lógica (`tools/
+	# probes/cenarios.gd`) já conta as rochas e confere o raio; aqui a pergunta é outra: a geometria
+	# aparece na tela? Foi exatamente assim que a mesa holográfica sumiu uma rodada inteira — um
+	# nome de propriedade errado num `CylinderMesh` não falha no parse, aborta a função em runtime
+	# e devolve `Nil`, e todas as sondas de lógica continuaram verdes.
+	game._montar_cenario("CINTURAO")
+	await _frames(3)
+	_assert("o cinturão tem corpo na cena", game.cenario_root.get_child_count() == 14
+		and game.holo_cenario.size() == 14,
+		"%d nós e %d marcas na mesa" % [game.cenario_root.get_child_count(),
+			game.holo_cenario.size()])
+	await _fotograma(game, "08_cinturao")
+
+	game._montar_cenario("POCO")
+	await _frames(3)
+	_assert("o poço tem corpo na cena (boca + 28 billets do aro)",
+		game.cenario_root.get_child_count() == 29 and game.holo_cenario.size() == 1,
+		"%d nós e %d marcas na mesa" % [game.cenario_root.get_child_count(),
+			game.holo_cenario.size()])
+	await _fotograma(game, "09_poco")
+
+	game._montar_cenario("ESTRELA")
+	await _frames(3)
+	_assert("a estrela tem corpo na cena (disco + 20 billets da coroa + luz)",
+		game.cenario_root.get_child_count() == 22 and game.holo_cenario.size() == 1,
+		"%d nós e %d marcas na mesa" % [game.cenario_root.get_child_count(),
+			game.holo_cenario.size()])
+	# A linha hostil mora dentro da corona (a ~25 u do disco) e o poço acabou de engolir metade
+	# dela: para o quadro julgar pintura, e não a fatura do perigo, os cascos voltam a 100.
+	for lista in [game.fleet, game.enemies]:
+		for corpo in lista:
+			corpo["hp"] = 100.0
+	game.capital_hp = 100.0
+	game.batalha_encerrada = false
+	await _fotograma(game, "10_estrela")
 
 	for note in notes:
 		print("SONDA-FOTOGRAMA: " + note)

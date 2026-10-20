@@ -22,10 +22,10 @@ const PROBE_SCAN_RADIUS := 9.0
 ## Campo grande de propósito: a capitânia precisa de mar para manobrar, e o cenário ocupa volume
 ## em vez de um plano. O limite é o que impede a frota de fugir do quadro em vez de resolver a
 ## batalha.
-const MAP_X := 160.0
-const MAP_Y := 90.0
+const MAP_X := 320.0
+const MAP_Y := 180.0
 const MAP_Z_NEAR := 40.0
-const MAP_Z_FAR := -300.0
+const MAP_Z_FAR := -600.0
 ## Nó de casco em throttle cheio. Ré tem teto próprio porque cruzador não manobra de costas como
 ## rebocador: 60% do avanço, e ainda assim mais rápido que o motor de busca de um alvo.
 const CAPITAL_SPEED := 22.0
@@ -86,6 +86,41 @@ const HOLO_RIM := 2.85
 ## e ninguém leria nada. 0,09 por unidade com teto lê a subida sem quebrar a planta.
 const HOLO_ALT_SCALE := 0.09
 const HOLO_ALT_CEIL := 0.8
+
+## ---- Cenários: o obstáculo que se usa, não a decoração que se passa por cima ----
+## Os três cenários são escolhas do comandante no painel, e o contrato deles é o mesmo: nenhum
+## número se move com o campo aberto (o cenário padrão), cada um cobra um preço próprio e esse
+## preço é conferível em geometria, não em sorteio. Nada aqui usa `rng`; o que muda a conta é a
+## posição que o jogador escolheu ocupar.
+const CENARIOS := ["ABERTO", "CINTURAO", "POCO", "ESTRELA"]
+## Cinturão: rochas entre as duas linhas, em banda determinística. Determinística de propósito —
+## se o cinturão saísse do `visual_rng`, cada partida mudaria o mapa e a sonda não teria com que
+## conferir a barreira.
+const ROCHA_QTDE := 14
+## Raio de casco da rocha: entra na mesma conta de separação dos cascos, então uma fragata encosta
+## e não atravessa.
+const ROCHA_RAIO_BASE := 3.2
+const ROCHA_RAIO_DEGRAU := 0.9
+## Espalhado em leque: x varre a frente, z abre da linha aliada até a hostil, y dá volume ao
+## cinturão (barreira em três eixos, não uma parede desenhada no plano).
+const ROCHA_LEQUE_X := 58.0
+const ROCHA_Z_INICIAL := -24.0
+const ROCHA_Z_PASSO := 4.0
+const ROCHA_Y_LEQUE := 13.0
+## Poço gravitacional: alcance é onde o puxo começa a ser sentido; horizonte é onde a nave já é
+## perdida — não há motor do protótipo que saia de lá.
+const POCO_POS := Vector3(0.0, 0.0, -78.0)
+const POCO_ALCANCE := 46.0
+const POCO_PUXO := 11.0
+const POCO_HORIZONTE := 9.0
+## Estrela ativa: dentro do raio de calor as armas disparam mais quentes (o dano sobe), dentro da
+## corona o casco cozinha. É a única mecânica do slice que mexe em dano de salva, e mexe por
+## posição, não por sorteio.
+const ESTRELA_POS := Vector3(0.0, 24.0, -74.0)
+const ESTRELA_CALOR_RAIO := 70.0
+const ESTRELA_CALOR_FATOR := 1.25
+const ESTRELA_CORONA_RAIO := 30.0
+const ESTRELA_QUEIMA_POR_SEGUNDO := 6.0
 
 ## ---- Paleta da batalha (referência: Legend of the Galactic Heroes) ----
 ## O anime resolve naves de guerra com aço frio e só uma faixa de cor por nação; o que brilha
@@ -170,6 +205,22 @@ var recon_progress := 0.0
 var recon_contacts := 0
 var recon_total := 0
 var reserve_mode := false
+
+## ---- Cenário em jogo ----
+## `cenario_atual` é o nome escolhido no painel; com `"ABERTO"` as três coleções abaixo ficam
+## vazias e os dois pontos de perigo ficam longe de tudo, que é o que faz a inércia do slice ser
+## conferível: nenhum laço roda, nenhuma distância cai dentro de um raio.
+var cenario_atual := "ABERTO"
+## Cada rocha: {"no": MeshInstance3D, "pos": Vector3, "raio": float}. `pos` é a fonte de verdade
+## e o nó apenas a pinta — a barreira é lida por conta, não por `global_position` de cena, para a
+## sonda poder conferir a mesma grandeza que a jogabilidade usa.
+var rochas: Array[Dictionary] = []
+var poco_ativo := false
+var estrela_ativa := false
+## Nós pintados do cenário, para `_montar_cenario` poder trocar de mapa sem deixar corpo velho
+## no tabuleiro (e sem deixar recurso pendurado no encerramento).
+var cenario_root: Node3D
+var holo_cenario: Array[MeshInstance3D] = []
 var selection_scope := "FROTA"
 var target_selector: OptionButton
 var protected_selector: OptionButton
@@ -844,6 +895,11 @@ func _build_ui() -> void:
 	_add_button(grupo_reparo, "AUTOMÁTICO EQUILIBRADO", func(): _set_repair_priority("AUTO"))
 	var grupo_rec := _add_grupo(col, "RECONHECIMENTO")
 	_add_button(grupo_rec, "SONDAS DE RECONHECIMENTO", func(): _give_order("RECONHECER"))
+	var grupo_cenario := _add_grupo(col, "CENÁRIO")
+	_add_button(grupo_cenario, "CAMPO ABERTO — sem obstáculo", func(): _montar_cenario("ABERTO"))
+	_add_button(grupo_cenario, "CINTURÃO DE ASTEROIDES — barreira", func(): _montar_cenario("CINTURAO"))
+	_add_button(grupo_cenario, "POÇO GRAVITACIONAL — não aproxime", func(): _montar_cenario("POCO"))
+	_add_button(grupo_cenario, "ESTRELA ATIVA — armas quentes", func(): _montar_cenario("ESTRELA"))
 	# O grupo aberto na abertura é escolhido aqui, não por `_toggle_grupo`, porque o relatório
 	# ainda não existe nesta altura da montagem do painel.
 	if group_bodies.has(grupo_aberto):
@@ -984,6 +1040,282 @@ func _registra_voo() -> void:
 		fisica.physical_keycode = VOO_ACOES[acao]
 		InputMap.action_add_event(acao, fisica)
 
+## ---- Cenários ----
+
+## Troca o mapa no meio da batalha. Desmontar antes de montar é o que garante que uma rocha não
+## conta duas vezes: sem isto, trocar de CINTURAO para CINTURAO dobraria as barreiras e o casco
+## seria empurrado por duas pedras no mesmo ponto.
+func _montar_cenario(nome: String) -> void:
+	if not CENARIOS.has(nome):
+		return
+	_desmontar_cenario()
+	cenario_atual = nome
+	if nome == "CINTURAO":
+		_montar_cinturao()
+	elif nome == "POCO":
+		_montar_poco()
+	elif nome == "ESTRELA":
+		_montar_estrela()
+	_pintar_marcas_cenario()
+	if is_instance_valid(report_label):
+		report_label.text = _nota_cenario()
+
+
+func _desmontar_cenario() -> void:
+	for marca in holo_cenario:
+		if is_instance_valid(marca):
+			marca.queue_free()
+	holo_cenario.clear()
+	rochas.clear()
+	poco_ativo = false
+	estrela_ativa = false
+	if is_instance_valid(cenario_root):
+		for filho in cenario_root.get_children():
+			filho.queue_free()
+
+
+func _garantir_cenario_root() -> Node3D:
+	if not is_instance_valid(cenario_root):
+		cenario_root = Node3D.new()
+		cenario_root.name = "Cenario"
+		add_child(cenario_root)
+	return cenario_root
+
+
+## O cinturão: pedras em leque entre as duas linhas, em banda determinística. A ordem importa — a
+## primeira rocha já nasce adiante da linha aliada e a última atrás da hostil, de modo que atravessar
+## o centro é sempre uma escolha, nunca o único caminho.
+func _montar_cinturao() -> void:
+	var raiz := _garantir_cenario_root()
+	var mat := _material(ACO_ESCURO, 0.3, 0.9)
+	for i in range(ROCHA_QTDE):
+		var ang := float(i) * 2.39996
+		var x := cos(ang) * ROCHA_LEQUE_X * (0.35 + 0.13 * float(i % 5))
+		var y := sin(ang * 1.7) * ROCHA_Y_LEQUE
+		var z := ROCHA_Z_INICIAL - float(i) * ROCHA_Z_PASSO
+		var raio := ROCHA_RAIO_BASE + float(i % 4) * ROCHA_RAIO_DEGRAU
+		var bloco := _box(Vector3(x, y, z), Vector3(raio * 1.7, raio * 1.3, raio * 1.5), mat, raiz)
+		bloco.rotation = Vector3(ang * 0.7, ang, ang * 0.31)
+		rochas.append({"no": bloco, "pos": Vector3(x, y, z), "raio": raio})
+
+
+## Poço: a boca preta e o disco de matéria caindo. O aro luminoso é a régua do alcance — é ele que
+## o comandante lê como "não passe daqui", e a distância a que o puxo começa a mover o casco.
+func _montar_poco() -> void:
+	var raiz := _garantir_cenario_root()
+	poco_ativo = true
+	var boca := _material(Color(0.008, 0.006, 0.014), 0.0, 1.0)
+	_cylinder(POCO_POS, POCO_HORIZONTE, POCO_HORIZONTE, 1.2, boca, raiz, Vector3(PI / 2.0, 0, 0), 24)
+	var brasa := _material(Color(0.9, 0.44, 0.12), 0.0, 0.6, Color(1.0, 0.5, 0.14))
+	for i in range(28):
+		var ang := float(i) * TAU / 28.0
+		var raio := POCO_ALCANCE * (0.62 + 0.03 * float(i % 3))
+		_box(POCO_POS + Vector3(cos(ang) * raio, sin(ang * 2.0) * 2.0, sin(ang) * raio),
+			Vector3(2.2, 0.5, 2.2), brasa, raiz)
+
+
+## Estrela: o disco incandescente, a coroa em anel e uma luz pontual. É o único cenário que mexe em
+## dano, e mexe por posição de quem dispara — quem se aproxima para aquecer a arma também se expõe.
+func _montar_estrela() -> void:
+	var raiz := _garantir_cenario_root()
+	estrela_ativa = true
+	var fotosfera := Color(1.0, 0.8, 0.38)
+	_cylinder(ESTRELA_POS, 13.0, 13.0, 1.4, _material(fotosfera, 0.0, 0.9, fotosfera), raiz,
+		Vector3(PI / 2.0, 0, 0), 24)
+	var coroa := _material(Color(1.0, 0.6, 0.2), 0.0, 0.9, Color(1.0, 0.55, 0.16))
+	for i in range(20):
+		var ang := float(i) * TAU / 20.0
+		_box(ESTRELA_POS + Vector3(cos(ang) * ESTRELA_CALOR_RAIO * 0.42, sin(ang) * 3.0,
+			sin(ang) * ESTRELA_CALOR_RAIO * 0.42), Vector3(3.0, 0.6, 3.0), coroa, raiz)
+	var luz := OmniLight3D.new()
+	luz.position = ESTRELA_POS
+	luz.light_color = fotosfera
+	luz.light_energy = 1.4
+	luz.omni_range = ESTRELA_CALOR_RAIO
+	luz.shadow_enabled = false
+	raiz.add_child(luz)
+
+
+## Marcas na mesa holográfica: o comandante tem de ver a barreira onde vê os cascos. Moram em
+## `holo_cenario`, nunca em `holo_blips`, porque a conta de um blip por casco vivo é o contrato da
+## mesa e rocha nenhuma é casco.
+func _pintar_marcas_cenario() -> void:
+	if not is_instance_valid(holo_root):
+		return
+	var mat_rocha := _material(Color(0.32, 0.34, 0.38), 0.1, 0.9)
+	for rocha in rochas:
+		holo_cenario.append(_cylinder(_holo_de(rocha["pos"]), 0.06, 0.06, 0.14, mat_rocha,
+			holo_root, Vector3.ZERO, 8))
+	if poco_ativo:
+		var mat_poco := _material(Color(0.55, 0.2, 0.06), 0.0, 0.8, Color(0.9, 0.3, 0.06))
+		holo_cenario.append(_cylinder(_holo_de(POCO_POS), 0.5, 0.5, 0.1, mat_poco, holo_root,
+			Vector3.ZERO, 24))
+	if estrela_ativa:
+		var mat_estrela := _material(Color(1.0, 0.78, 0.34), 0.0, 0.8, Color(1.0, 0.7, 0.3))
+		holo_cenario.append(_cylinder(_holo_de(ESTRELA_POS), 0.34, 0.34, 0.3, mat_estrela,
+			holo_root, Vector3.ZERO, 16))
+
+
+func _nota_cenario() -> String:
+	var nota := ""
+	match cenario_atual:
+		"CINTURAO":
+			nota = "CENÁRIO: CINTURÃO // %d rochas entre as linhas. " % rochas.size()
+			nota += "O lance que bate na pedra não chega ao casco: barreira serve de escudo."
+		"POCO":
+			nota = "CENÁRIO: POÇO // a %0.0f u do centro o casco já não escapa. " % POCO_ALCANCE
+			nota += "Quem cruza o horizonte é perdido, e o hostil obedece à mesma conta."
+		"ESTRELA":
+			nota = "CENÁRIO: ESTRELA // arma a %0.0f u do disco bate %0.0f%% mais quente; " % [
+				ESTRELA_CALOR_RAIO, (ESTRELA_CALOR_FATOR - 1.0) * 100.0]
+			nota += "a %0.0f u o casco cozinha a %0.0f pontos por segundo." % [
+				ESTRELA_CORONA_RAIO, ESTRELA_QUEIMA_POR_SEGUNDO]
+		_:
+			nota = "CENÁRIO: CAMPO ABERTO // nenhuma barreira, nenhum poço, nenhuma estrela."
+	return nota
+
+
+## Armas aquecidas: só a estrela ativa muda o multiplicador, e só para quem dispara de dentro do
+## raio de calor. Fora dele é 1,0 — o que faz o campo aberto continuar conferível dígito a dígito.
+func _fator_calor(de_pos: Vector3) -> float:
+	if not estrela_ativa:
+		return 1.0
+	if de_pos.distance_to(ESTRELA_POS) > ESTRELA_CALOR_RAIO:
+		return 1.0
+	return ESTRELA_CALOR_FATOR
+
+
+## Barreira é geometria de segmento, não projétil que voa: a salva resolve-se em um quadro e a
+## rocha tem de valer nesse quadro. Devolve o ponto mais próximo dentro de um raio de pedra, ou
+## vazio quando o corredor está limpo.
+func _rocha_entre(origem: Vector3, destino: Vector3) -> Dictionary:
+	var melhor := {}
+	var melhor_t := INF
+	for rocha in rochas:
+		var centro: Vector3 = rocha["pos"]
+		var trecho := destino - origem
+		var comprimento := trecho.length_squared()
+		if comprimento < 0.0001:
+			continue
+		var t := clampf((centro - origem).dot(trecho) / comprimento, 0.0, 1.0)
+		var ponto := origem + trecho * t
+		if ponto.distance_to(centro) > float(rocha["raio"]):
+			continue
+		if t < melhor_t:
+			melhor_t = t
+			melhor = {"pos": ponto, "raio": float(rocha["raio"])}
+	return melhor
+
+
+## O perigo age por posição, depois de cada casco ter obedecido à ordem e antes da separação
+## casco-a-casco: assim a física de contato ainda tem a última palavra sobre sobreposição.
+func _aplicar_cenario(delta: float) -> void:
+	if poco_ativo:
+		_puxar_para_o_poco(delta)
+	if estrela_ativa:
+		_queimar_na_corona(delta)
+	if not rochas.is_empty():
+		_chocar_com_rochas()
+
+
+func _puxar_para_o_poco(delta: float) -> void:
+	for corpo in _collision_bodies():
+		if bool(corpo["imovel"]):
+			continue
+		var node: Node3D = corpo["node"]
+		var vetor := POCO_POS - node.global_position
+		var distancia := vetor.length()
+		if distancia > POCO_ALCANCE:
+			continue
+		if distancia <= POCO_HORIZONTE:
+			_devorado_pelo_poco(corpo)
+			continue
+		var peso := 1.0 - distancia / POCO_ALCANCE
+		node.global_position += vetor / distancia * POCO_PUXO * peso * delta
+
+
+## O poço não fere: engole. Sem dano gradual e sem sorteio — um casco dentro do horizonte já está
+## perdido, e adiar isso em pontos de vida faria a morte depender de quantos quadros a pintura
+## demora. O destroço fica onde a conta o viu pela última vez, marcado como perda.
+func _devorado_pelo_poco(corpo: Dictionary) -> void:
+	audio.efeito("EXPLOSAO")
+	if corpo["unidade"] == null:
+		if capital_hp <= 0.0:
+			return
+		capital_hp = 0.0
+		if is_instance_valid(report_label):
+			report_label.text = "POÇO // a capitânia cruzou o horizonte e não responde mais."
+		return
+	var unit: Dictionary = corpo["unidade"]
+	if float(unit["hp"]) <= 0.0:
+		return
+	unit["hp"] = 0.0
+	unit["weapons"] = 0.0
+	unit["engines"] = 0.0
+	unit["crew"] = 0.0
+	_mark_wreck(unit["node"] as Node3D)
+	if is_instance_valid(report_label):
+		report_label.text = "POÇO // %s foi sugada: o horizonte não devolve casco." % String(unit["name"])
+
+
+func _queimar_na_corona(delta: float) -> void:
+	for corpo in _collision_bodies():
+		if bool(corpo["imovel"]):
+			continue
+		var node: Node3D = corpo["node"]
+		if node.global_position.distance_to(ESTRELA_POS) > ESTRELA_CORONA_RAIO:
+			continue
+		if corpo["unidade"] == null:
+			capital_hp = maxf(0.0, capital_hp - ESTRELA_QUEIMA_POR_SEGUNDO * delta)
+			if capital_hp <= 0.0 and is_instance_valid(report_label):
+				report_label.text = "CORONA // a capitânia cozinhou perto demais da estrela."
+			continue
+		var unit: Dictionary = corpo["unidade"]
+		if float(unit["hp"]) <= 0.0:
+			continue
+		unit["hp"] = maxf(0.0, float(unit["hp"]) - ESTRELA_QUEIMA_POR_SEGUNDO * delta)
+		unit["engines"] = maxf(0.0, float(unit["engines"]) - ESTRELA_QUEIMA_POR_SEGUNDO * delta * 0.5)
+		if float(unit["hp"]) <= 0.0:
+			_mark_wreck(unit["node"] as Node3D)
+			if is_instance_valid(report_label):
+				report_label.text = "CORONA // %s perdeu casco na Fornalha." % String(unit["name"])
+
+
+## Rocha é âncora: não cede, não afunda, não fere de volta. O único que perde algo no encontro é o
+## casco que nela bate, e é exatamente esse preço que faz do asteroide uma barreira em vez de um
+## cenário que se atravessa.
+func _chocar_com_rochas() -> void:
+	for corpo in _collision_bodies():
+		if bool(corpo["imovel"]):
+			continue
+		var node: Node3D = corpo["node"]
+		for rocha in rochas:
+			var centro: Vector3 = rocha["pos"]
+			var soma := float(corpo["raio"]) + float(rocha["raio"])
+			var entre := node.global_position - centro
+			var distancia := entre.length()
+			if distancia >= soma:
+				continue
+			var normal := Vector3(0, 0, 1) if distancia < 0.001 else entre / distancia
+			node.global_position = centro + normal * soma
+			var aproximacao := -_body_velocity(corpo).dot(normal)
+			if aproximacao <= RAM_SPEED:
+				continue
+			var chave := "rocha:%d:%d" % [node.get_instance_id(), int(round(float(centro.z) * 10.0))]
+			if battle_clock - float(ram_windows.get(chave, -RAM_WINDOW)) < RAM_WINDOW:
+				continue
+			ram_windows[chave] = battle_clock
+			var dano := clampf((aproximacao - RAM_SPEED) * RAM_DAMAGE, 1.0, RAM_MAX_DAMAGE)
+			if corpo["unidade"] == null:
+				capital_hp = maxf(0.0, capital_hp - dano)
+				audio.efeito("IMPACTO")
+				if capital_hp <= 0.0 and is_instance_valid(report_label):
+					report_label.text = "COLISÃO // a ponte abriu no cinturão."
+			else:
+				_apply_impact({"node": node, "unidade": corpo["unidade"], "raio": corpo["raio"],
+					"hostil": corpo["hostil"], "imovel": false}, dano)
+
+
 ## Timão da capitânia em três eixos: guinada (A/D), arfagem (setas ↑/↓), rolagem (Q/E, que se
 ## autocorrige quando a mão sai do teclado para a mesa continuar legível), avante e ré (W/S, com a
 ## ré limitada) e empuxo vertical (R/V, sobe e desce sem mudar a atitude). Nada aqui sorteia: a
@@ -1114,9 +1446,11 @@ func _update_fleet(delta: float) -> void:
 		foe.position.z = clampf(foe.position.z, HOSTILE_RALLY_Z, HOSTILE_ADVANCE_Z)
 		enemy["veloc"] = (foe.position - partida) / maxf(delta, 0.0001)
 		_tune_ship_look(enemy)
-	# Por último a física de contato: primeiro cada casco obedece à ordem, depois o campo cobra
-	# quem atravessou quem. Inverter a ordem faria a separação ser sobrescrita pela ordem no
-	# mesmo quadro, e a colisão viraria enfeite.
+	# Por último o cenário e a física de contato: primeiro cada casco obedece à ordem, depois o
+	# poço puxa / a corona queima / a rocha fere, e só então o campo cobra quem atravessou quem.
+	# Inverter a ordem faria a separação ser sobrescrita pela ordem no mesmo quadro, e a colisão
+	# viraria enfeite.
+	_aplicar_cenario(delta)
 	_resolve_collisions()
 
 ## Corpos que ocupam espaço: frota, hostis e a própria ponte. Destroço entra como âncora
@@ -1496,17 +1830,25 @@ func _resolve_volley() -> void:
 			damage *= 1.8
 		if ally["order"] == "RESERVA":
 			damage *= 0.35
-		var subsystem := subsystem_selector.get_item_text(subsystem_selector.selected) if ally["order"] == "ATACAR" and is_instance_valid(subsystem_selector) else "CASCO"
-		if subsystem == "MOTORES":
-			enemies[target_index]["engines"] = maxf(0.0, float(enemies[target_index]["engines"]) - damage * 1.7)
-		elif subsystem == "ARMAS":
-			enemies[target_index]["weapons"] = maxf(0.0, float(enemies[target_index]["weapons"]) - damage * 1.7)
-		elif subsystem == "TRIPULAÇÃO":
-			enemies[target_index]["crew"] = maxf(0.0, float(enemies[target_index]["crew"]) - damage * 1.5)
-		else:
-			enemies[target_index]["hp"] = maxf(0.0, float(enemies[target_index]["hp"]) - damage)
-		_spawn_bolt((enemies[target_index]["node"] as Node3D).global_position, BLUE,
-			(ally["node"] as Node3D).global_position)
+		var origem := (ally["node"] as Node3D).global_position
+		var destino := (enemies[target_index]["node"] as Node3D).global_position
+		# Arma quente: o multiplicador entra pela posição de quem dispara, não por sorteio, e fora
+		# do raio de calor é exatamente 1,0 — que é o que deixa o campo aberto inalterado.
+		damage *= _fator_calor(origem)
+		var bloqueio := _rocha_entre(origem, destino)
+		var subsistema := subsystem_selector.get_item_text(subsystem_selector.selected) if ally["order"] == "ATACAR" and is_instance_valid(subsystem_selector) else "CASCO"
+		# Pedra no corredor: o lance existe, vai até a rocha e não fere ninguém. Absorver dano não
+		# muda quantos sorteios a salva consome — ver a cauda de RNG em `_resolve_volley`.
+		if bloqueio.is_empty():
+			if subsistema == "MOTORES":
+				enemies[target_index]["engines"] = maxf(0.0, float(enemies[target_index]["engines"]) - damage * 1.7)
+			elif subsistema == "ARMAS":
+				enemies[target_index]["weapons"] = maxf(0.0, float(enemies[target_index]["weapons"]) - damage * 1.7)
+			elif subsistema == "TRIPULAÇÃO":
+				enemies[target_index]["crew"] = maxf(0.0, float(enemies[target_index]["crew"]) - damage * 1.5)
+			else:
+				enemies[target_index]["hp"] = maxf(0.0, float(enemies[target_index]["hp"]) - damage)
+		_spawn_bolt((destino if bloqueio.is_empty() else bloqueio["pos"]), BLUE, origem)
 		if enemies[target_index]["hp"] <= 0.0:
 			_mark_wreck(enemies[target_index]["node"] as Node3D)
 			report_label.text = "ALVO DESTRUÍDO // %s neutralizado." % enemies[target_index]["name"]
@@ -1546,15 +1888,26 @@ func _resolve_volley() -> void:
 		var damage := 1.3 * float(enemy["weapons"]) / 100.0 * maxf(0.25, float(enemy["crew"]) / 100.0)
 		if victim["order"] == "ESCOLTAR":
 			damage *= 0.7
-		victim["hp"] = maxf(0.0, float(victim["hp"]) - damage)
-		_spawn_bolt((victim["node"] as Node3D).global_position, RED,
-			(enemy["node"] as Node3D).global_position, false)
+		var origem := (enemy["node"] as Node3D).global_position
+		var destino := (victim["node"] as Node3D).global_position
+		damage *= _fator_calor(origem)
+		var bloqueio := _rocha_entre(origem, destino)
+		var absorvido := not bloqueio.is_empty()
+		if not absorvido:
+			victim["hp"] = maxf(0.0, float(victim["hp"]) - damage)
+		_spawn_bolt((destino if bloqueio.is_empty() else bloqueio["pos"]), RED, origem, false)
+		# A cadeia de sorteios é a mesma com ou sem rocha no corredor: o que a barreira leva é o
+		# dano, nunca o consumo do gerador. Trocar `if rng.randf()` por uma conta pulada mudaria a
+		# cauda de toda a batalha seguinte e faria do cinturão um reroll disfarçado.
 		if rng.randf() < 0.12:
-			victim["engines"] = maxf(0.0, float(victim["engines"]) - 4.0)
+			if not absorvido:
+				victim["engines"] = maxf(0.0, float(victim["engines"]) - 4.0)
 		elif rng.randf() < 0.1:
-			victim["weapons"] = maxf(0.0, float(victim["weapons"]) - 5.0)
+			if not absorvido:
+				victim["weapons"] = maxf(0.0, float(victim["weapons"]) - 5.0)
 		elif rng.randf() < 0.08:
-			victim["crew"] = maxf(0.0, float(victim["crew"]) - 3.0)
+			if not absorvido:
+				victim["crew"] = maxf(0.0, float(victim["crew"]) - 3.0)
 		if victim["hp"] <= 0.0:
 			_mark_wreck(victim["node"] as Node3D)
 			report_label.text = "ALERTA // %s foi perdida." % victim["name"]
