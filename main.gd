@@ -18,6 +18,67 @@ const PROBE_LIFE := 30.0
 ## Raio curto de propósito: com a linha hostil espaçada em 6 unidades, uma sonda confirma o
 ## próprio corredor e, no máximo, um vizinho. Cobertura total exige varredura de verdade.
 const PROBE_SCAN_RADIUS := 9.0
+## ---- Navegação e casco físico ----
+## Campo grande de propósito: a capitânia precisa de mar para manobrar, e o cenário ocupa volume
+## em vez de um plano. O limite é o que impede a frota de fugir do quadro em vez de resolver a
+## batalha.
+const MAP_X := 160.0
+const MAP_Y := 90.0
+const MAP_Z_NEAR := 40.0
+const MAP_Z_FAR := -300.0
+## Nó de casco em throttle cheio. Ré tem teto próprio porque cruzador não manobra de costas como
+## rebocador: 60% do avanço, e ainda assim mais rápido que o motor de busca de um alvo.
+const CAPITAL_SPEED := 22.0
+const CAPITAL_REVERSE := -0.6
+## Empuxo vetorial: subir e descer sem mudar a atitude do casco.
+const CAPITAL_LIFT := 12.0
+## Atitude limitada: sem teto de arfagem a ponte gira em parafuso e a mesa holográfica, que é
+## filha do rig, perde o horizonte que o comandante usa para ler o quadro.
+const PITCH_LIMIT := 0.62
+const ROLL_LIMIT := 0.5
+## Timão lido pelo InputMap, não por tecla votada. `Input.is_key_pressed` devolve o estado que
+## só uma janela real preenche — em headless ele fica frio, e o jogador num layout AZERTY não
+## manobra com W de jeito nenhum. Cada ação recebe DOIS eventos: o código digitado e a posição
+## física do teclado, que é o que falta no build web (navegador nem sempre reporta o físico).
+const VOO_ACOES := {
+	"capital_avante": KEY_W,
+	"capital_re": KEY_S,
+	"capital_bombordo": KEY_A,
+	"capital_estibordo": KEY_D,
+	"capital_nariz_acima": KEY_UP,
+	"capital_nariz_abaixo": KEY_DOWN,
+	"capital_role_esquerda": KEY_Q,
+	"capital_role_direita": KEY_E,
+	"capital_empuxo_acima": KEY_R,
+	"capital_empuxo_abaixo": KEY_V,
+}
+## Raio de manobra do casco: é perfil de tráfego, não a pintura (o billete mede ~4 unidades de
+## boca). Com 2,4 dois postos precisam estar a 4,8 de distância, e é por isso que o passo de
+## formação é 5,5 — posto mais fechado que isso colide antes de obedecer.
+const HULL_RADIUS := 2.4
+## Passo lateral de qualquer posto de formação: tem de ficar acima de 2 * HULL_RADIUS, senão a
+## própria formação dispara o abalroamento que ela deveria evitar.
+const FORMATION_STEP := 5.5
+const CAPITAL_RADIUS := 6.0
+## Abalroamento: abaixo desta velocidade de aproximação os cascos apenas se empurram.
+const RAM_SPEED := 3.0
+const RAM_DAMAGE := 1.9
+const RAM_MAX_DAMAGE := 18.0
+## Um par cobra um golpe por janela, não um por quadro: sem isto dois cascos encostados
+## perderiam a tripulação inteira em dois segundos de contato.
+const RAM_WINDOW := 1.5
+
+## ---- Mesa holográfica ----
+## Escala isótropa, ancorada no meio do campo de ação (entre as duas linhas). Uma mesa que
+## alonga um eixo mente sobre distância, e é com ela que o comandante decide onde mandar a frota.
+const HOLO_SCALE := 0.075
+const HOLO_ANCHOR_Z := -60.0
+## O disco tem borda: quem está fora da janela tática encosta no aro em vez de sumir da mesa.
+const HOLO_RIM := 2.85
+## Altitude é a única dimensão ampliada de propósito: na escala verdadeira o blip subiria 0,15
+## e ninguém leria nada. 0,09 por unidade com teto lê a subida sem quebrar a planta.
+const HOLO_ALT_SCALE := 0.09
+const HOLO_ALT_CEIL := 0.8
 
 ## ---- Paleta da batalha (referência: Legend of the Galactic Heroes) ----
 ## O anime resolve naves de guerra com aço frio e só uma faixa de cor por nação; o que brilha
@@ -37,8 +98,15 @@ const HUD_OURO := Color(0.82, 0.68, 0.34)
 const DETONACAO: Array[Vector3] = [Vector3(0, 0, 0), Vector3(1.1, 0.5, -0.7), Vector3(-1.2, -0.4, 0.6),
 	Vector3(0.5, -1.0, 1.2), Vector3(-0.7, 0.9, -1.1)]
 var paused := false
+## Signed: positivo é avante, negativo é ré. O HUD lê em porcentagem com sinal.
 var throttle := 0.0
-var yaw_rate := 0.0
+## Casco da própria capitânia, que agora é um corpo no tabuleiro: encosta em alguém e leva.
+var capital_hp := 100.0
+## Velocidade real do rig no último quadro, medida por diferença de posição — é dela que sai a
+## velocidade de aproximação do abalroamento.
+var capital_velocity := Vector3.ZERO
+## Última vez que cada par de cascos trocou golpe, chaveada pelo par de instance ids.
+var ram_windows: Dictionary = {}
 var fleet: Array[Dictionary] = []
 var enemies: Array[Dictionary] = []
 var battle_clock := 0.0
@@ -58,6 +126,10 @@ var visual_rng := RandomNumberGenerator.new()
 ## real, então ela é construída a partir das listas vivas e não de um cadastro paralelo.
 var holo_blips: Dictionary = {}
 var holo_root: Node3D
+## O blip dourado da capitânia mora fora de `holo_blips`: a mesa é construída a partir das listas
+## de frota, e o rig de ponte não é unidade nenhuma — misturar os dois quebraria a conta de
+## blips por casco vivo que `tools/probes/graficos.gd` confere.
+var holo_capitania: MeshInstance3D
 ## Anel que gira sobre a mesa: o movimento é o que denuncia a pausa tática como pausa, não
 ## como jogo congelado.
 var holo_anel: Node3D
@@ -105,6 +177,7 @@ func _ready() -> void:
 	# Semente cravada de propósito: o céu e os fachos são os mesmos em toda partida, e nada do
 	# que se vê depende do sorteio da batalha.
 	visual_rng.seed = 20261020
+	_registra_voo()
 	_build_environment()
 	_build_bridge()
 	_build_fleets()
@@ -130,7 +203,10 @@ func _process(delta: float) -> void:
 		fire_clock = 0.0
 		_resolve_volley()
 	if is_instance_valid(speed_label):
-		speed_label.text = "VELOCIDADE DA CAPITÂNIA  %03d%%" % int(50.0 + throttle * 50.0)
+		# Velocidade com sinal: ré é marcha, não defeito, e a altitude entra porque o campo agora
+		# tem três eixos e o comandante precisa ler em qual dele está.
+		speed_label.text = "VELOCIDADE %+04d%%  //  SUBIDA %+04d  //  CASCO DA CAPITÂNIA %03d%%" % [
+			int(throttle * 100.0), int(bridge_rig.position.y), int(capital_hp)]
 	if is_instance_valid(report_label) and int(battle_clock) % 12 == 0 and fmod(battle_clock, 1.0) < delta:
 		report_label.text = "RELATÓRIO: contato hostil confirmado. Frota em combate."
 	_update_hud()
@@ -373,6 +449,11 @@ func _build_holo_table() -> void:
 	mat_holo_hostil = _holo_mat(Color(1.0, 0.34, 0.24))
 	mat_holo_presa = _holo_mat(GOLD)
 	mat_holo_morto = _holo_mat(Color(0.22, 0.24, 0.28))
+	# O blip da capitânia é dourado e mora no rig, não na lista de blips: o rig não é unidade de
+	# frota, e a conta de blip por casco vivo que `tools/probes/graficos.gd` confere tem de
+	# continuar lendo só `fleet` + `enemies`.
+	holo_capitania = _cylinder(holo_root.position + _holo_de(bridge_rig.position), 0.11, 0.0, 0.34,
+		_holo_mat(HUD_OURO.lightened(0.25)), bridge_rig, Vector3.ZERO, 6)
 
 func _holo_mat(cor: Color) -> StandardMaterial3D:
 	# Emissão abaixo do limiar de bloom de propósito: o blip tem de ler como holograma colorido
@@ -389,9 +470,18 @@ func _glasm(cor: Color) -> StandardMaterial3D:
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return mat
 
-## Posição de tabuleiro -> posição na mesa: o mesmo mundo, escalado para caber sob o visor.
+## Posição de tabuleiro -> posição na mesa: o mesmo campo, na mesma proporção nos três eixos, com
+## a altitude ampliada porque ela é a menor dimensão do combate. Quem sai da janela tática encosta
+## no aro em vez de desaparecer da mesa.
 func _holo_de(pos: Vector3) -> Vector3:
-	return Vector3(pos.x * 0.16, 0.1, (pos.z + 66.0) * 0.045)
+	var dx := pos.x * HOLO_SCALE
+	var dz := (pos.z - HOLO_ANCHOR_Z) * HOLO_SCALE
+	var raio := Vector2(dx, dz).length()
+	if raio > HOLO_RIM:
+		var fator := HOLO_RIM / raio
+		dx *= fator
+		dz *= fator
+	return Vector3(dx, 0.1 + clampf(pos.y * HOLO_ALT_SCALE, -HOLO_ALT_CEIL, HOLO_ALT_CEIL), dz)
 
 func _rebuild_holo() -> void:
 	if not is_instance_valid(holo_root):
@@ -433,19 +523,27 @@ func _update_bridge(_delta: float) -> void:
 		_atualiza_blip(unit, true)
 	for unit in enemies:
 		_atualiza_blip(unit, false)
+	# A capitânia também é corpo no campo, então também tem blip: o comandante precisa se ver na
+	# mesa para não mandar a frota para cima da própria ponte.
+	if is_instance_valid(holo_capitania):
+		holo_capitania.position = holo_root.position + _holo_de(bridge_rig.position)
 
 func _build_fleets() -> void:
+	# A faixa de deslocamento inicial é pintura de formação, não sorteio de batalha: morava em
+	# `rng`, e por isso a semente tinha de ser cravada depois de montar a frota — o que deixava a
+	# posição de partida diferente entre duas rodadas com a mesma semente e impedia a sonda de
+	# assinar um valor. Agora `rng` começa a salvar do zero, em toda partida.
 	for i in range(6):
 		var x := (float(i) - 2.5) * 5.0
 		var z := -38.0 - (i % 2) * 5.0
-		var ship := _make_ship(Vector3(x, rng.randf_range(-2, 2), z), BLUE,
+		var ship := _make_ship(Vector3(x, visual_rng.randf_range(-2, 2), z), BLUE,
 			1.1 + float(i % 3) * 0.06, "ALIADA %02d" % (i + 1))
 		fleet.append({"node": ship, "order": "LINHA", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "repair_priority": "AUTO", "team": "friendly", "name": "ALIADA %02d" % (i + 1), "squadron": "ALFA" if i < 3 else "BETA"})
 	for i in range(6):
 		var x := (float(i) - 2.5) * 6.0
 		var z := -82.0 - (i % 2) * 7.0
 		var is_command := i == 0
-		var ship := _make_ship(Vector3(x, rng.randf_range(-3, 3), z), RED,
+		var ship := _make_ship(Vector3(x, visual_rng.randf_range(-3, 3), z), RED,
 			1.55 if is_command else 1.3, "HOSTIL %02d" % (i + 1), is_command)
 		enemies.append({"node": ship, "order": "AVANÇAR", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "team": "enemy", "name": "CAPITÂNIA HOSTIL" if is_command else "HOSTIL %02d" % (i + 1), "squadron": "INIMIGO", "role": "COMANDO" if is_command else "LINE"})
 
@@ -609,7 +707,7 @@ func _build_ui() -> void:
 	title.add_theme_font_size_override("font_size", 19)
 	top_row.add_child(title)
 	speed_label = Label.new()
-	speed_label.text = "VELOCIDADE DA CAPITÂNIA  050%"
+	speed_label.text = "VELOCIDADE +000%  //  SUBIDA +000  //  CASCO DA CAPITÂNIA 100%"
 	speed_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_row.add_child(speed_label)
 	pause_button = _add_button(top_row, "PAUSAR [ESPAÇO]", _toggle_pause)
@@ -698,7 +796,8 @@ func _build_ui() -> void:
 	_add_button(col, "FORMAÇÃO: LINHA", func(): _set_formation("LINHA"))
 	_add_button(col, "FORMAÇÃO: CUNHA", func(): _set_formation("CUNHA"))
 	var hint := Label.new()
-	hint.text = "W/S velocidade  •  A/D rotação\nESPAÇO pausa tática"
+	hint.text = ("W avante  •  S ré (a ré tem teto)\nA / D guinada  •  ↑ / ↓ arfagem  •  "
+		+ "Q / E rolagem\nR sobe  •  V desce  •  ESPAÇO pausa tática")
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.add_theme_color_override("font_color", Color(0.65, 0.78, 0.9))
 	col.add_child(hint)
@@ -817,18 +916,68 @@ func _quad(pos: Vector3, size: float, mat: Material, parent: Node) -> MeshInstan
 	parent.add_child(mesh_instance)
 	return mesh_instance
 
+## Registra o timão no InputMap antes de qualquer UI. Fazer isso em código (e não no
+## `project.godot`) mantém a tabela de teclas ao lado de quem a lê e poupa o arquivo de
+## configuração de uma serialização `Object(InputEventKey,...)` que muda com o motor.
+func _registra_voo() -> void:
+	for acao: String in VOO_ACOES:
+		if not InputMap.has_action(acao):
+			InputMap.add_action(acao, 0.0)
+		var tecla := InputEventKey.new()
+		tecla.keycode = VOO_ACOES[acao]
+		InputMap.action_add_event(acao, tecla)
+		var fisica := InputEventKey.new()
+		fisica.physical_keycode = VOO_ACOES[acao]
+		InputMap.action_add_event(acao, fisica)
+
+## Timão da capitânia em três eixos: guinada (A/D), arfagem (setas ↑/↓), rolagem (Q/E, que se
+## autocorrige quando a mão sai do teclado para a mesa continuar legível), avante e ré (W/S, com a
+## ré limitada) e empuxo vertical (R/V, sobe e desce sem mudar a atitude). Nada aqui sorteia: a
+## posição do rig é leitura de teclado, e é por isso que a sonda de voo pode afirmar coordenada.
 func _update_capital_ship(delta: float) -> void:
 	var turn := 0.0
-	if Input.is_key_pressed(KEY_A):
+	if Input.is_action_pressed("capital_bombordo"):
 		turn += 1.0
-	if Input.is_key_pressed(KEY_D):
+	if Input.is_action_pressed("capital_estibordo"):
 		turn -= 1.0
-	if Input.is_key_pressed(KEY_W):
-		throttle = minf(1.0, throttle + delta * 0.24)
-	if Input.is_key_pressed(KEY_S):
-		throttle = maxf(0.0, throttle - delta * 0.32)
+	var pitch := 0.0
+	if Input.is_action_pressed("capital_nariz_acima"):
+		pitch += 1.0
+	if Input.is_action_pressed("capital_nariz_abaixo"):
+		pitch -= 1.0
+	var roll := 0.0
+	if Input.is_action_pressed("capital_role_esquerda"):
+		roll += 1.0
+	if Input.is_action_pressed("capital_role_direita"):
+		roll -= 1.0
+	var lift := 0.0
+	if Input.is_action_pressed("capital_empuxo_acima"):
+		lift += 1.0
+	if Input.is_action_pressed("capital_empuxo_abaixo"):
+		lift -= 1.0
+	var avante := Input.is_action_pressed("capital_avante")
+	var re := Input.is_action_pressed("capital_re")
+	if avante:
+		throttle = minf(1.0, throttle + delta * 0.5)
+	if re:
+		throttle = maxf(CAPITAL_REVERSE, throttle - delta * 0.6)
+	# Sem mão no acelerador o casco perde velocidade aos poucos: manobra tem inércia, mas o
+	# jogador nunca fica à deriva sem saber por quê.
+	if not avante and not re:
+		throttle = move_toward(throttle, 0.0, delta * 0.3)
 	bridge_rig.rotation.y += turn * delta * 0.28
-	bridge_rig.position += -bridge_rig.global_transform.basis.z * throttle * 5.0 * delta
+	bridge_rig.rotation.x = clampf(bridge_rig.rotation.x + pitch * delta * 0.5, -PITCH_LIMIT, PITCH_LIMIT)
+	bridge_rig.rotation.z = clampf(move_toward(bridge_rig.rotation.z, roll * ROLL_LIMIT, delta * 0.9),
+		-ROLL_LIMIT, ROLL_LIMIT)
+	var anterior := bridge_rig.position
+	# O rumo sai da transformada global do rig, então arfar aponta o empuxo para cima de verdade:
+	# subir com o nariz erguido e subir com o vetor de proa são manobras diferentes na ponte.
+	var rumo := -bridge_rig.global_transform.basis.z
+	bridge_rig.position += (rumo * throttle * CAPITAL_SPEED + Vector3(0.0, lift * CAPITAL_LIFT, 0.0)) * delta
+	bridge_rig.position.x = clampf(bridge_rig.position.x, -MAP_X, MAP_X)
+	bridge_rig.position.y = clampf(bridge_rig.position.y, -MAP_Y, MAP_Y)
+	bridge_rig.position.z = clampf(bridge_rig.position.z, MAP_Z_FAR, MAP_Z_NEAR)
+	capital_velocity = (bridge_rig.position - anterior) / maxf(delta, 0.0001)
 
 func _update_fleet(delta: float) -> void:
 	# Ambas as frotas agem continuamente; ordens mudam comportamento, não iniciam turnos.
@@ -838,6 +987,7 @@ func _update_fleet(delta: float) -> void:
 		if ally["hp"] <= 0.0 or not is_instance_valid(ship):
 			continue
 		var mobility: float = 0.25 + float(ally["engines"]) / 100.0 * 0.75
+		var partida := ship.position
 		if ally["order"] == "MOVER" and ally.has("destination"):
 			ship.position = ship.position.move_toward(ally["destination"], delta * 8.0 * mobility)
 		elif ally["order"] == "AVANÇAR":
@@ -848,7 +998,7 @@ func _update_fleet(delta: float) -> void:
 			var protect_position := Vector3.ZERO
 			if protected_unit_index >= 0 and protected_unit_index < fleet.size():
 				protect_position = (fleet[protected_unit_index]["node"] as Node3D).position
-			var escort_destination := protect_position + Vector3((float(i) - 2.5) * 3.0, 0, 8.0 if protected_unit_index >= 0 else -12.0)
+			var escort_destination := protect_position + Vector3((float(i) - 2.5) * FORMATION_STEP, 0, 8.0 if protected_unit_index >= 0 else -12.0)
 			ship.position = ship.position.lerp(escort_destination, minf(1.0, delta * 0.35))
 		elif ally["order"] == "RESERVA":
 			ship.position.z = move_toward(ship.position.z, -48.0, delta * 0.8)
@@ -857,6 +1007,9 @@ func _update_fleet(delta: float) -> void:
 		elif ally["order"] == "ABORDAR" and selected_target < enemies.size() and enemies[selected_target]["hp"] > 0.0:
 			var target: Node3D = enemies[selected_target]["node"]
 			ship.position = ship.position.move_toward(target.position + Vector3((float(i) - 2.5) * 2.0, 0, 8.0), delta * 2.2 * mobility)
+		# Velocidade real do quadro, medida por diferença de posição: é o que o abalroamento lê
+		# para separar encostar de bater, sem inventar um sorteio de impacto.
+		ally["veloc"] = (ship.position - partida) / maxf(delta, 0.0001)
 		# Automatic repair crews follow the commander priority, or balance repairs by default.
 		var repair_rate := delta * (2.2 if float(ally["crew"]) > 25.0 else 1.0)
 		var priority: String = ally.get("repair_priority", "AUTO")
@@ -890,6 +1043,7 @@ func _update_fleet(delta: float) -> void:
 		if enemy["hp"] <= 0.0 or not is_instance_valid(foe):
 			continue
 		var mobility: float = 0.25 + float(enemy["engines"]) / 100.0 * 0.75
+		var partida := foe.position
 		if enemy["order"] == "AVANÇAR":
 			foe.position.z += delta * 0.85 * mobility
 		elif enemy["order"] == "RECUAR":
@@ -901,7 +1055,119 @@ func _update_fleet(delta: float) -> void:
 		# Qualquer que seja a ordem, o casco hostil fica entre a linha de reunião e a de
 		# avanço: a batalha não migra para fora da vista da ponte.
 		foe.position.z = clampf(foe.position.z, HOSTILE_RALLY_Z, HOSTILE_ADVANCE_Z)
+		enemy["veloc"] = (foe.position - partida) / maxf(delta, 0.0001)
 		_tune_ship_look(enemy)
+	# Por último a física de contato: primeiro cada casco obedece à ordem, depois o campo cobra
+	# quem atravessou quem. Inverter a ordem faria a separação ser sobrescrita pela ordem no
+	# mesmo quadro, e a colisão viraria enfeite.
+	_resolve_collisions()
+
+## Corpos que ocupam espaço: frota, hostis e a própria ponte. Destroço entra como âncora
+## (`imovel`) porque baixar tem de continuar no quadro e não pode ser empurrado por quem vive.
+func _collision_bodies() -> Array[Dictionary]:
+	var bodies: Array[Dictionary] = []
+	for unit in fleet:
+		var node: Node3D = unit["node"]
+		if not is_instance_valid(node):
+			continue
+		bodies.append({"node": node, "unidade": unit, "raio": HULL_RADIUS, "hostil": false,
+			"imovel": float(unit["hp"]) <= 0.0})
+	for unit in enemies:
+		var node: Node3D = unit["node"]
+		if not is_instance_valid(node):
+			continue
+		bodies.append({"node": node, "unidade": unit, "raio": HULL_RADIUS, "hostil": true,
+			"imovel": float(unit["hp"]) <= 0.0})
+	bodies.append({"node": bridge_rig, "unidade": null, "raio": CAPITAL_RADIUS, "hostil": false,
+		"imovel": false})
+	return bodies
+
+func _resolve_collisions() -> void:
+	var bodies := _collision_bodies()
+	for a in range(bodies.size()):
+		for b in range(a + 1, bodies.size()):
+			_separate_pair(bodies[a], bodies[b])
+
+## Separação posicional e dano de abalroamento. Empurra menos quem tem mais casco; um destroço é
+## âncora e não sai do lugar. Nenhum sorteio aqui — impacto é geometria, e um `rng.randf()` de
+## colisão reescreveria toda a cauda de dano da salva seguinte (ver `visual_rng`).
+func _separate_pair(a: Dictionary, b: Dictionary) -> void:
+	var node_a: Node3D = a["node"]
+	var node_b: Node3D = b["node"]
+	var entre_cascos := node_b.global_position - node_a.global_position
+	var distancia := entre_cascos.length()
+	var soma := float(a["raio"]) + float(b["raio"])
+	if distancia >= soma:
+		return
+	# Dois cascos exatamente no mesmo ponto não têm normal: empurra em +Z, sem sorteio de eixo.
+	var normal := Vector3(0, 0, 1) if distancia < 0.001 else entre_cascos / distancia
+	var sobreposicao := soma - distancia
+	if bool(a["imovel"]):
+		node_b.global_position += normal * sobreposicao
+	elif bool(b["imovel"]):
+		node_a.global_position -= normal * sobreposicao
+	else:
+		# Peso distribuído pelo casco: o pequeno cede mais que o grande.
+		var cessao_a := float(b["raio"]) / soma
+		var cessao_b := float(a["raio"]) / soma
+		node_a.global_position -= normal * sobreposicao * cessao_a
+		node_b.global_position += normal * sobreposicao * cessao_b
+	var vel_a := _body_velocity(a)
+	var vel_b := _body_velocity(b)
+	var aproximacao := (vel_a - vel_b).dot(normal)
+	if aproximacao <= RAM_SPEED:
+		return
+	var chave := _pair_key(a, b)
+	if battle_clock - float(ram_windows.get(chave, -RAM_WINDOW)) < RAM_WINDOW:
+		return
+	ram_windows[chave] = battle_clock
+	var dano := clampf((aproximacao - RAM_SPEED) * RAM_DAMAGE, 1.0, RAM_MAX_DAMAGE)
+	var nome_a := _body_name(a)
+	var nome_b := _body_name(b)
+	_apply_impact(a, dano)
+	_apply_impact(b, dano)
+	if is_instance_valid(report_label):
+		report_label.text = "ESPERAMENTO // %s e %s trocaram casco no abalroamento (-%0.1f)." % [
+			nome_a, nome_b, dano]
+
+func _body_velocity(body: Dictionary) -> Vector3:
+	if body["unidade"] == null:
+		return capital_velocity
+	if bool(body["imovel"]):
+		return Vector3.ZERO
+	return body["unidade"].get("veloc", Vector3.ZERO)
+
+func _body_name(body: Dictionary) -> String:
+	if body["unidade"] == null:
+		return "CAPITÂNIA"
+	return String(body["unidade"]["name"])
+
+func _pair_key(a: Dictionary, b: Dictionary) -> String:
+	var nodo_a: Node3D = a["node"]
+	var nodo_b: Node3D = b["node"]
+	var id_a := nodo_a.get_instance_id()
+	var id_b := nodo_b.get_instance_id()
+	return "%d:%d" % [mini(id_a, id_b), maxi(id_a, id_b)]
+
+## O dano do impacto entra pelo casco, e afunda motor e arma porque nada em um cruzador absorve
+## uma bordaada sem quebrar uma linha de eixo. Se o casco fecha ali, a marca de destroço é feita
+## aqui — senão o corpo ficaria vivo na conta e pintado como perda.
+func _apply_impact(body: Dictionary, dano: float) -> void:
+	if body["unidade"] == null:
+		capital_hp = maxf(0.0, capital_hp - dano)
+		if capital_hp <= 0.0 and is_instance_valid(report_label):
+			report_label.text = "PONTE DESTRUÍDA // a capitânia perdeu o comando da frota."
+		return
+	var unit: Dictionary = body["unidade"]
+	if float(unit["hp"]) <= 0.0:
+		return
+	unit["hp"] = maxf(0.0, float(unit["hp"]) - dano)
+	unit["engines"] = maxf(0.0, float(unit["engines"]) - dano * 0.5)
+	unit["weapons"] = maxf(0.0, float(unit["weapons"]) - dano * 0.5)
+	if float(unit["hp"]) <= 0.0:
+		_mark_wreck(unit["node"] as Node3D)
+		if is_instance_valid(report_label):
+			report_label.text = "ABALROAMENTO // %s fechou no impacto." % String(unit["name"])
 
 ## Lança uma sonda por casco vivo selecionado que ainda não tenha outra em órbita. Não há
 ## custo em números: a moeda da sonda é a cobertura do tabuleiro, e o teto é um objeto por
@@ -1117,6 +1383,11 @@ func _resolve_volley() -> void:
 	_integrate_captured_ships()
 	# Depois a IA hostil relê o tabuleiro; a retaliação desta salva usa o alvo escolhido aqui.
 	_apply_hostile_tactics()
+	# Sem ponte não há salva: a capitânia é corpo no campo agora, e abalroar custa casco também
+	# para quem comando.
+	if capital_hp <= 0.0:
+		report_label.text = "DERROTA // capitânia perdida: a frota ficou sem ponte de comando."
+		return
 	var living_enemies := 0
 	var living_allies := 0
 	for enemy in enemies:
@@ -1368,7 +1639,7 @@ func _give_order(order: String) -> void:
 		var unit: Dictionary = fleet[i]
 		unit["order"] = order
 		if order == "MOVER":
-			unit["destination"] = Vector3(move_x + (float(i) - 2.5) * 3.0, 0.0, move_z)
+			unit["destination"] = Vector3(move_x + (float(i) - 2.5) * FORMATION_STEP, 0.0, move_z)
 		fleet[i] = unit
 	if order == "ATACAR":
 		report_label.text = "%d unidade(s) atacando %s / %s. Combate contínuo." % [selected.size(), enemies[selected_target]["name"], subsystem_selector.get_item_text(subsystem_selector.selected)]
