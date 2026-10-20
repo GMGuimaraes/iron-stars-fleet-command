@@ -1,0 +1,16 @@
+# Cache do editor Godot 4 — gerado localmente, muda a cada abrir.
+.godot/
+
+# Builds exportados (ver tools/ e .export/ quando existirem).
+.export/
+export/
+*.pck
+*.zip
+
+# Backups soltos de edição de script.
+*.bak
+*.bak.*
+
+# lixo de SO
+Thumbs.db
+.DS_Store
