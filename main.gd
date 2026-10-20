@@ -104,6 +104,10 @@ const HUD_OURO := Color(0.82, 0.68, 0.34)
 ## cauda de `rng` igual sorteio de estrela — ver `visual_rng`.
 const DETONACAO: Array[Vector3] = [Vector3(0, 0, 0), Vector3(1.1, 0.5, -0.7), Vector3(-1.2, -0.4, 0.6),
 	Vector3(0.5, -1.0, 1.2), Vector3(-0.7, 0.9, -1.1)]
+## Ponte sonora (trilha clássica + efeitos abafados de vácuo) montada como filho da cena, não
+## como sistema global: headless não tem alto-falante, e é assim que a sonda consegue ler
+## `pedidos` e `soaram` sem depender de saída de áudio.
+const PonteSonora := preload("res://audio.gd")
 var paused := false
 ## Signed: positivo é avante, negativo é ré. O HUD lê em porcentagem com sinal.
 var throttle := 0.0
@@ -118,6 +122,12 @@ var fleet: Array[Dictionary] = []
 var enemies: Array[Dictionary] = []
 var battle_clock := 0.0
 var fire_clock := 0.0
+## Nó da ponte sonora (`PonteSonora`). Os contadores de pedido e de efeito que passaram da
+## janela anti-spam vivem nele, e é por eles que a sonda prova o som em headless.
+var audio: PonteSonora
+## A salva vitoriosa reentra no mesmo relatório a cada 1,6 s; sem esta guarda o alarme de
+## fim de combate tocaria para sempre em laço depois da batalha.
+var batalha_encerrada := false
 var status_label: Label
 var report_label: Label
 var pause_button: Button
@@ -202,6 +212,13 @@ func _ready() -> void:
 	# cascos hostis a confirmar.
 	_recompute_recon()
 	_build_ui()
+	# A ponte só ganha som depois de montada: se a UI abortar, a trilha não fica tocando
+	# num jogo quebrado — e `tocar_trilha()` é idempotente, então um segundo `_ready` não
+	# reinicia a frase no meio.
+	audio = PonteSonora.new()
+	audio.name = "PonteSonora"
+	add_child(audio)
+	audio.tocar_trilha()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 func _process(delta: float) -> void:
@@ -698,6 +715,9 @@ func _mark_wreck(ship: Node3D) -> void:
 ## Detonação em billets aditivos com deslocamentos fixos: cinco clarões que abrem e apagam em
 ## meio segundo. Nada aqui sorteia — é o que separa efeito visual de regressão de economia.
 func _spawn_explosion(pos: Vector3, cor: Color) -> void:
+	# Um pedido por detonação, não cinco: os billets são o clarão, o ouvido não precisa
+	# de cinco estouros para o mesmo casco que afunda.
+	audio.efeito("EXPLOSAO")
 	for i in range(DETONACAO.size()):
 		var estouro := _flare(pos + DETONACAO[i], 1.4 + float(i) * 0.4, Color(cor, 0.85), self)
 		var tween := create_tween()
@@ -1196,6 +1216,9 @@ func _pair_key(a: Dictionary, b: Dictionary) -> String:
 ## uma bordaada sem quebrar uma linha de eixo. Se o casco fecha ali, a marca de destroço é feita
 ## aqui — senão o corpo ficaria vivo na conta e pintado como perda.
 func _apply_impact(body: Dictionary, dano: float) -> void:
+	# O baque é o único efeito do abalroamento que se ouve: o casco range por dentro, e o
+	# estouro vem depois, se o casco fechar.
+	audio.efeito("IMPACTO")
 	if body["unidade"] == null:
 		capital_hp = maxf(0.0, capital_hp - dano)
 		if capital_hp <= 0.0 and is_instance_valid(report_label):
@@ -1430,6 +1453,7 @@ func _resolve_volley() -> void:
 	# para quem comando.
 	if capital_hp <= 0.0:
 		report_label.text = "DERROTA // capitânia perdida: a frota ficou sem ponte de comando."
+		_encerra_batalha()
 		return
 	var living_enemies := 0
 	var living_allies := 0
@@ -1441,9 +1465,11 @@ func _resolve_volley() -> void:
 			living_allies += 1
 	if living_enemies == 0:
 		report_label.text = "VITÓRIA TÁTICA // Frota hostil neutralizada."
+		_encerra_batalha()
 		return
 	if living_allies == 0:
 		report_label.text = "DERROTA // Frota aliada neutralizada."
+		_encerra_batalha()
 		return
 	var focus_target := selected_target
 	if focus_target < 0 or focus_target >= enemies.size() or enemies[focus_target]["hp"] <= 0.0 or enemies[focus_target]["order"] == "CAPTURADO":
@@ -1632,6 +1658,9 @@ func _rebuild_selectors() -> void:
 ## cauda de combate cobra e que `tools/probes/sondas.gd` confere. O lance hostil sai de
 ## `visual_rng`, então inimigo passando a atirar na tela não reescreve um dano sequer.
 func _spawn_bolt(destino: Vector3, cor: Color, origem: Vector3, cauda_de_combate := true) -> void:
+	# O disparo se ouve no lançamento, não no impacto: é o traço saindo do bocal. A janela
+	# anti-spam de `efeito()` é o que impede doze lances da mesma salva virarem doze apitos.
+	audio.efeito("LASER")
 	var dx := 0.0
 	var dy := 0.0
 	if cauda_de_combate:
@@ -1875,7 +1904,20 @@ func _toggle_pause() -> void:
 	paused = not paused
 	pause_button.text = "RETOMAR" if paused else "PAUSAR [ESPAÇO]"
 	report_label.text = "PAUSA TÁTICA // emita suas ordens." if paused else "BATALHA RETOMADA // executando ordens."
+	# A trilha abaixa, não silencia: a pausa é leitura de mesa, não fim de combate.
+	audio.abafar_trilha(paused)
 	_update_hud()
+
+
+## Fim de combate: o alarme fecha a cena e a trilha para. A guarda é necessária porque a salva
+## vitoriosa reentra neste mesmo galho a cada 1,6 s enquanto o tabuleiro estiver morto, e um
+## `efeito()` sem ela tocaria o alarme para sempre depois da batalha.
+func _encerra_batalha() -> void:
+	if batalha_encerrada:
+		return
+	batalha_encerrada = true
+	audio.efeito("ALARME")
+	audio.parar_trilha()
 
 func _update_hud() -> void:
 	if is_instance_valid(command_label):

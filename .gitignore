@@ -11,6 +11,10 @@ export/
 *.bak
 *.bak.*
 
+# Cache de importação do Python, criado quando `tools/synth_audio.py` é importado (a ferramenta
+# mede o próprio arquivo importando o módulo).
+__pycache__/
+
 # lixo de SO
 Thumbs.db
 .DS_Store
