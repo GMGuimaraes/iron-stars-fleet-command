@@ -67,6 +67,18 @@ const AGRUPAR_RAIO := 5.5
 ## cascos de uma vez, sem espalhar a força para fora do alcance da própria salva.
 const DISPERSAR_RAIO := 16.5
 const CAPITAL_RADIUS := 6.0
+## Alcance do canhão da capitânia, em unidades de tabuleiro. É a distância a que a linha hostil
+## resolve se aproximar (`HOSTILE_ADVANCE_Z`), medida a partir da origem onde a ponte abre: no
+## tabuleiro de partida o hostil comandado está a mais de 83 u, então a capitânia não dispara um
+## lance na abertura e nem encosta no limite quando a frota hostil para na linha de avanço. O canhão
+## dela existe para quem traz a própria nave para dentro do alcance — ou para o inimigo que decide
+## fechar. Nenhuma sonda que não move `bridge_rig` vê um lance dela, e é esse o chão da prova de
+## inércia em `tools/probes/capitania.gd`.
+const CAPITAL_ALCANCE := 60.0
+## O canhão da capitânia É o canhão de linha: o dano sai de `_dano_de_canhao` com armas e
+## tripulação em dia, em cruzador puro, e não de uma conta paralela. Ela não tem subsistemas no
+## cadastro porque não é casco de frota — a ponte é o jogador, e o único número dela é o casco.
+const CAPITAL_CANHAO := {"weapons": 100.0, "crew": 100.0, "classe": "CRUZADOR"}
 ## ---- Salva em área (a "chuva de flechas") ----
 ## Um navio que atira não manda um raio único contra um casco: manda uma salva de impactos
 ## espalhados sobre um disco perpendicular à linha de tiro. O disco é o setor, não o navio, e é
@@ -361,6 +373,15 @@ var capital_hp := 100.0
 var capital_velocity := Vector3.ZERO
 ## Última vez que cada par de cascos trocou golpe, chaveada pelo par de instance ids.
 var ram_windows: Dictionary = {}
+## A conta do canhão da capitânia, cumulativa desde a primeira salva em que ela esteve dentro do
+## alcance e nunca zerada por volley, no mesmo molde da bateria e do grupo aéreo. `salvas` conta as
+## salvas em que ela atirou, e os lances fecham `feriram + no_vao + parados == lancados` — somar as
+## duas identidades é a régua que prova que nenhum lance da ponte se perdeu pelo caminho.
+var capitania_contagem: Dictionary = {"salvas": 0, "lancados": 0, "feriram": 0, "no_vao": 0,
+	"parados": 0, "dano": 0.0}
+## Estado do alcance, lido no flanco de cada salva: a ponte anuncia ao comandante que o canhão dela
+## entrou ou saiu do jogo uma vez por virada, não a cada quadro.
+var capitania_em_alcance := false
 var fleet: Array[Dictionary] = []
 var enemies: Array[Dictionary] = []
 var battle_clock := 0.0
@@ -374,6 +395,10 @@ var batalha_encerrada := false
 var status_label: Label
 var report_label: Label
 var pause_button: Button
+## Letreiro do canhão da capitânia dentro do grupo ARMAMENTO. É Label, não Button: leitura de
+## estado não é comando, e por isso os trinta e cinco botões que `tools/probes/menu.gd` conta
+## continuam sendo trinta e cinco.
+var capitania_label: Label
 var speed_label: Label
 var command_label: Label
 var bridge_rig: Node3D
@@ -1513,6 +1538,14 @@ func _build_ui() -> void:
 	_add_button(grupo_armamento, "ENCURRAÇADOS −1 — casco devolvido à linha", func(): _ajustar_encoracados(-1))
 	_add_button(grupo_armamento, "PORTA-AVIÕES +1 — grupo aéreo de 3 caças", func(): _ajustar_porta_avioes(1))
 	_add_button(grupo_armamento, "PORTA-AVIÕES −1 — convés devolvido à linha", func(): _ajustar_porta_avioes(-1))
+	# O canhão da ponte é o único dos três canais de dano que não se compra: ele está ligado à
+	# distância. Sem letreiro, o comandante atiraria de uma capitânia que nunca entrou no alcance
+	# e concluiria que o recurso não existe.
+	capitania_label = Label.new()
+	capitania_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	capitania_label.add_theme_font_size_override("font_size", 12)
+	capitania_label.add_theme_color_override("font_color", HUD_OURO.darkened(0.12))
+	grupo_armamento.add_child(capitania_label)
 	var grupo_reparo := _add_grupo(col, "REPAROS")
 	_add_button(grupo_reparo, "PRIORIDADE MOTORES", func(): _set_repair_priority("MOTORES"))
 	_add_button(grupo_reparo, "PRIORIDADE ARMAS", func(): _set_repair_priority("ARMAS"))
@@ -3614,6 +3647,33 @@ func _ajustar_fogo(passo: int) -> void:
 	_update_hud()
 
 
+## O casco sob o setor comandado: o apontado pelo painel, ou o primeiro hostil vivo quando ele
+## caiu, foi capturado ou nunca foi apontado. `_resolve_volley` e o letreiro de alcance da capitânia
+## leem esta função — painel e salva não podem apontar para alvos diferentes, que é o tipo de
+## discordância que o comandante lê como "atirei e não aconteceu nada".
+func _alvo_comandado() -> int:
+	var alvo := selected_target
+	if alvo < 0 or alvo >= enemies.size() or float(enemies[alvo]["hp"]) <= 0.0 \
+			or String(enemies[alvo]["order"]) == "CAPTURADO":
+		alvo = -1
+		for i in range(enemies.size()):
+			if float(enemies[i]["hp"]) > 0.0 and String(enemies[i]["order"]) != "CAPTURADO":
+				alvo = i
+				break
+	return alvo
+
+
+## Distância real entre a capitânia e o setor comandado: a régua que decide se o canhão dela dispara.
+## É função nomeada porque o letreiro do painel e a salva medem a MESMA grandeza — dois números de
+## alcance, um pintado no quadro e outro cobrado no tiro, mentiriam um para o outro. Devolve INF sem
+## hostil vivo, que é o estado "sem contato comandado" e nunca "a uma distância zero".
+func _capitania_alcance() -> float:
+	var alvo := _alvo_comandado()
+	if alvo < 0:
+		return INF
+	return bridge_rig.global_position.distance_to((enemies[alvo]["node"] as Node3D).global_position)
+
+
 func _resolve_volley() -> void:
 	# Primeiro incorpora as presas da salva anterior: a contagem de vitória abaixo lê
 	# `enemies`, e uma presa que ainda consta como hostil adia a batalha para sempre.
@@ -3642,16 +3702,14 @@ func _resolve_volley() -> void:
 		report_label.text = "DERROTA // Frota aliada neutralizada."
 		_encerra_batalha()
 		return
-	var focus_target := selected_target
-	if focus_target < 0 or focus_target >= enemies.size() or enemies[focus_target]["hp"] <= 0.0 or enemies[focus_target]["order"] == "CAPTURADO":
-		focus_target = -1
-		for i in range(enemies.size()):
-			if enemies[i]["hp"] > 0.0 and enemies[i]["order"] != "CAPTURADO":
-				focus_target = i
-				break
+	var focus_target := _alvo_comandado()
 	# A ponte manda a salva para um setor, não para um casco: o centro do disco é o alvo comandado
 	# e ele é desenhado na mesa antes de qualquer impacto existir.
 	setor_fogo_pos = (enemies[focus_target]["node"] as Node3D).global_position
+	# A régua do canhão da capitânia é lida no mesmo instante do setor: a salva resolve-se num quadro
+	# só, e o disco e o alcance têm de medir o MESMO tabuleiro, não o de antes e o de depois dos
+	# cascos que acabaram de cair.
+	var alcance_capitania := _capitania_alcance()
 	# Cada casco vivo atira por conta própria e manda FLECHAS_POR_SALVA impactos sobre o disco.
 	# Quem está sob ordem de ataque (ou fechando para abordar) obedece ao setor da ponte; o resto
 	# da linha tem iniciativa e sobe a escada de alvo — é isto que separa uma esquadra de doze
@@ -3741,6 +3799,64 @@ func _resolve_volley() -> void:
 		var esquadrilha := _cacas_por_salva(ally)
 		for k in range(mini(esquadrilha, pontos.size())):
 			_lancar_caca(origem, pontos[pontos.size() - 1 - k], damage * CACA_FATOR)
+	# ---- O canhão da capitânia ----
+	# A ponte atira com a linha, sobre o setor que ela mesma comandou, e só quando alcança: quem
+	# quer os canhões da capitânia tem de trazê-la para dentro do alcance — ou esperar o hostil
+	# fechar. Ela não ganha canal próprio: entra pelo mesmo disco de `FOGO_RAIO`, pelo mesmo
+	# `_dano_de_canhao` e pela mesma barreira da linha, e paga os mesmos dois sorteios de `rng` por
+	# lance desenhado que qualquer casco paga ao `_spawn_bolt`.
+	var em_alcance := alcance_capitania <= CAPITAL_ALCANCE
+	if em_alcance != capitania_em_alcance:
+		capitania_em_alcance = em_alcance
+		if em_alcance:
+			report_label.text = "CAPITÂNIA EM ALCANCE // canhão de linha sobre o setor a %0.1f u." % alcance_capitania
+		else:
+			report_label.text = "CAPITÂNIA FORA DE ALCANCE // setor a %0.1f u e o canhão de linha alcança %0.0f u: avance a ponte ou mande a linha." % [
+				alcance_capitania, CAPITAL_ALCANCE]
+	if em_alcance:
+		var origem_ponte := bridge_rig.global_position
+		var dano_ponte := _dano_de_canhao(CAPITAL_CANHAO) * _fator_calor(origem_ponte)
+		var por_flecha_ponte := dano_ponte / float(FLECHAS_POR_SALVA)
+		# `-1` é a fase do leque que nenhum casco usa: a ponte não tem índice em lista nenhuma,
+		# então o disco dela se abre num ângulo que a linha inteira nunca ocupa.
+		var pontos_ponte := _pontos_de_impacto(origem_ponte, setor_fogo_pos, -1, fogo_densidade)
+		var feriram_ponte := 0
+		var vaos_ponte := 0
+		var parados_ponte := 0
+		for ponto in pontos_ponte:
+			impactos += 1
+			var bloqueio := _barreira_entre(origem_ponte, ponto)
+			# A barreira serve para ela do mesmo lado que serve para a linha, e cobra a mesma
+			# integridade: a pedra não sabe quem atirou.
+			_spawn_bolt((ponto if bloqueio.is_empty() else bloqueio["pos"]), BLUE, origem_ponte)
+			if not bloqueio.is_empty():
+				nas_pedras += 1
+				parados_ponte += 1
+				var pedra: Dictionary = bloqueio["pedra"]
+				if pedra.is_empty():
+					nos_astros += 1
+				elif _fraturar_rocha(pedra, por_flecha_ponte, origem_ponte):
+					rachadas += 1
+				continue
+			var atingido := _casco_em(ponto, enemies)
+			if atingido < 0:
+				nos_vaos += 1
+				vaos_ponte += 1
+				continue
+			feridos += 1
+			feriram_ponte += 1
+			# Torre de linha bate casco: a capitânia não tem seletor de subsistema, porque o
+			# seletor do painel é a ordem que a ponte dá aos cascos dela, não ao próprio casco.
+			enemies[atingido]["hp"] = maxf(0.0, float(enemies[atingido]["hp"]) - por_flecha_ponte)
+			capitania_contagem["dano"] = float(capitania_contagem["dano"]) + por_flecha_ponte
+			if float(enemies[atingido]["hp"]) <= 0.0:
+				_mark_wreck(enemies[atingido]["node"] as Node3D)
+				report_label.text = "ALVO DESTRUÍDO // %s neutralizado pelo canhão da capitânia." % String(enemies[atingido]["name"])
+		capitania_contagem["salvas"] = int(capitania_contagem["salvas"]) + 1
+		capitania_contagem["lancados"] = int(capitania_contagem["lancados"]) + pontos_ponte.size()
+		capitania_contagem["feriram"] = int(capitania_contagem["feriram"]) + feriram_ponte
+		capitania_contagem["no_vao"] = int(capitania_contagem["no_vao"]) + vaos_ponte
+		capitania_contagem["parados"] = int(capitania_contagem["parados"]) + parados_ponte
 	_desenhar_setor_de_fogo()
 	# Boarding parties progress in real time after reaching a sufficiently damaged ship.
 	for target_index in range(enemies.size()):
@@ -3860,6 +3976,14 @@ func _resolve_volley() -> void:
 			int(caca_contagem["lancados"]), int(caca_contagem["feridos"]), int(caca_contagem["no_vao"]),
 			int(caca_contagem["bloqueados"]), int(caca_contagem["abatidos"]),
 			int(caca_contagem["pousados"]), cacas.size(), float(caca_contagem["dano"])]
+	# A cláusula da capitânia nasce com o primeiro lance dela, pelo mesmo motivo das outras duas:
+	# com a ponte fora do alcance o resumo fecha caractere a caractere como fechava antes deste
+	# canhão existir, e é isso que deixa as sondas de salva, tática e IA conferíveis.
+	if int(capitania_contagem["lancados"]) > 0:
+		salva_resumo += " // capitânia: %d salva(s), %d lance(s), %d feriram, %d no vão, %d parados, %0.1f de dano" % [
+			int(capitania_contagem["salvas"]), int(capitania_contagem["lancados"]),
+			int(capitania_contagem["feriram"]), int(capitania_contagem["no_vao"]),
+			int(capitania_contagem["parados"]), float(capitania_contagem["dano"])]
 
 ## Uma presa só vira unidade quando sai de `enemies` e entra em `fleet`: enquanto fica na
 ## lista de hostis ela não recebe ordem nenhuma e o jogador assiste à captura de fora.
@@ -4236,6 +4360,16 @@ func _update_hud() -> void:
 				if item["engines"] < 70.0 or item["weapons"] < 70.0 or item["crew"] < 60.0:
 					damaged += 1
 		command_label.text = "FROTA: %d/%d NAVES | ARMAMENTO: %d/%d ENCURRAÇADO(S) + %d/%d PORTA-AVIÕES | CAÇAS: %d NO AR | SELEÇÃO: %s\nFORMAÇÃO: %s | FOGO: %s (%.1f u) | DANIFICADAS: %d\nRECONHECIMENTO: %d%% // %d sonda(s) • %d/%d contato(s) confirmado(s)\nESTADO: %s // TEMPO REAL // ÚLTIMA SALVA: %s\n%s" % [living, fleet.size(), encoracados, ENCORACADOS_TETO, porta_avioes, PORTAAVIOES_TETO, cacas.size(), selection_scope, formation, FOGO_NOME[fogo_densidade], FOGO_RAIO[fogo_densidade], damaged, int(recon_progress), probes.size(), recon_contacts, recon_total, "PAUSADO" if paused else ("PONTE PERDIDA" if ponte_condenada else "EM COMBATE"), salva_resumo, tactical_note]
+	if is_instance_valid(capitania_label):
+		# A mesma régua da salva, lida no quadro: o comandante precisa ver por que a capitânia não
+		# atirou, e "fora de alcance" sem número seria um defeito escondido.
+		var alcance := _capitania_alcance()
+		if is_inf(alcance):
+			capitania_label.text = "CAPITÂNIA: canhão de linha, %0.0f u de alcance // sem contato comandado." % CAPITAL_ALCANCE
+		else:
+			capitania_label.text = "CAPITÂNIA: canhão de linha, %0.0f u de alcance // setor a %0.1f u — %s." % [
+				CAPITAL_ALCANCE, alcance, "EM ALCANCE, ATIRA NA PRÓXIMA SALVA" if alcance <= CAPITAL_ALCANCE
+					else "FORA DE ALCANCE"]
 	if is_instance_valid(target_selector):
 		for i in range(enemies.size()):
 			# O casco só aparece para a ponte quando uma sonda encostou naquele hull: a

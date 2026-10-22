@@ -2,7 +2,7 @@ extends SceneTree
 
 ## Fotogramas reais da ponte para ajuste de pintura. Headless usa o renderizador dummy e devolve
 ## tela preta: neblina, exposição, glow e recorte da janela só se medem com PNG de verdade, e
-## estes dezenove quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
+## estes vinte quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
 ## mas os quadros do meio montam cenário de verdade, e cenário engole e queima: por isso a sonda
 ## devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção.
 ##
@@ -35,6 +35,9 @@ const POCO_ARCO_BAIXO := 1.06
 const POCO_ARCO_AMOSTRAS := 40
 const POCO_ARCO_LARGO := 3.10
 const POCO_DOPPLER := 0.45
+## Espelho de `main.gd`: se o alcance do canhão da capitânia mudar lá, o quadro 05f quebra aqui —
+## mesmo motivo das constantes do poço acima.
+const CAPITAL_ALCANCE := 60.0
 
 var breaks := 0
 var notes: Array[String] = []
@@ -187,6 +190,30 @@ func _initialize() -> void:
 		"agulha a %0.2f da ida-e-volta (%0.2f da corda) depois de %d quadros reais, %d ainda no ar" % [
 			_frac_da_ida(game), _frac_da_ida(game) * 2.0, quadros_da_ida, game.cacas.size()])
 	await _fotograma(game, "05e_caca_em_voo")
+
+	# 05f — a capitânia atirando. `capitania.gd` fecha a régua, o preço e o sorteio; a pergunta do PNG é
+	# de quadro, e é a única que nenhuma sonda de lógica responde: com o parapeito no pé da tela, os três
+	# lances dela saem da PONTE ou nascem atrás da câmera e ficam invisíveis? A ponte avança para dentro
+	# dos 60 u e o alvo comandado fica a ~40 u: os cascos hostis ainda têm tamanho na tela quando o
+	# traço deles cruza a frente do visor.
+	(game.bridge_rig as Node3D).global_position = Vector3(0.0, 0.0, -45.0)
+	game.selected_target = 0
+	var alcance_ponte := float(game._capitania_alcance())
+	var lancados_antes := int(game.capitania_contagem["lancados"])
+	var olho: Vector3 = (game.bridge_rig as Node3D).global_position
+	game._resolve_volley()
+	var bocais := 0
+	for filho in game.get_children():
+		if filho is MeshInstance3D and (filho as Node3D).global_position.distance_to(olho) < 1.8:
+			bocais += 1
+	_assert("com a ponte a %0.1f u do alvo comandado, o canhão de linha dela dispara" % alcance_ponte,
+		alcance_ponte <= CAPITAL_ALCANCE \
+			and int(game.capitania_contagem["lancados"]) - lancados_antes == 3,
+		"alcance %0.3f u contra o teto de %0.0f, %d lance(s) novos na conta da capitânia" % [
+			alcance_ponte, CAPITAL_ALCANCE, game.capitania_contagem["lancados"] - lancados_antes])
+	_assert("os lances dela nascem em cima do olho da ponte, à frente do parapeito", bocais == 3,
+		"%d traço(s) a menos de 1,8 u de (%s)" % [bocais, olho])
+	await _fotograma(game, "05f_capitania_atira")
 
 	# 06 — painel em acordeão: a dobra é pintura, e sonda de lógica não mede se o grupo fechado
 	# ainda cabe na janela. A camada de UI volta a ficar visível de propósito: os quadros 04 e 05 a
