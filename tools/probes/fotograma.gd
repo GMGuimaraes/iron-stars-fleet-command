@@ -2,14 +2,20 @@ extends SceneTree
 
 ## Fotogramas reais da ponte para ajuste de pintura. Headless usa o renderizador dummy e devolve
 ## tela preta: neblina, exposição, glow e recorte da janela só se medem com PNG de verdade, e
-## estes dez quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
-## mas os três últimos quadros montam cenário de verdade, e cenário engole e queima: por isso a
-## sonda devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção.
+## estes treze quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
+## mas os três do meio montam cenário de verdade, e cenário engole e queima: por isso a sonda
+## devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção.
 ##
 ## Uso (janela real, sem --headless):
-##   godot --path . --quit-after 1200 -s res://tools/probes/fotograma.gd
+##   godot --path . --quit-after 2000 -s res://tools/probes/fotograma.gd
+## O orçamento é em quadros e a ruína espera segundos reais: 2000 cobre a sequência inteira mesmo
+## numa máquina que desenha a 144 Hz, e `quit()` fecha a sonda antes disso quando ela termina.
 
 const OUT := "D:/Downloads/tmp-userdata/frame/"
+## Espelho de `main.gd` para o quadro da ruína: se a tabela de fases ou o teto de rolagem mudarem
+## lá, o asserção aqui quebra — é de propósito, o mesmo motivo de `tools/probes/morte.gd`.
+const FASES_DA_TABELA := 5
+const TETO_ROLAGEM := 0.3
 
 var breaks := 0
 var notes: Array[String] = []
@@ -133,6 +139,46 @@ func _initialize() -> void:
 		"%d corpos, alarme=%s" % [game.tripulacao.size(), game.ponte_em_alarme])
 	await _fotograma(game, "11_tripulacao_alarme")
 
+	# 12 e 13 — a ruína da capitânia fotografada em dois momentos do próprio relógio da morte: a
+	# meia-sequência, com clarão aberto dentro do casco e estrobo na luz fria, e o fim dela, com os
+	# três adernamentos nos tetos, o deck escurecido e a holografia apagada. `tools/probes/morte.gd`
+	# conta fases, tetos e clarões com o relógio passo a passo; se a morte é legível na tela, só o PNG
+	# diz — e é ela quem pega geometria ausente, que em GDScript não falha no parse e devolve `Nil`
+	# em silêncio.
+	# A espera é por condição e limitada por relógio de parede, não por contagem de quadros: em janela
+	# o `delta` é o tempo real, e a taxa de quadros da máquina (60 ou 144 Hz) não pode decidir se o
+	# quadro sai fotografado. Se o laço morto não andar, a asserção quebra com o número na mão.
+	game.capital_hp = 0.0
+	var inicio_do_clarao := Time.get_ticks_msec()
+	var quadros_do_clarao := 0
+	while float(game.morte_t) < 0.90 and Time.get_ticks_msec() - inicio_do_clarao < 6000:
+		await process_frame
+		quadros_do_clarao += 1
+	_assert("a ponte morta roteia o laço real: a sequência anda em janela",
+		bool(game.ponte_condenada) and float(game.morte_t) >= 0.90,
+		"condenada=%s morte em %0.2f s depois de %d quadros reais" % [game.ponte_condenada,
+			game.morte_t, quadros_do_clarao])
+	_assert("no meio da ruína ainda há clarão no ar e a luz fria estroba",
+		(game.morte_claroes as Array).size() > 0
+			and float(game.ponte_luz_fria.light_energy) > 0.0,
+		"%d clarões, fria %0.2f, trabalho %0.2f" % [(game.morte_claroes as Array).size(),
+			game.ponte_luz_fria.light_energy, game.ponte_luz_trabalho.light_energy])
+	await _fotograma(game, "12_ruina_claroes", false)
+	var inicio_do_fim := Time.get_ticks_msec()
+	var quadros_do_fim := 0
+	while float(game.morte_t) < 2.75 and Time.get_ticks_msec() - inicio_do_fim < 6000:
+		await process_frame
+		quadros_do_fim += 1
+	_assert("a ruína fecha os tetos e apaga tudo no quadro final",
+		int(game.morte_fase) == FASES_DA_TABELA and (game.morte_claroes as Array).is_empty()
+			and absf(float((game.bridge_rig as Node3D).rotation.z)) >= TETO_ROLAGEM - 0.01
+			and float(game.ponte_luz_fria.light_energy) == 0.0,
+		"fase=%d contra %d na tabela, %d clarões vivos, rolagem %0.3f contra o teto %0.2f, fria %0.2f, %d quadros" % [
+			game.morte_fase, FASES_DA_TABELA, (game.morte_claroes as Array).size(),
+			(game.bridge_rig as Node3D).rotation.z, TETO_ROLAGEM,
+			game.ponte_luz_fria.light_energy, quadros_do_fim])
+	await _fotograma(game, "13_ruina_extinta", false)
+
 	for note in notes:
 		print("SONDA-FOTOGRAMA: " + note)
 	print("SONDA-FOTOGRAMA: veredito • quebras=%d • conferências=%d" % [breaks, notes.size()])
@@ -140,7 +186,7 @@ func _initialize() -> void:
 
 ## Luminância média da tela. Espera dois fotogramas de desenho antes de ler a textura: sem isso
 ## o quadro sai byte-idêntico ao anterior e a leitura de pintura é feita sobre estado velho.
-func _fotograma(game, nome: String) -> void:
+func _fotograma(game, nome: String, mesa_viva := true) -> void:
 	await _frames(2)
 	var img := get_root().get_texture().get_image()
 	img.save_png(OUT + nome + ".png")
@@ -155,9 +201,12 @@ func _fotograma(game, nome: String) -> void:
 	_assert("%s tem imagem" % nome, media > 0.01,
 		"luminância média %.4f em %dx%d, salvo em %s%s.png"
 		% [media, img.get_width(), img.get_height(), OUT, nome])
-	# A ponte é o `_build_bridge` do jogo; sem blips no ar o quadro não prova a mesa holográfica.
-	_assert("%s tem mesa holográfica viva" % nome, is_instance_valid(game.holo_root)
-		and game.holo_blips.size() > 0, "%d blips" % game.holo_blips.size())
+	# A ponte é o `_build_bridge` do jogo; sem blips no ar o quadro não prova a mesa holográfica. Na
+	# ruína a mesa some da vista de propósito — a asserção então cobra o oposto, senão o quadro novo
+	# seria reprovado por um contrato que a própria morte assinou.
+	_assert("%s tem mesa holográfica %s" % [nome, "viva" if mesa_viva else "apagada de propósito"],
+		game.holo_blips.size() > 0 and (game.holo_root as Node3D).visible == mesa_viva,
+		"%d blips, visível=%s" % [game.holo_blips.size(), (game.holo_root as Node3D).visible])
 
 func _tabular(game) -> void:
 	for i in range(game.fleet.size()):

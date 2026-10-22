@@ -168,6 +168,50 @@ const HUD_OURO := Color(0.82, 0.68, 0.34)
 ## cauda de `rng` igual sorteio de estrela — ver `visual_rng`.
 const DETONACAO: Array[Vector3] = [Vector3(0, 0, 0), Vector3(1.1, 0.5, -0.7), Vector3(-1.2, -0.4, 0.6),
 	Vector3(0.5, -1.0, 1.2), Vector3(-0.7, 0.9, -1.1)]
+## ---- Ruína da ponte ----
+## A capitânia do jogador não troca de cena nem desaparece quando o casco zera: o deck morre em
+## fases dentro do próprio quadro, porque é dentro dele que a câmera está, e a batalha de Legend
+## of the Galactic Heroes se julha na ponte de quem afunda, não no casco visto de fora. Os tempos
+## e deslocamentos são cravados como os de `DETONACAO` — sorteio na hora da morte empurraria a
+## cauda de `rng` — e a sequência anda no relógio que o chamador fornece em `delta`, não em
+## `create_tween` de tempo real, porque uma morte que só existe em wall-clock é invisível para a
+## sonda headless e nada daquilo poderia ser assinado no portão.
+## `fora=true` nasce no mundo, filho da cena: é o estilhaço que se separa do casco e fica parado
+## enquanto a ponte aderna — detrito colado ao rig seria a nave arrastando o próprio clarão.
+const MORTE_FASES: Array[Dictionary] = [
+	{"t": 0.00, "pos": Vector3(0.0, 3.2, -7.4), "fora": false, "size": 1.6, "som": "EXPLOSAO"},
+	{"t": 0.40, "pos": Vector3(-6.6, 0.6, -1.8), "fora": false, "size": 1.3, "som": "EXPLOSAO"},
+	{"t": 0.82, "pos": Vector3(2.4, 1.0, -13.0), "fora": true, "size": 3.4, "som": "EXPLOSAO"},
+	{"t": 1.26, "pos": Vector3(5.4, -0.6, 0.6), "fora": false, "size": 1.3, "som": "EXPLOSAO"},
+	{"t": 1.70, "pos": Vector3(0.0, -1.2, -2.6), "fora": false, "size": 1.0, "som": "IMPACTO"},
+]
+## Vida de cada clarão em segundos: abre, estica e apaga no relógio da ruína.
+const MORTE_CLARAO_VIDA := 0.6
+## Apagão da luz de trabalho: do valor lido na ignição a zero exato em `MORTE_APAGAO` segundos.
+const MORTE_APAGAO := 0.55
+## A luz fria não morre de uma vez — ela estoura com cada fase e depois apaga. O período e o pico
+## são cravados porque a sonda assina o valor do `light_energy` quadro a quadro, e um estrobo
+## sorteado seria a única fonte de aleatoriedade dentro de uma morte que não sorteia nada.
+const MORTE_STROBO := 0.1
+const MORTE_STROBO_PICO := 1.8
+## Quanto o deck escurece na ignição: os materiais do soalho, do casco, do friso e do ouro perdem
+## 70% da cor num único traço, porque a ponte sem energia não é um cenário em penumbra, é um
+## cenário onde ninguém mais vai acender nada.
+const CORTE_RUINA := 0.7
+## Fim da sequência: depois daqui não há mais tremor nem fase, só a deriva fria de um casco sem
+## reactor. Os tetos de atitude são assinados pela sonda como valores exatos, não aproximados.
+const MORTE_DURACAO := 2.2
+const MORTE_TILT_ROLAGEM := 0.3
+const MORTE_TILT_ARFAGEM := -0.16
+const MORTE_TILT_GUIRADA := 0.22
+## Tremor de câmera: amplitude de meio palmo no primeiro quadro, extinta em `MORTE_TREMOR_FIM`.
+## Mexe só na câmera filha, nunca no rig — a posição do rig é a assinatura que blip, mesa e
+## abalroamento conferem, e um tremor nela seria o casco teleportando a cada quadro.
+const MORTE_TREMOR := 0.11
+const MORTE_TREMOR_FIM := 0.9
+## Tela morta: sem energia não há leitura de ponte. É a cor do fim, não um alarme a mais — por
+## isso ela é escrita uma vez na ignição, com a mesma disciplina do flanco de `ponte_em_alarme`.
+const COR_TELA_MORTA := Color(0.012, 0.014, 0.02)
 ## Ponte sonora (trilha clássica + efeitos abafados de vácuo) montada como filho da cena, não
 ## como sistema global: headless não tem alto-falante, e é assim que a sonda consegue ler
 ## `pedidos` e `soaram` sem depender de saída de áudio.
@@ -274,6 +318,39 @@ var tripulacao: Array[Dictionary] = []
 ## por quadro — escrever `emission` a cada frame é a ponte piscando para a GPU.
 var ponte_telas: StandardMaterial3D
 var ponte_em_alarme := false
+## ---- Estado da ruína ----
+## `ponte_condenada` é a guarda de idempotência: o casco pode zerar por salva, rocha, corona ou
+## poço, e a sequência tem de rodar uma vez só não importa quantos caminhos bateram no zero.
+## `morte_t` anda em segundos de relógio de jogo, e é por isso que a sonda pode avançar a morte
+## quadro a quadro em passo cravado e assinar coordenada, luz e atitude.
+var ponte_condenada := false
+var ponte_sem_energia := false
+var morte_t := 0.0
+var morte_fase := 0
+## Um billet por fase, criado no quadro da fase e liberado no quadro em que a vida dele vence.
+## Sem esta lista o clarão ficaria pendurado no rig depois do apagão — e este repositório reprova
+## recurso preso no encerramento.
+var morte_claroes: Array = []
+## Energia das duas luzes da ponte, lida na ignição para o fade começar de onde ela estava.
+var ponte_luz_trabalho: OmniLight3D
+var ponte_luz_fria: OmniLight3D
+var ponte_energia_trabalho := 0.0
+var ponte_energia_fria := 0.0
+## Câmera da ponte e a posição crua dela: o tremor é um deslocamento local em cima desta base, e
+## a asserção do fim é voltar para ela com exatidão de vírgula.
+var ponte_camera: Camera3D
+var ponte_camera_base := Vector3.ZERO
+## Rumo no quadro da ignição: a guinada da ruína é medida em cima dele, porque a ponte pode adernar
+## para bombordo ou para estibordo dependendo só de para onde o comandante olhava quando o casco
+## fechou — e o teto assinado pela sonda é o acréscimo, não a bússola final.
+var ponte_rumo_base := 0.0
+## Taxa de cada adernamento, medida na ignição sobre a DISTÂNCIA REAL até o teto. Cobrir o teto na
+## taxa `teto / MORTE_DURACAO` só fecha no tempo cravado se a partida for do zero: uma ponte que já
+## aderna de -0,05 em rolagem tem 0,35 a percorrer, não 0,30, e chegaria depois do fim da sequência
+## — o teto assinado pela sonda seria um número que nenhum quadro produziu.
+var ponte_taxa_rolagem := 0.0
+var ponte_taxa_arfagem := 0.0
+var ponte_taxa_guinada := 0.0
 var selection_scope := "FROTA"
 var target_selector: OptionButton
 var protected_selector: OptionButton
@@ -333,7 +410,14 @@ func _process(delta: float) -> void:
 		return
 	battle_clock += delta
 	fire_clock += delta
-	_update_capital_ship(delta)
+	# Com o casco em zero o timão morre junto com o reactor: nada mais lê teclado, o rig segue a
+	# inércia do último quadro e a ruína toca as fases no relógio da batalha. A ignição é feita
+	# dentro de `_atualizar_ruina` porque o casco pode zerar por salva, rocha, coroa ou poço, e os
+	# quatro caminhos têm de morrer do mesmo jeito, uma vez só.
+	if capital_hp <= 0.0:
+		_atualizar_ruina(delta)
+	else:
+		_update_capital_ship(delta)
 	_update_fleet(delta)
 	_update_probes(delta)
 	_update_tripulacao()
@@ -345,7 +429,8 @@ func _process(delta: float) -> void:
 		# tem três eixos e o comandante precisa ler em qual dele está.
 		speed_label.text = "VELOCIDADE %+04d%%  //  SUBIDA %+04d  //  CASCO DA CAPITÂNIA %03d%%" % [
 			int(throttle * 100.0), int(bridge_rig.position.y), int(capital_hp)]
-	if is_instance_valid(report_label) and int(battle_clock) % 12 == 0 and fmod(battle_clock, 1.0) < delta:
+	if is_instance_valid(report_label) and not batalha_encerrada \
+			and int(battle_clock) % 12 == 0 and fmod(battle_clock, 1.0) < delta:
 		report_label.text = "RELATÓRIO: contato hostil confirmado. Frota em combate."
 	_update_hud()
 
@@ -523,23 +608,31 @@ func _build_bridge() -> void:
 	# linha de vista da mesa: a 8 unidades de largura e y -1.1 ela fatiava a holografia ao meio
 	# e escondia a segunda fila de blips, que é justamente a do inimigo.
 	_box(Vector3(0, -1.66, -2.2), Vector3(6.6, 0.18, 0.35), ouro, bridge_rig)
+	# Os materiais do deck ficam guardados no próprio rig: a ruína apaga a ponte escrevendo uma
+	# vez em cada um deles, e precisa dos nós depois de `_build_bridge` ter voltado.
+	bridge_rig.set_meta("mat", {"piso": piso, "casco": casco_ponte, "trim": trim, "ouro": ouro,
+		"tela": tela, "vidro": vidro})
 	_build_holo_table()
 	# Luz de trabalho: âmbar sobre os postos, fria sob a holografia. Sem sombra — o
 	# Compatibility não shadowa, e ligar shadow aqui só imprimisse aviso por luz.
 	var lampada := OmniLight3D.new()
+	lampada.name = "LuzTrabalho"
 	lampada.position = Vector3(0, 4.2, 1.5)
 	lampada.light_color = Color(0.95, 0.72, 0.4)
 	lampada.light_energy = 0.55
 	lampada.omni_range = 14.0
 	lampada.shadow_enabled = false
 	bridge_rig.add_child(lampada)
+	ponte_luz_trabalho = lampada
 	var fria := OmniLight3D.new()
+	fria.name = "LuzFria"
 	fria.position = Vector3(0, -0.6, -2.6)
 	fria.light_color = Color(0.35, 0.8, 1.0)
 	fria.light_energy = 0.5
 	fria.omni_range = 8.0
 	fria.shadow_enabled = false
 	bridge_rig.add_child(fria)
+	ponte_luz_fria = fria
 	_build_tripulacao()
 	# Câmera atrás do trilho de comando: o parapeito entra no quadro como moldura inferior.
 	var camera := Camera3D.new()
@@ -548,6 +641,8 @@ func _build_bridge() -> void:
 	camera.rotation_degrees = Vector3(-3, 0, 0)
 	camera.fov = 78
 	bridge_rig.add_child(camera)
+	ponte_camera = camera
+	ponte_camera_base = camera.position
 
 ## Postos da tripulação: quatro operadores sentados nos consoles de bordo (x ±3,5, de frente para a
 ## própria bancada) e dois oficiais de pé nas asas do visor com holograma de leitura na mão. Os
@@ -638,6 +733,11 @@ func _cabeca(pai: Node3D, pele: Material, altura: float) -> MeshInstance3D:
 ## tripulação para. O alarme é lido no casco da capitânia e escrito UMA vez no material compartilhado
 ## das quatro telas — escrever `emission` por quadro seria a ponte piscando para a GPU.
 func _update_tripulacao() -> void:
+	# Sem energia a pose congela onde a morte pegou cada operador: os corpos ficam nos consoles,
+	# a leitura do alarme deixa de escrever nas telas (é a tela MORTA que tem de permanecer no
+	# material, não o vermelho voltando por cima) e nada na ponte se mexe por animação outra vez.
+	if ponte_sem_energia:
+		return
 	var alerta := capital_hp < ALARME_CASCO
 	if alerta != ponte_em_alarme:
 		ponte_em_alarme = alerta
@@ -972,6 +1072,115 @@ func _spawn_explosion(pos: Vector3, cor: Color) -> void:
 		tween.tween_property(estouro, "scale", Vector3.ONE * (3.2 + float(i) * 0.9), 0.5)
 		tween.tween_property(estouro.material_override, "albedo_color:a", 0.0, 0.5)
 		tween.chain().tween_callback(estouro.queue_free)
+
+## ---- Ruína da ponte ----
+
+## Ignição da morte: tudo o que é escrito UMA vez, no quadro em que o casco fecha. Telas, deck,
+## holografia e as duas luzes mudam de estado aqui e não por quadro — a mesma disciplina do flanco
+## de `ponte_em_alarme`, porque escrever material em loop é a ponte piscando para a GPU. O timão
+## morre junto: `throttle` a zero é o que faz o HUD ler 0% num casco que ainda se move por inércia.
+func _acender_ruina() -> void:
+	ponte_condenada = true
+	ponte_sem_energia = true
+	throttle = 0.0
+	ponte_rumo_base = bridge_rig.rotation.y
+	# Cada adernamento rampa a distância que TEM pela frente, não o valor do teto: é o que faz
+	# `MORTE_DURACAO` signifique a mesma coisa para uma ponte levelada e para uma já inclinada.
+	ponte_taxa_rolagem = absf(MORTE_TILT_ROLAGEM - bridge_rig.rotation.z) / MORTE_DURACAO
+	ponte_taxa_arfagem = absf(MORTE_TILT_ARFAGEM - bridge_rig.rotation.x) / MORTE_DURACAO
+	ponte_taxa_guinada = absf(MORTE_TILT_GUIRADA) / MORTE_DURACAO
+	if is_instance_valid(ponte_luz_trabalho):
+		ponte_energia_trabalho = ponte_luz_trabalho.light_energy
+	if is_instance_valid(ponte_luz_fria):
+		ponte_energia_fria = ponte_luz_fria.light_energy
+	if is_instance_valid(ponte_telas):
+		ponte_telas.emission = COR_TELA_MORTA
+		ponte_telas.emission_energy_multiplier = 0.0
+	var mats: Dictionary = bridge_rig.get_meta("mat")
+	for chave in ["piso", "casco", "trim", "ouro"]:
+		var mat: StandardMaterial3D = mats[chave]
+		mat.albedo_color = mat.albedo_color.darkened(CORTE_RUINA)
+		mat.emission_energy_multiplier = 0.0
+	# A holografia cai com o projetor. Esconder, nunca libertar: `holo_root` tem de continuar com a
+	# mesma conta de filhos para as asserções de blip por casco vivo, e um `queue_free` na mesa
+	# obrigaria cada sonda vizinha a aprender a lidar com uma ponte sem mesa.
+	for nos in [holo_root, holo_anel, holo_capitania, holo_setor]:
+		if is_instance_valid(nos):
+			(nos as Node3D).visible = false
+	# O alarme de fim de combate e a trilha cortada acontecem no quadro da morte, não até 1,6 s
+	# depois na próxima salva — e `batalha_encerrada` passa a valer já aqui, que é o que impede o
+	# relatório de rotina de por "contato hostil confirmado" em cima de um casco que acabou de afundar.
+	_encerra_batalha()
+
+## Um clarão de fase. Dentro do rig quando `fora` é falso — é o estouro visto de dentro da ponte,
+## colado ao teto e aos costados; nascido na cena quando é o casco se descolando lá fora, porque
+## detrito preso ao rig seria a própria nave arrastando o estilhaço enquanto aderna.
+func _acende_clarao(fase: Dictionary) -> void:
+	var de_dentro := not bool(fase["fora"])
+	var onde: Vector3 = fase["pos"] if de_dentro \
+		else bridge_rig.position + (fase["pos"] as Vector3)
+	var pai: Node = bridge_rig if de_dentro else self
+	var billet := _flare(onde, float(fase["size"]), Color(BRASA, 0.9), pai)
+	morte_claroes.append({"no": billet, "nasc": morte_t})
+	audio.efeito(String(fase["som"]))
+
+## A ruína anda no relógio que o chamador entrega, não em `create_tween` de tempo real: é só assim
+## uma sonda headless pode avançar a morte em passo cravado e assinar posição, luz, atitude e
+## clarão quadro a quadro. Consome zero sorteios — nem de `rng`, nem de `visual_rng` — porque a
+## morte da ponte não pode reescrever a cauda de combate de ninguém.
+func _atualizar_ruina(delta: float) -> void:
+	if not ponte_condenada:
+		_acender_ruina()
+	morte_t += delta
+	while morte_fase < MORTE_FASES.size() and morte_t >= float(MORTE_FASES[morte_fase]["t"]):
+		_acende_clarao(MORTE_FASES[morte_fase])
+		morte_fase += 1
+	var vivos: Array = []
+	for entrada in morte_claroes:
+		var billet: MeshInstance3D = entrada["no"]
+		var idade := morte_t - float(entrada["nasc"])
+		if not is_instance_valid(billet):
+			continue
+		if idade >= MORTE_CLARAO_VIDA:
+			billet.queue_free()
+			continue
+		var progresso := idade / MORTE_CLARAO_VIDA
+		billet.scale = Vector3.ONE * (1.0 + progresso * 3.0)
+		(billet.material_override as StandardMaterial3D).albedo_color.a = 0.9 * (1.0 - progresso)
+		vivos.append(entrada)
+	morte_claroes = vivos
+	if is_instance_valid(ponte_luz_trabalho):
+		ponte_luz_trabalho.light_energy = ponte_energia_trabalho \
+			* clampf(1.0 - morte_t / MORTE_APAGAO, 0.0, 1.0)
+	if is_instance_valid(ponte_luz_fria):
+		var ultima_fase := float(MORTE_FASES[MORTE_FASES.size() - 1]["t"])
+		if morte_t >= ultima_fase:
+			ponte_luz_fria.light_energy = 0.0
+		else:
+			ponte_luz_fria.light_energy = ponte_energia_fria \
+				* (MORTE_STROBO_PICO if fmod(morte_t, MORTE_STROBO) < MORTE_STROBO * 0.4 else 0.05)
+	# Tremor só na câmera filha. A posição do rig é a assinatura que blip, mesa e abalroamento
+	# conferem; um tremor nela seria o casco teleportando a cada quadro.
+	if is_instance_valid(ponte_camera):
+		var amplitude := MORTE_TREMOR * clampf(1.0 - morte_t / MORTE_TREMOR_FIM, 0.0, 1.0)
+		ponte_camera.position = ponte_camera_base + Vector3(
+			sin(morte_t * 61.0), cos(morte_t * 47.0), sin(morte_t * 83.0) * 0.5) * amplitude
+	# Os três adernamentos rampam na taxa cravada na ignição, então `move_toward` fecha em cima do
+	# teto exato no fim da sequência e segura ali: um casco sem reactor não volta a içar.
+	bridge_rig.rotation.z = move_toward(bridge_rig.rotation.z, MORTE_TILT_ROLAGEM,
+		delta * ponte_taxa_rolagem)
+	bridge_rig.rotation.x = move_toward(bridge_rig.rotation.x, MORTE_TILT_ARFAGEM,
+		delta * ponte_taxa_arfagem)
+	bridge_rig.rotation.y = move_toward(bridge_rig.rotation.y, ponte_rumo_base + MORTE_TILT_GUIRADA,
+		delta * ponte_taxa_guinada)
+	# Deriva fria: o casco conserva a última velocidade medida pelo timão e não tem motor para
+	# refazê-la. Na borda do campo ele encosta e para, e a velocidade registrada fica sendo a
+	# última leitura honesta — não um zero inventado pelo muro.
+	var arrasto := bridge_rig.position + capital_velocity * delta
+	arrasto.x = clampf(arrasto.x, -MAP_X, MAP_X)
+	arrasto.y = clampf(arrasto.y, -MAP_Y, MAP_Y)
+	arrasto.z = clampf(arrasto.z, MAP_Z_FAR, MAP_Z_NEAR)
+	bridge_rig.position = arrasto
 
 func _build_ui() -> void:
 	var layer := CanvasLayer.new()
@@ -1488,6 +1697,10 @@ func _queimar_na_corona(delta: float) -> void:
 		if node.global_position.distance_to(ESTRELA_POS) > ESTRELA_CORONA_RAIO:
 			continue
 		if corpo["unidade"] == null:
+			# A ponte morta não continua cozinhando relatório: sem esta guarda cada quadro dentro
+			# da coroa reescrevia a CORONA por cima do DERROTA que a salva já tinha declarado.
+			if capital_hp <= 0.0:
+				continue
 			capital_hp = maxf(0.0, capital_hp - ESTRELA_QUEIMA_POR_SEGUNDO * delta)
 			if capital_hp <= 0.0 and is_instance_valid(report_label):
 				report_label.text = "CORONA // a capitânia cozinhou perto demais da estrela."
@@ -1520,6 +1733,11 @@ func _chocar_com_rochas() -> void:
 				continue
 			var normal := Vector3(0, 0, 1) if distancia < 0.001 else entre / distancia
 			node.global_position = centro + normal * soma
+			# O destroço continua separado da pedra — um casco afundado atravessando o cinturão
+			# seria o mesmo corpo pintado em dois lugares — mas não cobra dano nem reescreve o
+			# relatório: quem já perdeu a ponte não perde de novo a cada janela de abalroamento.
+			if capital_hp <= 0.0 and corpo["unidade"] == null:
+				continue
 			var aproximacao := -_body_velocity(corpo).dot(normal)
 			if aproximacao <= RAM_SPEED:
 				continue
@@ -1776,6 +1994,8 @@ func _apply_impact(body: Dictionary, dano: float) -> void:
 	# estouro vem depois, se o casco fechar.
 	audio.efeito("IMPACTO")
 	if body["unidade"] == null:
+		if capital_hp <= 0.0:
+			return
 		capital_hp = maxf(0.0, capital_hp - dano)
 		if capital_hp <= 0.0 and is_instance_valid(report_label):
 			report_label.text = "PONTE DESTRUÍDA // a capitânia perdeu o comando da frota."
@@ -2692,7 +2912,7 @@ func _update_hud() -> void:
 				living += 1
 				if item["engines"] < 70.0 or item["weapons"] < 70.0 or item["crew"] < 60.0:
 					damaged += 1
-		command_label.text = "FROTA: %d/%d NAVES | SELEÇÃO: %s\nFORMAÇÃO: %s | FOGO: %s (%.1f u) | DANIFICADAS: %d\nRECONHECIMENTO: %d%% // %d sonda(s) • %d/%d contato(s) confirmado(s)\nESTADO: %s // TEMPO REAL // ÚLTIMA SALVA: %s\n%s" % [living, fleet.size(), selection_scope, formation, FOGO_NOME[fogo_densidade], FOGO_RAIO[fogo_densidade], damaged, int(recon_progress), probes.size(), recon_contacts, recon_total, "PAUSADO" if paused else "EM COMBATE", salva_resumo, tactical_note]
+		command_label.text = "FROTA: %d/%d NAVES | SELEÇÃO: %s\nFORMAÇÃO: %s | FOGO: %s (%.1f u) | DANIFICADAS: %d\nRECONHECIMENTO: %d%% // %d sonda(s) • %d/%d contato(s) confirmado(s)\nESTADO: %s // TEMPO REAL // ÚLTIMA SALVA: %s\n%s" % [living, fleet.size(), selection_scope, formation, FOGO_NOME[fogo_densidade], FOGO_RAIO[fogo_densidade], damaged, int(recon_progress), probes.size(), recon_contacts, recon_total, "PAUSADO" if paused else ("PONTE PERDIDA" if ponte_condenada else "EM COMBATE"), salva_resumo, tactical_note]
 	if is_instance_valid(target_selector):
 		for i in range(enemies.size()):
 			# O casco só aparece para a ponte quando uma sonda encostou naquele hull: a
