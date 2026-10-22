@@ -208,7 +208,9 @@ func _initialize() -> void:
 	_assert("postura nova notifica", String(game.report_label.text).begins_with("INTELIGÊNCIA //"),
 		String(game.report_label.text))
 
-	# 14 — fogo concentrado: a retaliação inteira cai sobre um só casco aliado.
+	# 14 — ancora no foco: o primeiro lance de cada atirador cai em cima do visado, então o casco
+	# focado absorve pelo menos um lance de cada hostil vivo. O resto do disco fere quem estiver
+	# no caminho — é a mesma chuva de flechas do lado aliado, agora apontada para nós.
 	for i in range(game.enemies.size()):
 		_marca(game.enemies, i, "hp", 100.0)
 		_marca(game.enemies, i, "weapons", 100.0)
@@ -221,14 +223,43 @@ func _initialize() -> void:
 			tocadas_antes += 1
 	game._resolve_volley()
 	var atingidas: Array[int] = []
+	var feridas: Array[float] = []
 	for i in range(game.fleet.size()):
-		if float(game.fleet[i]["hp"]) < 100.0:
+		var perda := 100.0 - float(game.fleet[i]["hp"])
+		if perda > 0.0:
 			atingidas.append(i)
+			feridas.append(perda)
 	_assert("nenhum aliado já ferido", tocadas_antes == 0, "partida limpa para a medida")
-	_assert("retaliação concentrada num casco", atingidas.size() == 1
-		and atingidas[0] == game.hostile_focus,
+	var hostis_vivos := 0
+	for unit in game.enemies:
+		if float(unit["hp"]) > 0.0 and float(unit["weapons"]) > 0.0 \
+				and String(unit["order"]) != "CAPTURADO":
+			hostis_vivos += 1
+	var ancora_no_foco := atingidas.has(game.hostile_focus)
+	var quinhao_max := 0.0
+	for perda in feridas:
+		quinhao_max = maxf(quinhao_max, perda)
+	var quinhao_foco := 100.0 - float(game.fleet[game.hostile_focus]["hp"])
+	# Piso do lance âncora: 1,3 de base dividido em três flechas, e a escolta pode cobrir o próprio
+	# visado com 0,7. Calor só aumenta, nunca diminui — por isso o piso é 0,7 e não 1,0.
+	var piso_ancora := float(hostis_vivos) * 1.3 / 3.0 * 0.7
+	_assert("retaliação ancora no casco focado", ancora_no_foco,
 		"foco %d, atingidas %s" % [game.hostile_focus, str(atingidas)])
-	_assert("dano aplicado no foco", float(game.fleet[game.hostile_focus]["hp"]) < 100.0,
+	_assert("foco absorve um lance âncora por atirador", quinhao_foco >= piso_ancora - 0.0001,
+		"%.3f no foco contra piso %.3f de %d hostis (densidade %s)" % [quinhao_foco, piso_ancora,
+		hostis_vivos, game.FOGO_NOME[game._densidade_hostil()]])
+	_assert("foco leva o maior quinhão da salva", is_equal_approx(quinhao_foco, quinhao_max),
+		"foco %.3f contra maior %.3f em %s" % [quinhao_foco, quinhao_max, str(feridas)])
+	var raio_disco: float = float(game.FOGO_RAIO[game._densidade_hostil()]) + 2.4 + 3.2
+	var fora_do_disco: Array[int] = []
+	var mira: Vector3 = (game.fleet[game.hostile_focus]["node"] as Node3D).global_position
+	for i in atingidas:
+		if (game.fleet[i]["node"] as Node3D).global_position.distance_to(mira) > raio_disco:
+			fora_do_disco.append(i)
+	_assert("disco hostil só fere quem está no alcance", fora_do_disco.is_empty(),
+		"raio %.1f + casco + alcance letal, %d cascos feridos em %d" % [
+		float(game.FOGO_RAIO[game._densidade_hostil()]), atingidas.size(), game.fleet.size()])
+	_assert("dano aplicado no foco", quinhao_foco > 0.0,
 		"casco %.1f do foco %d" % [float(game.fleet[game.hostile_focus]["hp"]), game.hostile_focus])
 
 	# 15 — o HUD devolve a leitura ao comandante sem esconder o resto.

@@ -3,9 +3,9 @@ extends SceneTree
 ## Sonda do painel em grupos e das duas ordens de densidade (DISPERSAR / AGRUPAR).
 ##
 ## O pedido do comandante foi «menos poluição»: o painel tinha dezenove botões de ordem empilhados,
-## sempre todos à vista, e dois deles faziam a mesma coisa. Agora são sete categorias, uma aberta
-## por vez — a sétima (CENÁRIO) entrou depois, com os quatro mapas, e é contada aqui pelo mesmo
-## vara-pau. Isso
+## sempre todos à vista, e dois deles faziam a mesma coisa. Agora são vinte e seis comandos em sete
+## categorias, uma aberta por vez — a sétima (CENÁRIO) entrou depois, com os quatro mapas, e o grupo
+## ATAQUE ganhou os dois degraus de densidade do disco de salva. Isso
 ## é pintura — mas pintura que esconde comando, e painel que esconde sem dizer o que escondeu
 ## deixa de ser instrumento. Então esta sonda mede as duas margens:
 ##
@@ -36,7 +36,7 @@ const PASSO := 0.1
 
 const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "REPAROS", "RECONHECIMENTO",
 	"CENÁRIO"]
-const TAMANHOS := {"ATAQUE": 2, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "REPAROS": 5,
+const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "REPAROS": 5,
 	"RECONHECIMENTO": 1, "CENÁRIO": 4}
 
 var breaks := 0
@@ -173,7 +173,7 @@ func _initialize() -> void:
 	var total_botoes := 0
 	for nome in NOMES_GRUPOS:
 		total_botoes += _botoes(game, nome).size()
-	_assert("vinte e quatro comandos agrupados", total_botoes == 24,
+	_assert("vinte e seis comandos agrupados", total_botoes == 26,
 		"%d botões de comando em 7 grupos" % total_botoes)
 
 	# 2 — Menos poluição: o que se vê é um grupo, não a lista toda. Este era o número da rodada
@@ -260,8 +260,40 @@ func _initialize() -> void:
 				duplicados += b.text + " "
 			rotulos.append(b.text)
 	_assert("nenhum rótulo de comando se repete", duplicados == "", "[%s]" % duplicados)
-	_assert("o botão duplicado saiu de cena", not rotulos.has("CONCENTRAR FOGO"),
+	# 6 — O antigo "CONCENTRAR FOGO" chamava o mesmo ATACAR do botão ao lado. O nome voltou, mas
+	# como controle de densidade: manda no disco de impacto, não na ordem do navio. Quem manda
+	# atacar continua sendo um botão só.
+	var botoes_de_atacar := 0
+	for b in _botoes(game, "ATAQUE"):
+		if String(b.text).begins_with("ATACAR ALVO"):
+			botoes_de_atacar += 1
+	_assert("o comando ATACAR tem um único botão", botoes_de_atacar == 1,
+		"%d botões que chamam ATACAR no grupo ATAQUE" % botoes_de_atacar)
+	_assert("a densidade voltou como comando próprio de disco",
+		rotulos.has("CONCENTRAR FOGO — disco estreito") and rotulos.has("DISPERSAR FOGO — disco largo"),
 		"%d rótulos únicos" % rotulos.size())
+	var ordens_antes := ""
+	for unit in game.fleet:
+		ordens_antes += String(unit["order"]) + " "
+	var densidade_antes := int(game.fogo_densidade)
+	var sorteio_antes := int(game.rng.state)
+	for b in _botoes(game, "ATAQUE"):
+		if b.text == "CONCENTRAR FOGO — disco estreito":
+			b.pressed.emit()
+	var ordens_depois := ""
+	for unit in game.fleet:
+		ordens_depois += String(unit["order"]) + " "
+	_assert("concentrar mexe no disco, não na ordem dos cascos",
+		int(game.fogo_densidade) == densidade_antes - 1 and ordens_depois == ordens_antes,
+		"densidade %d -> %d, ordens iguais: %s" % [densidade_antes, int(game.fogo_densidade),
+		str(ordens_depois == ordens_antes)])
+	_assert("densidade de fogo não sorteia", int(game.rng.state) == sorteio_antes,
+		"rng.state %d" % int(game.rng.state))
+	_assert("o degrau fica escrito no relatório",
+		String(game.report_label.text).begins_with("DENSIDADE DE FOGO: CONCENTRADO"),
+		game.report_label.text)
+	game.fogo_densidade = densidade_antes
+	game._desenhar_setor_de_fogo()
 
 	# 7 — DISPERSAR: anel largo em torno do centro REAL da seleção.
 	game.selection_scope = "FROTA"

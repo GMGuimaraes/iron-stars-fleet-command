@@ -67,6 +67,19 @@ const AGRUPAR_RAIO := 5.5
 ## cascos de uma vez, sem espalhar a força para fora do alcance da própria salva.
 const DISPERSAR_RAIO := 16.5
 const CAPITAL_RADIUS := 6.0
+## ---- Salva em área (a "chuva de flechas") ----
+## Um navio que atira não manda um raio único contra um casco: manda uma salva de impactos
+## espalhados sobre um disco perpendicular à linha de tiro. O disco é o setor, não o navio, e é
+## por isso que a densidade de fogo é ordem de ponte e não ajuste de cada capitão.
+const FLECHAS_POR_SALVA := 3
+## Os três degraus de raio do disco, em metros de tabuleiro. A 4,5 u os três impactos caem todos
+## dentro do alcance letal do mesmo casco (fogo concentrado); a 28 u só o impacto do centro está
+## garantido e os outros dois varrem o tabuleiro — acasam outro casco ou caem no vazio.
+const FOGO_RAIO := [4.5, 14.0, 28.0]
+const FOGO_NOME := ["CONCENTRADO", "SETOR", "DISPERSO"]
+## Alcance letal além do raio do casco: um impacto a até HULL_RADIUS + FOGO_LETAL do centro do
+## casco é absorvido por ele. Abaixo disso a salva dispersa teria vãos de verdade.
+const FOGO_LETAL := 3.2
 ## Abalroamento: abaixo desta velocidade de aproximação os cascos apenas se empurram.
 const RAM_SPEED := 3.0
 const RAM_DAMAGE := 1.9
@@ -209,6 +222,22 @@ var mat_holo_presa: StandardMaterial3D
 var mat_holo_morto: StandardMaterial3D
 var selected_target := 0
 var formation := "LINHA"
+## Densidade de fogo da ponte: índice em FOGO_RAIO. Começa no degrau do meio, que é o setor
+## padrão de uma esquadra em linha — nem pilha de fogo num casco só, nem varredura perdida.
+var fogo_densidade := 1
+## A conta da última salva, devolvida ao comandante no HUD: foi assim que "concentrar" deixou de
+## ser adjetivo e virou número conferível.
+var salva_resumo := "0/0 impactos"
+## A mesma conta do resumo, em números, para a sonda poder conferir sem reler string: quantos
+## impactos a salva pôs no tabuleiro e para onde cada um deles foi.
+var salva_contagem: Dictionary = {"aliados": 0, "aliados_feriram": 0, "hostis": 0, "hostis_feriram": 0,
+	"vaos": 0, "pedras": 0}
+## O anel do setor desenhado na mesa holográfica. Mora no rig, como o blip da capitânia, porque a
+## conta de um blip por casco vivo não pode ler geometria de comando.
+var holo_setor: MeshInstance3D
+## Centro do disco de salva no tabuleiro, na última salva resolvida. No meio da janela tática até
+## a primeira salva existir.
+var setor_fogo_pos := Vector3(0.0, 0.0, HOLO_ANCHOR_Z)
 ## Sondas táticas vivas: cada entrada é um nó visível que atravessa o tabuleiro varrendo
 ## cascos com o próprio corpo. Enquanto nenhuma sonda passa sobre um hull, ele continua
 ## "não identificado" na ponte — a informação é efeito de um objeto no mapa, não de um
@@ -674,6 +703,37 @@ func _build_holo_table() -> void:
 	# continuar lendo só `fleet` + `enemies`.
 	holo_capitania = _cylinder(holo_root.position + _holo_de(bridge_rig.position), 0.11, 0.0, 0.34,
 		_holo_mat(HUD_OURO.lightened(0.25)), bridge_rig, Vector3.ZERO, 6)
+	# O aro do setor de fogo é geometria de comando, não contato: mora no rig como o blip da
+	# capitânia e é redesenhado a cada salva. A mesa continua lendo um blip por casco vivo.
+	holo_setor = MeshInstance3D.new()
+	var setor_aros := TorusMesh.new()
+	setor_aros.ring_segments = 32
+	setor_aros.rings = 8
+	holo_setor.mesh = setor_aros
+	holo_setor.material_override = _glasm(Color(0.9, 0.6, 0.18, 0.55))
+	bridge_rig.add_child(holo_setor)
+	_desenhar_setor_de_fogo()
+
+## O disco desenhado na mesa é a densidade de fogo: o raio sai de FOGO_RAIO na escala da tabela e
+## o centro é o alvo comandado. Sem ele, "concentrar" e "dispersar" seriam números no relatório.
+func _desenhar_setor_de_fogo() -> void:
+	if not is_instance_valid(holo_setor) or not is_instance_valid(holo_root):
+		return
+	var aros := holo_setor.mesh as TorusMesh
+	var raio: float = FOGO_RAIO[fogo_densidade] * HOLO_SCALE
+	var novo_interno := maxf(0.035, raio - 0.05)
+	var novo_externo := raio + 0.05
+	# O motor recusa um toro com raio interno igual ao externo, e cada escrita refaz o mesh na hora.
+	# No aro recém-criado o externo ainda está no default 1,0, e o degrau do meio dá
+	# exatamente 14,0 × 0,075 − 0,05 = 1,00: abrir pelo interno abortava a construção na ponte nova.
+	# Quem escreve primeiro é sempre o lado que aumenta a folga.
+	if novo_externo > aros.inner_radius:
+		aros.outer_radius = novo_externo
+		aros.inner_radius = novo_interno
+	else:
+		aros.inner_radius = novo_interno
+		aros.outer_radius = novo_externo
+	holo_setor.position = holo_root.position + _holo_de(setor_fogo_pos)
 
 func _holo_mat(cor: Color) -> StandardMaterial3D:
 	# Emissão abaixo do limiar de bloom de propósito: o blip tem de ler como holograma colorido
@@ -1005,9 +1065,13 @@ func _build_ui() -> void:
 	# ---- Grupos recolhíveis. Um clique no cabeçalho abre a categoria; abrir uma fecha a outra.
 	# O botão "CONCENTRAR FOGO" que existia aqui chamava exatamente o mesmo `_give_order("ATACAR")`
 	# do botão de ataque, então era ruído de painel, não comando: saiu de cena com o agrupamento.
+	# Voltou agora, mas como controle de densidade de verdade — ele mexe no disco de impacto, não na
+	# ordem do navio.
 	var grupo_ataque := _add_grupo(col, "ATAQUE")
 	_add_button(grupo_ataque, "ATACAR ALVO / SUBSISTEMA", func(): _give_order("ATACAR"))
 	_add_button(grupo_ataque, "ABORDAR ALVO DANIFICADO", func(): _give_order("ABORDAR"))
+	_add_button(grupo_ataque, "CONCENTRAR FOGO — disco estreito", func(): _ajustar_fogo(-1))
+	_add_button(grupo_ataque, "DISPERSAR FOGO — disco largo", func(): _ajustar_fogo(1))
 	var grupo_postura := _add_grupo(col, "POSTURA")
 	_add_button(grupo_postura, "AGRESSIVO: AVANÇAR", func(): _give_order("AVANÇAR"))
 	_add_button(grupo_postura, "DEFENSIVO: RECUAR", func(): _give_order("RECUAR"))
@@ -1913,6 +1977,90 @@ func _apply_hostile_tactics() -> void:
 	if previous != hostile_posture and is_instance_valid(report_label):
 		report_label.text = "INTELIGÊNCIA // " + tactical_note
 
+## Os pontos de impacto de uma salva. O disco é o plano da mesa de batalha — lateral e profundidade
+## a partir da mira, nunca vertical: as esquadras vivem em y ≈ 0, então um leque aberto para cima
+## jogaria metade da salva num lugar onde não existe casco nenhum. É o mesmo plano do anel desenhado
+## na mesa holográfica, e é por isso que o alcance é geometricamente honesto. Os fracos vão do
+## centro até a borda e o ângulo sai do índice do casco no ouro ângulo — geometria decide a
+## esparrama, nenhum sorteio é chamado aqui.
+func _pontos_de_impacto(origem: Vector3, alvo: Vector3, no_casco: int, densidade: int) -> Array[Vector3]:
+	var direcao := alvo - origem
+	if direcao.length_squared() < 0.0001:
+		direcao = Vector3(0.0, 0.0, -1.0)
+	direcao = direcao.normalized()
+	var lado := direcao.cross(Vector3.UP)
+	if lado.length_squared() < 0.0001:
+		lado = Vector3.RIGHT
+	lado = lado.normalized()
+	var pontos: Array[Vector3] = []
+	var degraus := maxi(1, FLECHAS_POR_SALVA - 1)
+	for k in range(FLECHAS_POR_SALVA):
+		var angulo := float(no_casco) * 2.39996 + float(k) * TAU / float(FLECHAS_POR_SALVA)
+		var fracao := float(k) / float(degraus)
+		var raio: float = FOGO_RAIO[densidade] * fracao
+		pontos.append(alvo + (lado * cos(angulo) + direcao * sin(angulo)) * raio)
+	return pontos
+
+
+## Quem absorve um ponto de impacto: o casco vivo mais próximo, desde que o ponto caia sobre ele.
+## Devolve -1 no vão da salva — é o preço de dispersar, e é também o que faz um cinturão denso
+## valer mais que um campo aberto.
+func _casco_em(ponto: Vector3, lista: Array[Dictionary]) -> int:
+	var melhor := -1
+	var melhor_d := HULL_RADIUS + FOGO_LETAL
+	for i in range(lista.size()):
+		if float(lista[i]["hp"]) <= 0.0 or String(lista[i]["order"]) == "CAPTURADO":
+			continue
+		var distancia: float = (lista[i]["node"] as Node3D).global_position.distance_to(ponto)
+		if distancia < melhor_d:
+			melhor_d = distancia
+			melhor = i
+	return melhor
+
+
+## Iniciativa de casco: o hostil vivo mais próximo de quem pergunta. É isto que tira a linha
+## aliada do "todos no mesmo número de série" sem tirar o setor comandado de ninguém.
+func _hostil_mais_perto(de_pos: Vector3) -> int:
+	var melhor := -1
+	var melhor_d := INF
+	for i in range(enemies.size()):
+		if float(enemies[i]["hp"]) <= 0.0 or String(enemies[i]["order"]) == "CAPTURADO":
+			continue
+		var distancia: float = (enemies[i]["node"] as Node3D).global_position.distance_to(de_pos)
+		if distancia < melhor_d:
+			melhor_d = distancia
+			melhor = i
+	return melhor
+
+
+## Densidade de fogo hostil vem da postura, não de sorteio: quem avança varre área para abrir
+## corredor, quem cobre a capitânia concentra no casco que a ameaça, quem debanda atira largo e
+## desperdiça.
+func _densidade_hostil() -> int:
+	match hostile_posture:
+		"ESCOLTA":
+			return 0
+		"AVANÇAR":
+			return 1
+		_:
+			return 2
+
+
+## Um clique, um degrau, e a escada tem piso e teto: mais baixo que CONCENTRADO não existe, e
+## empurrar o disco para além de DISPERSO seria mentir sobre o alcance da própria salva.
+func _ajustar_fogo(passo: int) -> void:
+	var anterior := fogo_densidade
+	fogo_densidade = clampi(fogo_densidade + passo, 0, FOGO_RAIO.size() - 1)
+	if fogo_densidade == anterior:
+		report_label.text = "FOGO %s // a ponte não tem outro degrau de densidade abaixo (ou acima) dele." % FOGO_NOME[fogo_densidade]
+		_update_hud()
+		return
+	_desenhar_setor_de_fogo()
+	report_label.text = "DENSIDADE DE FOGO: %s // disco de %.1f u; %d impacto(s) por navio a cada salva." % [
+		FOGO_NOME[fogo_densidade], FOGO_RAIO[fogo_densidade], FLECHAS_POR_SALVA]
+	_update_hud()
+
+
 func _resolve_volley() -> void:
 	# Primeiro incorpora as presas da salva anterior: a contagem de vitória abaixo lê
 	# `enemies`, e uma presa que ainda consta como hostil adia a batalha para sempre.
@@ -1948,48 +2096,70 @@ func _resolve_volley() -> void:
 			if enemies[i]["hp"] > 0.0 and enemies[i]["order"] != "CAPTURADO":
 				focus_target = i
 				break
-	# Each living ship fires automatically. Focus-fire orders multiply damage on one target.
+	# A ponte manda a salva para um setor, não para um casco: o centro do disco é o alvo comandado
+	# e ele é desenhado na mesa antes de qualquer impacto existir.
+	setor_fogo_pos = (enemies[focus_target]["node"] as Node3D).global_position
+	# Cada casco vivo atira por conta própria e manda FLECHAS_POR_SALVA impactos sobre o disco.
+	# Quem está sob ordem de ataque (ou fechando para abordar) obedece ao setor da ponte; o resto
+	# da linha tem iniciativa e engaja o hostil mais próximo de si — é isto que separa uma esquadra
+	# de doze torretas todas apontadas para o mesmo número de série.
+	var feridos := 0
+	var nos_vaos := 0
+	var nas_pedras := 0
+	var impactos := 0
 	for i in range(fleet.size()):
 		var ally: Dictionary = fleet[i]
 		if ally["hp"] <= 0.0 or ally["weapons"] <= 0.0:
 			continue
-		var target_index := focus_target
-		if ally["order"] != "ATACAR":
-			for j in range(enemies.size()):
-				if enemies[j]["hp"] > 0.0 and enemies[j]["order"] != "CAPTURADO":
-					target_index = j
-					break
-		if target_index < 0:
+		var ordem := String(ally["order"])
+		var alvo_index := focus_target
+		if ordem != "ATACAR" and ordem != "ABORDAR":
+			alvo_index = _hostil_mais_perto((ally["node"] as Node3D).global_position)
+		if alvo_index < 0:
 			continue
 		var damage := 2.5 * float(ally["weapons"]) / 100.0 * maxf(0.25, float(ally["crew"]) / 100.0)
-		if ally["order"] == "ATACAR":
+		if ordem == "ATACAR":
 			damage *= 1.8
-		if ally["order"] == "RESERVA":
+		if ordem == "RESERVA":
 			damage *= 0.35
 		var origem := (ally["node"] as Node3D).global_position
-		var destino := (enemies[target_index]["node"] as Node3D).global_position
+		var destino := (enemies[alvo_index]["node"] as Node3D).global_position
 		# Arma quente: o multiplicador entra pela posição de quem dispara, não por sorteio, e fora
 		# do raio de calor é exatamente 1,0 — que é o que deixa o campo aberto inalterado.
 		damage *= _fator_calor(origem)
-		var bloqueio := _rocha_entre(origem, destino)
-		var subsistema := subsystem_selector.get_item_text(subsystem_selector.selected) if ally["order"] == "ATACAR" and is_instance_valid(subsystem_selector) else "CASCO"
-		# Pedra no corredor: o lance existe, vai até a rocha e não fere ninguém. Absorver dano não
-		# muda quantos sorteios a salva consome — ver a cauda de RNG em `_resolve_volley`.
-		if bloqueio.is_empty():
+		var por_flecha := damage / float(FLECHAS_POR_SALVA)
+		var subsistema := subsystem_selector.get_item_text(subsystem_selector.selected) if ordem == "ATACAR" and is_instance_valid(subsystem_selector) else "CASCO"
+		# A salva inteira tem sempre FLECHAS_POR_SALVA lances por navio, em qualquer densidade: o que
+		# o disco muda é para onde o dano vai, nunca quantos sorteios a salva consome. Trocar o laço
+		# por "só atirar o que acerta" faria da densidade de fogo um reroll disfarçado.
+		for ponto in _pontos_de_impacto(origem, destino, i, fogo_densidade):
+			impactos += 1
+			var bloqueio := _rocha_entre(origem, ponto)
+			# Pedra no corredor: o lance existe, vai até a rocha e não fere ninguém. Absorver dano não
+			# muda quantos sorteios a salva consome — ver a cauda de RNG em `_resolve_volley`.
+			_spawn_bolt((ponto if bloqueio.is_empty() else bloqueio["pos"]), BLUE, origem)
+			if not bloqueio.is_empty():
+				nas_pedras += 1
+				continue
+			var atingido := _casco_em(ponto, enemies)
+			if atingido < 0:
+				nos_vaos += 1
+				continue
+			feridos += 1
 			if subsistema == "MOTORES":
-				enemies[target_index]["engines"] = maxf(0.0, float(enemies[target_index]["engines"]) - damage * 1.7)
+				enemies[atingido]["engines"] = maxf(0.0, float(enemies[atingido]["engines"]) - por_flecha * 1.7)
 			elif subsistema == "ARMAS":
-				enemies[target_index]["weapons"] = maxf(0.0, float(enemies[target_index]["weapons"]) - damage * 1.7)
+				enemies[atingido]["weapons"] = maxf(0.0, float(enemies[atingido]["weapons"]) - por_flecha * 1.7)
 			elif subsistema == "TRIPULAÇÃO":
-				enemies[target_index]["crew"] = maxf(0.0, float(enemies[target_index]["crew"]) - damage * 1.5)
+				enemies[atingido]["crew"] = maxf(0.0, float(enemies[atingido]["crew"]) - por_flecha * 1.5)
 			else:
-				enemies[target_index]["hp"] = maxf(0.0, float(enemies[target_index]["hp"]) - damage)
-		_spawn_bolt((destino if bloqueio.is_empty() else bloqueio["pos"]), BLUE, origem)
-		if enemies[target_index]["hp"] <= 0.0:
-			_mark_wreck(enemies[target_index]["node"] as Node3D)
-			report_label.text = "ALVO DESTRUÍDO // %s neutralizado." % enemies[target_index]["name"]
-		elif float(enemies[target_index]["engines"]) <= 0.0:
-			enemies[target_index]["order"] = "RECUAR"
+				enemies[atingido]["hp"] = maxf(0.0, float(enemies[atingido]["hp"]) - por_flecha)
+			if enemies[atingido]["hp"] <= 0.0:
+				_mark_wreck(enemies[atingido]["node"] as Node3D)
+				report_label.text = "ALVO DESTRUÍDO // %s neutralizado." % enemies[atingido]["name"]
+			elif float(enemies[atingido]["engines"]) <= 0.0:
+				enemies[atingido]["order"] = "RECUAR"
+	_desenhar_setor_de_fogo()
 	# Boarding parties progress in real time after reaching a sufficiently damaged ship.
 	for target_index in range(enemies.size()):
 		var target_enemy: Dictionary = enemies[target_index]
@@ -2011,8 +2181,14 @@ func _resolve_volley() -> void:
 					report_label.text = "ABORDAGEM // %s: resistência inimiga diminuindo." % target_enemy["name"]
 				break
 		enemies[target_index] = target_enemy
-	# Hostile ships retaliate on their own and may damage specific systems.
-	for enemy in enemies:
+	# Hostile ships retaliate on their own and may damage specific systems. A esquadra hostil usa o
+	# mesmo disco: a postura dela é que define a densidade, não um sorteio por salva.
+	var densidade_hostil := _densidade_hostil()
+	var hostis_feriram := 0
+	var hostis_no_vao := 0
+	var impactos_hostis := 0
+	for e_index in range(enemies.size()):
+		var enemy: Dictionary = enemies[e_index]
 		if enemy["order"] == "CAPTURADO" or enemy["hp"] <= 0.0 or enemy["weapons"] <= 0.0:
 			continue
 		var victim_index := hostile_focus
@@ -2020,21 +2196,43 @@ func _resolve_volley() -> void:
 			victim_index = _hostile_victim_index()
 		if victim_index < 0:
 			break
-		var victim: Dictionary = fleet[victim_index]
 		var damage := 1.3 * float(enemy["weapons"]) / 100.0 * maxf(0.25, float(enemy["crew"]) / 100.0)
-		if victim["order"] == "ESCOLTAR":
-			damage *= 0.7
 		var origem := (enemy["node"] as Node3D).global_position
-		var destino := (victim["node"] as Node3D).global_position
+		var destino := (fleet[victim_index]["node"] as Node3D).global_position
 		damage *= _fator_calor(origem)
-		var bloqueio := _rocha_entre(origem, destino)
-		var absorvido := not bloqueio.is_empty()
-		if not absorvido:
-			victim["hp"] = maxf(0.0, float(victim["hp"]) - damage)
-		_spawn_bolt((destino if bloqueio.is_empty() else bloqueio["pos"]), RED, origem, false)
-		# A cadeia de sorteios é a mesma com ou sem rocha no corredor: o que a barreira leva é o
-		# dano, nunca o consumo do gerador. Trocar `if rng.randf()` por uma conta pulada mudaria a
-		# cauda de toda a batalha seguinte e faria do cinturão um reroll disfarçado.
+		var por_flecha := damage / float(FLECHAS_POR_SALVA)
+		var absorvente_foco := victim_index
+		var feriu := false
+		var pontos_hostis: Array[Vector3] = _pontos_de_impacto(origem, destino, e_index, densidade_hostil)
+		for k in range(pontos_hostis.size()):
+			impactos_hostis += 1
+			var bloqueio := _rocha_entre(origem, pontos_hostis[k])
+			_spawn_bolt((pontos_hostis[k] if bloqueio.is_empty() else bloqueio["pos"]), RED, origem, false)
+			if not bloqueio.is_empty():
+				hostis_no_vao += 1
+				continue
+			var absorvente := _casco_em(pontos_hostis[k], fleet)
+			if absorvente < 0:
+				hostis_no_vao += 1
+				continue
+			# Cobertura é do casco atingido, não do visado: escoltar alguém só vale quando a escolta
+			# está de fato no caminho da salva.
+			var dano_flecha := por_flecha
+			if String(fleet[absorvente]["order"]) == "ESCOLTAR":
+				dano_flecha *= 0.7
+			fleet[absorvente]["hp"] = maxf(0.0, float(fleet[absorvente]["hp"]) - dano_flecha)
+			hostis_feriram += 1
+			feriu = true
+			if k == 0:
+				absorvente_foco = absorvente
+			if float(fleet[absorvente]["hp"]) <= 0.0:
+				_mark_wreck(fleet[absorvente]["node"] as Node3D)
+				report_label.text = "ALERTA // %s foi perdida." % String(fleet[absorvente]["name"])
+		var victim: Dictionary = fleet[absorvente_foco]
+		# A cadeia de sorteios é a mesma com ou sem rocha no corredor e com ou sem casco no disco:
+		# o que a barreira e o vão levam é o dano, nunca o consumo do gerador. Trocar `if
+		# rng.randf()` por uma conta pulada mudaria a cauda de toda a batalha seguinte.
+		var absorvido := not feriu
 		if rng.randf() < 0.12:
 			if not absorvido:
 				victim["engines"] = maxf(0.0, float(victim["engines"]) - 4.0)
@@ -2047,7 +2245,11 @@ func _resolve_volley() -> void:
 		if victim["hp"] <= 0.0:
 			_mark_wreck(victim["node"] as Node3D)
 			report_label.text = "ALERTA // %s foi perdida." % victim["name"]
-		fleet[victim_index] = victim
+		fleet[absorvente_foco] = victim
+	salva_resumo = "salva: %d/%d aliadas feriram, %d/%d hostis, %d cairam no vao" % [
+		feridos, impactos, hostis_feriram, impactos_hostis, nos_vaos + nas_pedras + hostis_no_vao]
+	salva_contagem = {"aliados": impactos, "aliados_feriram": feridos, "hostis": impactos_hostis,
+		"hostis_feriram": hostis_feriram, "vaos": nos_vaos + hostis_no_vao, "pedras": nas_pedras}
 
 ## Uma presa só vira unidade quando sai de `enemies` e entra em `fleet`: enquanto fica na
 ## lista de hostis ela não recebe ordem nenhuma e o jogador assiste à captura de fora.
@@ -2258,6 +2460,11 @@ func _on_scope_selected(index: int) -> void:
 
 func _on_target_selected(index: int) -> void:
 	selected_target = index
+	# O setor comandado acompanha o alvo escolhido na hora: o disco aparece na mesa antes de a
+	# primeira salva sair, porque o comandante decide densidade olhando para ele.
+	if index >= 0 and index < enemies.size():
+		setor_fogo_pos = (enemies[index]["node"] as Node3D).global_position
+		_desenhar_setor_de_fogo()
 	_update_hud()
 
 func _on_protected_selected(index: int) -> void:
@@ -2417,7 +2624,7 @@ func _update_hud() -> void:
 				living += 1
 				if item["engines"] < 70.0 or item["weapons"] < 70.0 or item["crew"] < 60.0:
 					damaged += 1
-		command_label.text = "FROTA: %d/%d NAVES | SELEÇÃO: %s\nFORMAÇÃO: %s | DANIFICADAS: %d\nRECONHECIMENTO: %d%% // %d sonda(s) • %d/%d contato(s) confirmado(s)\nESTADO: %s // TEMPO REAL\n%s" % [living, fleet.size(), selection_scope, formation, damaged, int(recon_progress), probes.size(), recon_contacts, recon_total, "PAUSADO" if paused else "EM COMBATE", tactical_note]
+		command_label.text = "FROTA: %d/%d NAVES | SELEÇÃO: %s\nFORMAÇÃO: %s | FOGO: %s (%.1f u) | DANIFICADAS: %d\nRECONHECIMENTO: %d%% // %d sonda(s) • %d/%d contato(s) confirmado(s)\nESTADO: %s // TEMPO REAL // ÚLTIMA SALVA: %s\n%s" % [living, fleet.size(), selection_scope, formation, FOGO_NOME[fogo_densidade], FOGO_RAIO[fogo_densidade], damaged, int(recon_progress), probes.size(), recon_contacts, recon_total, "PAUSADO" if paused else "EM COMBATE", salva_resumo, tactical_note]
 	if is_instance_valid(target_selector):
 		for i in range(enemies.size()):
 			# O casco só aparece para a ponte quando uma sonda encostou naquele hull: a

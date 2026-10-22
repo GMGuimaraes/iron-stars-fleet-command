@@ -95,6 +95,14 @@ func _cascos_somados(game) -> float:
 		total += float(unit["hp"])
 	return total
 
+## Só a linha hostil: é a saída da salva aliada, e medir os dois lados juntos deixaria a
+## retaliação hostil — que também sente o calor — dentro da mesma régua.
+func _hostis_somados(game) -> float:
+	var total := 0.0
+	for unit in game.enemies:
+		total += float(unit["hp"])
+	return total
+
 func _botoes(game, nome: String) -> Array[Button]:
 	var lista: Array[Button] = []
 	var corpo: Control = game.group_bodies[nome]
@@ -410,32 +418,31 @@ func _initialize() -> void:
 		float(game.capital_hp) < ponte_antes, "%0.2f -> %0.2f" % [ponte_antes, game.capital_hp])
 
 	# ---- 9. Calor que muda a salva, sem mudar o sorteio ---------------------------------------
+	# Os dois lados usam a MESMA geometria: o `_alinhar` inteiro cabe dentro dos 70 u de calor da
+	# estrela, então o que muda de um lado para o outro é só a flag do mapa. Medir um único casco
+	# mentiria — com o disco de salva, o lance âncora é um de três e o resto cai no vizinho. E
+	# medir os cascos somados dos dois lados também mentiria: a retaliação hostil fere aliadas e
+	# o calor delas entra na conta. Aqui é o dano que a linha aliada causou, só isso.
 	var d := await _montar_jogo()
 	_alinhar(d)
 	_zerar(d)
 	d.rng.seed = 31337
-	var alvo_d: Dictionary = d.enemies[0]
-	var antes_d := float(alvo_d["hp"])
+	var antes_d := _hostis_somados(d)
 	d._resolve_volley()
-	var perda_d := antes_d - float(alvo_d["hp"])
+	var perda_d := antes_d - _hostis_somados(d)
 	var estado_d: int = d.rng.state
 	var e := await _montar_jogo()
 	_zerar(e)
 	e._montar_cenario("ESTRELA")
-	for i in range(e.fleet.size()):
-		var ang := TAU * float(i) / 6.0
-		(e.fleet[i]["node"] as Node3D).position = ESTRELA_POS + Vector3(cos(ang) * 45.0, 0.0,
-			sin(ang) * 45.0)
-	for i in range(e.enemies.size()):
-		(e.enemies[i]["node"] as Node3D).position = Vector3((float(i) - 2.5) * 6.0, 0.0, -82.0)
+	_alinhar(e)
 	e.rng.seed = 31337
-	var alvo_e: Dictionary = e.enemies[0]
-	var antes_e := float(alvo_e["hp"])
+	var antes_e := _hostis_somados(e)
 	e._resolve_volley()
-	var perda_e := antes_e - float(alvo_e["hp"])
+	var perda_e := antes_e - _hostis_somados(e)
 	var estado_e: int = e.rng.state
 	_assert("a salva quente bate 25% mais", _igual(perda_e, perda_d * ESTRELA_CALOR_FATOR, 0.001),
-		"%.3f de casco contra %.3f no campo aberto" % [perda_e, perda_d])
+		"%.3f de casco hostil contra %.3f no campo aberto (mesma geometria, só a flag do mapa muda)"
+		% [perda_e, perda_d])
 	_assert("o calor não compra sorteio extra", int(estado_d) == int(estado_e),
 		"rng %d dos dois lados depois da salva" % estado_d)
 	d.queue_free()
@@ -455,7 +462,7 @@ func _initialize() -> void:
 	var total := 0
 	for nome in NOMES_GRUPOS:
 		total += _botoes(game, nome).size()
-	_assert("vinte e quatro comandos agrupados", total == 24, "%d botões em 7 grupos" % total)
+	_assert("vinte e seis comandos agrupados", total == 26, "%d botões em 7 grupos" % total)
 	for botao in cenario_botoes:
 		if botao.text.contains("CINTURÃO"):
 			botao.pressed.emit()
