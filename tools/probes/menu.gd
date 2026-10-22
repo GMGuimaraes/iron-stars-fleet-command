@@ -3,12 +3,13 @@ extends SceneTree
 ## Sonda do painel em grupos e das duas ordens de densidade (DISPERSAR / AGRUPAR).
 ##
 ## O pedido do comandante foi «menos poluição»: o painel tinha dezenove botões de ordem empilhados,
-## sempre todos à vista, e dois deles faziam a mesma coisa. Agora são trinta e três comandos em nove
+## sempre todos à vista, e dois deles faziam a mesma coisa. Agora são trinta e cinco comandos em nove
 ## categorias, uma aberta por vez — a sétima (CENÁRIO) entrou depois, com os quatro mapas, e ganhou
 ## o quinto (SISTEMA) na rodada das luas; a oitava
 ## (TRILHA) com as quatro faixas da ponte, e o grupo
-## ATAQUE ganhou os dois degraus de densidade do disco de salva. A nona (ARMAMENTO) é a escada de
-## encouraçados: dois botões que trocam o que o casco carrega, não para onde ele vai. Isso
+## ATAQUE ganhou os dois degraus de densidade do disco de salva. A nona (ARMAMENTO) são as duas
+## escadas de casco: quatro botões, dois de bateria e dois de convés, que trocam o que o casco
+## carrega, não para onde ele vai. Isso
 ## é pintura — mas pintura que esconde comando, e painel que esconde sem dizer o que escondeu
 ## deixa de ser instrumento. Então esta sonda mede as duas margens:
 ##
@@ -39,7 +40,7 @@ const PASSO := 0.1
 
 const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "ARMAMENTO", "REPAROS",
 	"RECONHECIMENTO", "CENÁRIO", "TRILHA"]
-const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "ARMAMENTO": 2,
+const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "ARMAMENTO": 4,
 	"REPAROS": 5, "RECONHECIMENTO": 1, "CENÁRIO": 5, "TRILHA": 4}
 
 var breaks := 0
@@ -176,7 +177,7 @@ func _initialize() -> void:
 	var total_botoes := 0
 	for nome in NOMES_GRUPOS:
 		total_botoes += _botoes(game, nome).size()
-	_assert("trinta e três comandos agrupados", total_botoes == 33,
+	_assert("trinta e cinco comandos agrupados", total_botoes == 35,
 		"%d botões de comando em 9 grupos" % total_botoes)
 
 	# 2 — Menos poluição: o que se vê é um grupo, não a lista toda. Este era o número da rodada

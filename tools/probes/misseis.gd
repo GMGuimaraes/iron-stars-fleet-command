@@ -50,11 +50,12 @@ const ROCHA_INTEGRIDADE_POR_RAIO := 6.0
 const PASSO := 0.1
 ## Tolerância de float32 lida de volta do motor: perto de 80 u o ulp é ~7,6e-6.
 const FOLGA := 0.00005
-## Nove grupos desde a escada de encouraçados; ARMAMENTO tem dois botões porque degrau sobe e
-## desce, e não existe degrau de «escolher o navio» — a classe é do casco, não da ordem.
+## Nove grupos desde a escada de encouraçados; ARMAMENTO tem quatro botões porque são duas escadas
+## de casco na mesma categoria — bateria e convés — cada uma com o degrau que sobe e o que desce, e
+## não existe degrau de «escolher o navio»: a classe é do casco, não da ordem.
 const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "ARMAMENTO", "REPAROS",
 	"RECONHECIMENTO", "CENÁRIO", "TRILHA"]
-const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "ARMAMENTO": 2,
+const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "ARMAMENTO": 4,
 	"REPAROS": 5, "RECONHECIMENTO": 1, "CENÁRIO": 5, "TRILHA": 4}
 
 var breaks := 0
@@ -81,8 +82,15 @@ func _montar_jogo() -> Node3D:
 	# real diferente de locomoção, de IA hostil e de `fire_clock`, e dois tabuleiros "idênticos"
 	# largam de estados diferentes. É o que faz a prova A/B medir a escada em vez de medir o
 	# agendamento do teste — e é por isso que a sonda chama cada função de jogo na mão.
-	game.set_process(false)
+	#
+	# O congelamento é por `process_mode`, nunca por `set_process(false)`: dado dentro de
+	# `_initialize`, esse `set_process` é engolido porque `add_child` ainda não completou o `_ready`,
+	# o relógio continua andando e o reparo automático sobe o motor por `delta`. A lei é medida em
+	# `tools/probes/congelamento.gd`. Como a mesa é refeita por `_update_bridge`, chamado só do
+	# `_process`, a ponte também é chamada à mão uma vez por montagem.
+	game.process_mode = Node.PROCESS_MODE_DISABLED
 	await _frames(3)
+	game._update_bridge(0.0)
 	return game
 
 func _alinhar(game) -> void:
@@ -335,7 +343,7 @@ func _secao_escada() -> void:
 		"rng %d para %d, visual %d para %d, %d cargas chegaram na travessia" % [rng_do_voo,
 			game.rng.state, visual_do_voo, game.visual_rng.state, chegadas])
 
-## ---- 3. O painel: nove grupos, trinta e três comandos, dois degraus ---------------------------
+## ---- 3. O painel: nove grupos, trinta e cinco comandos, dois degraus --------------------------
 func _secao_painel() -> void:
 	var game: Node3D = await _montar_jogo()
 	_alinhar(game)
@@ -357,7 +365,7 @@ func _secao_painel() -> void:
 		if n != int(TAMANHOS[nome]):
 			tamanhos_ok = false
 	_assert("cada grupo carrega os comandos que promete", tamanhos_ok, medido)
-	_assert("trinta e três comandos agrupados", total == 33, "%d botões de comando" % total)
+	_assert("trinta e cinco comandos agrupados", total == 35, "%d botões de comando" % total)
 	_assert("ARMAMENTO nasce fechado", not (game.group_bodies["ARMAMENTO"] as Control).visible
 		and (game.group_heads["ARMAMENTO"] as Button).text.substr(0, 1) == "▸", "▸ fechado")
 	var mais := _botao(game, "ARMAMENTO", "ENCURRAÇADOS +1")
@@ -371,8 +379,9 @@ func _secao_painel() -> void:
 			and not (game.group_bodies["FORMAÇÕES"] as Control).visible
 			and (game.group_heads["FORMAÇÕES"] as Button).text.substr(0, 1) == "▸",
 		"ARMAMENTO aberto, FORMAÇÕES com ▸")
-	_assert("o corpo aberto tem os dois botões à vista",
-		_botoes(game, "ARMAMENTO").size() == 2, "2 comandos abertos")
+	_assert("o corpo aberto tem os quatro botões de casco à vista",
+		_botoes(game, "ARMAMENTO").size() == 4,
+		"4 comandos abertos: bateria e convés, cada um com o seu +1 e o seu −1")
 	# O degrau sobe pelo sinal do botão, não por chamada interna: é pelo sinal que o jogador alcança.
 	mais.pressed.emit()
 	_assert("um clique no +1 veste um casco pelo próprio sinal",

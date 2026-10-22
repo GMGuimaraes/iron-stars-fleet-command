@@ -80,20 +80,37 @@ const FOGO_NOME := ["CONCENTRADO", "SETOR", "DISPERSO"]
 ## Alcance letal além do raio do casco: um impacto a até HULL_RADIUS + FOGO_LETAL do centro do
 ## casco é absorvido por ele. Abaixo disso a salva dispersa teria vãos de verdade.
 const FOGO_LETAL := 3.2
-## ---- Classes de casco e bateria de mísseis ----
+## ---- Classes de casco: bateria de mísseis e grupo aéreo ----
 ## A classe é um modificador lido na hora, não um estado que se soma: promover um casco à linha de
 ## batalha não lhe dá casco novo nem repara motor — troca o que ele carrega (duas cargas de bateria
 ## por salva) pelo canhão que a bateria come (0,6 das armas) e pela marcha que o peso custa (0,6 da
-## linha). Por isso a escada é reversível dígito a dígito: descer um degrau devolve exatamente o
-## quadro de antes, sem que ninguém precise guardar um "antes".
+## linha). O porta-aviões faz o mesmo negócio na outra ponta: vende 0,6 do canhão para pôr três
+## agulhas no ar. Por isso as duas escadas são reversíveis dígito a dígito: descer um degrau devolve
+## exatamente o quadro de antes, sem que ninguém precise guardar um "antes".
 const CLASSES := {
-	"CRUZADOR": {"nome": "cruzador", "armas": 1.0, "velocidade": 1.0, "missoes": 0},
-	"BATALHA": {"nome": "encouraçado", "armas": 0.6, "velocidade": 0.6, "missoes": 2},
+	"CRUZADOR": {"nome": "cruzador", "armas": 1.0, "velocidade": 1.0, "missoes": 0, "cacas": 0},
+	"BATALHA": {"nome": "encouraçado", "armas": 0.6, "velocidade": 0.6, "missoes": 2, "cacas": 0},
+	"PORTAAVIOES": {"nome": "porta-aviões", "armas": 0.4, "velocidade": 0.75, "missoes": 0, "cacas": 3},
 }
-## Teto da escada: quatro dos seis cascos do cadastro. Converter a linha inteira deixaria a
-## esquadra sem escolta e sem reserva, e uma frota de casco lento que não alcança o inimigo não é
-## frota de batalha — é alvo.
+## Teto da escada de encouraçados: quatro dos seis cascos do cadastro. Converter a linha inteira
+## deixaria a esquadra sem escolta e sem reserva, e uma frota de casco lento que não alcança o
+## inimigo não é frota de batalha — é alvo.
 const ENCORACADOS_TETO := 4
+## Teto da escada de porta-aviões: dois cascos, e eles vêm do FIM do cadastro. As duas escadas
+## reivindicam pontas opostas de propósito: cabeça é linha de batalha, cauda é convés de aviação, e
+## assim um +1 de uma nunca rouba o casco do outro. A guarda conjunta em `_ajustar_porta_avioes`
+## fecha a conta com a regra do parágrafo acima — sempre tem de sobrar um cruzador puro na linha.
+const PORTAAVIOES_TETO := 2
+## O caça voa 26 u/s: mais rápido que a carga de bateria (18) e que qualquer casco da linha (8 de
+## marcha). Ele existe para chegar antes, ver, bater e voltar, e é por isso que a travessia dele é
+## contada em ida-e-volta — o míssil morre no alvo, o caça pousa no convés.
+const CACA_VELOCIDADE := 26.0
+## Cada caça leva 0,6 do fogo de direção que o próprio convés já calculou — três caças por salva
+## fecham 1,8 do canhão comido, e é esse o ganho que paga as 0,4 de arma do porta-aviões. O caça é
+## golpe de **ponto**, não de disco: ele cai sobre o casco que estiver naquela agulha do leque, e no
+## vão entre dois cascos ele não fere ninguém. A bateria estoura em disco de 6,0; o convés espalha
+## três agulhas. É a diferença entre os dois degraus, e a sonda a mede.
+const CACA_FATOR := 0.6
 ## Voo do míssil em velocidade constante, não em tempo fixo: 18 u/s é mais rápido que qualquer
 ## casco da linha (o passo de marcha é 8 u/s) e mais lento que o abalroamento, então o lance chega
 ## antes de quem o lançou. A posição é fechada em `tempo`, nunca somada por quadro, que é o que faz
@@ -428,6 +445,23 @@ var missil_proximo_id := 1
 var missil_contagem: Dictionary = {"lancados": 0, "detonados": 0, "bloqueados": 0,
 	"rachadas": 0, "cascos": 0, "dano": 0.0}
 
+## Degrau da escada de porta-aviões: quantos cascos do FIM do cadastro a ponte vestiu de convés.
+## Zero é o chão da prova de inércia da aviação: com ele em zero nenhum caçado nasce, nenhuma agulha
+## existe, nenhum sorteio acontece e o multiplicador de canhão continua exatamente 1,0.
+var porta_avioes := 0
+## Caças no ar: {"id", "no", "origem", "destino", "tau", "nascido", "dano", "bateu"}. `origem` é o
+## ponto do convés no instante do lançamento, `tau` é o ciclo inteiro de ida-e-volta e `bateu` marca a
+## meia-travessia já cobrada — sem essa flag o caça feriria o mesmo casco em todo quadro do retorno.
+var cacas: Array[Dictionary] = []
+var caca_proximo_id := 1
+## A conta do grupo aéreo, cumulativa e nunca zerada por volley, no mesmo molde da bateria. As duas
+## identidades abaixo são a régua do jogador e a sonda as assina: todo caçado que chega fecha em um
+## único dos três desfechos (`feridos` + `no_vao` + `bloqueados` = `lancados`) e ou volta para o
+## convés ou morre na pedra (`pousados` + `abatidos` = `lancados`). Somá-los prova que nenhum caçado
+## se perdeu pelo caminho — e que nenhum foi contado em dois eixos.
+var caca_contagem: Dictionary = {"lancados": 0, "abatidos": 0, "bloqueados": 0, "pousados": 0,
+	"no_vao": 0, "feridos": 0, "dano": 0.0}
+
 ## ---- Cenário em jogo ----
 ## `cenario_atual` é o nome escolhido no painel; com `"ABERTO"` as três coleções abaixo ficam
 ## vazias e os dois pontos de perigo ficam longe de tudo, que é o que faz a inércia do slice ser
@@ -590,6 +624,7 @@ func _process(delta: float) -> void:
 	_update_fleet(delta)
 	_update_probes(delta)
 	_atualizar_misseis()
+	_atualizar_cacas()
 	_update_tripulacao()
 	if fire_clock >= 1.6:
 		fire_clock = 0.0
@@ -1470,12 +1505,14 @@ func _build_ui() -> void:
 	_add_button(grupo_manobra, "MOVER PARA POSIÇÃO", func(): _give_order("MOVER"))
 	_add_button(grupo_manobra, "DISPERSAR TROPAS", func(): _give_order("DISPERSAR"))
 	_add_button(grupo_manobra, "AGRUPAR TROPAS", func(): _give_order("AGRUPAR"))
-	# Grupo ARMAMENTO: a escada de encouraçados. É degrau de ponte e não ordem de casco porque a
-	# classe troca o que o navio carrega, não para onde ele vai — e sobe e desce pelo mesmo
-	# caminho, do índice 0 ao fim do cadastro, sem somar estado nenhum.
+	# Grupo ARMAMENTO: as duas escadas de casco. São degrau de ponte e não ordem de casco porque a
+	# classe troca o que o navio carrega, não para onde ele vai — e sobem e descem pelo mesmo
+	# caminho, a bateria pela cabeça do cadastro e a aviação pela cauda, sem somar estado nenhum.
 	var grupo_armamento := _add_grupo(col, "ARMAMENTO")
 	_add_button(grupo_armamento, "ENCURRAÇADOS +1 — bateria de mísseis", func(): _ajustar_encoracados(1))
 	_add_button(grupo_armamento, "ENCURRAÇADOS −1 — casco devolvido à linha", func(): _ajustar_encoracados(-1))
+	_add_button(grupo_armamento, "PORTA-AVIÕES +1 — grupo aéreo de 3 caças", func(): _ajustar_porta_avioes(1))
+	_add_button(grupo_armamento, "PORTA-AVIÕES −1 — convés devolvido à linha", func(): _ajustar_porta_avioes(-1))
 	var grupo_reparo := _add_grupo(col, "REPAROS")
 	_add_button(grupo_reparo, "PRIORIDADE MOTORES", func(): _set_repair_priority("MOTORES"))
 	_add_button(grupo_reparo, "PRIORIDADE ARMAS", func(): _set_repair_priority("ARMAS"))
@@ -3089,6 +3126,10 @@ func _missoes_por_salva(unit: Dictionary) -> int:
 	return int(CLASSES[_classe_de(unit)]["missoes"])
 
 
+func _cacas_por_salva(unit: Dictionary) -> int:
+	return int(CLASSES[_classe_de(unit)]["cacas"])
+
+
 ## Fogo de canhão de um casco, já com o preço da bateria cobrado. Mora em função nomeada porque a
 ## fórmula inline de `_resolve_volley` não é conferível: a sonda precisa medir que o encouraçado
 ## paga 0,6 do cruzador sem ter de deduzir isso de casco atingido, onde o disco, o calor e a ordem
@@ -3102,12 +3143,19 @@ func _dano_de_canhao(unit: Dictionary) -> float:
 ## Degrau da escada de encouraçados, no mesmo molde do disco de fogo: um clique, um degrau, piso em
 ## linha pura e teto em quatro cascos. Recusar não move nada e escreve por que recusou.
 func _ajustar_encoracados(passo: int) -> void:
-	var anterior := encoracados
-	encoracados = clampi(encoracados + passo, 0, ENCORACADOS_TETO)
-	if encoracados == anterior:
+	var pretendido := encoracados + passo
+	if pretendido < 0 or pretendido > ENCORACADOS_TETO:
 		report_label.text = "ARMAMENTO %d // a ponte não tem outro degrau de bateria abaixo (ou acima) dele." % encoracados
 		_update_hud()
 		return
+	# A mesma guarda da escolta, escrita dos dois lados: subir a bateria não pode comer os conveses
+	# que já estão na cauda nem o cruzador puro que sobra na linha.
+	if pretendido + porta_avioes > fleet.size() - 1:
+		report_label.text = "ARMAMENTO %d // recusado: %d convés(es) na cauda e %d encouraçado(s) deixariam %d casco(s) na linha, e a ponte não converte a esquadra inteira." % [
+			encoracados, porta_avioes, pretendido, fleet.size() - pretendido - porta_avioes]
+		_update_hud()
+		return
+	encoracados = pretendido
 	_aplicar_classes()
 	var batalha: Dictionary = CLASSES["BATALHA"]
 	report_label.text = "ARMAMENTO: %d ENCURRAÇADO(S) // %d carga(s) de bateria por salva a %0.0f u/s; " % [
@@ -3117,14 +3165,50 @@ func _ajustar_encoracados(passo: int) -> void:
 	_update_hud()
 
 
+## Degrau da escada de porta-aviões, no mesmo molde da bateria: um clique, um degrau, piso em linha
+## pura e teto em dois conveses. As duas recusas têm motivos diferentes e linhas diferentes — a ponte
+## diz qual delas cobrou, porque "teto" e "não há casco livre" se confundiriam na tela e a sonda
+## não teria como assinar a guarda da escolta.
+func _ajustar_porta_avioes(passo: int) -> void:
+	var pretendido := porta_avioes + passo
+	if pretendido < 0 or pretendido > PORTAAVIOES_TETO:
+		report_label.text = "AVIAÇÃO %d // a ponte não tem outro convés abaixo (ou acima) dele." % porta_avioes
+		_update_hud()
+		return
+	# A guarda da escolta é a cláusula que as duas escadas juntas assinam: cabeça e cauda do cadastro
+	# não podem somar a esquadra inteira, tem de sobrar ao menos um cruzador puro na linha. É por
+	# isto que um +1 pode ser recusado com degrau ainda livre no teto de conveses.
+	if encoracados + pretendido > fleet.size() - 1:
+		report_label.text = "AVIAÇÃO %d // recusado: %d encouraçado(s) e %d convés(es) deixariam %d casco(s) na linha, e a ponte não converte a esquadra inteira." % [
+			porta_avioes, encoracados, pretendido, fleet.size() - encoracados - pretendido]
+		_update_hud()
+		return
+	porta_avioes = pretendido
+	_aplicar_classes()
+	var convenio: Dictionary = CLASSES["PORTAAVIOES"]
+	report_label.text = "AVIAÇÃO: %d PORTA-AVIÕES // %d caça(s) por salva a %0.0f u/s, ida e volta; " % [
+		porta_avioes, int(convenio["cacas"]), CACA_VELOCIDADE]
+	report_label.text += "canhão a %d%%, marcha a %d%%, golpe de %0.1f do próprio fogo por agulha." % [
+		int(float(convenio["armas"]) * 100.0), int(float(convenio["velocidade"]) * 100.0), CACA_FATOR]
+	_update_hud()
+
+
 ## Promover e rebaixar andam pelo mesmo caminho, do índice 0 ao fim do cadastro: nada aqui acumula,
-## cada casco relê a própria classe pela posição. É isto que faz descer um degrau devolver o quadro
-## de antes sem precisar de um "antes" guardado em lugar nenhum.
+## cada casco relê a própria classe pela posição — a bateria pela cabeça, o convés pela cauda. É isto
+## que faz descer um degrau devolver o quadro de antes sem precisar de um "antes" guardado em lugar
+## nenhum. O preço de ler classe por posição é honesto e está na sonda: incorporar uma presa empurra
+## o convés para o fim do cadastro, porque o último casco da linha é sempre o que vira aviação.
 func _aplicar_classes() -> void:
 	for i in range(fleet.size()):
 		var unit: Dictionary = fleet[i]
-		unit["classe"] = "BATALHA" if i < encoracados else "CRUZADOR"
-		_pintar_bateria(unit["node"] as Node3D, i < encoracados)
+		if i < encoracados:
+			unit["classe"] = "BATALHA"
+		elif i >= fleet.size() - porta_avioes:
+			unit["classe"] = "PORTAAVIOES"
+		else:
+			unit["classe"] = "CRUZADOR"
+		_pintar_bateria(unit["node"] as Node3D, String(unit["classe"]) == "BATALHA")
+		_pintar_conves(unit["node"] as Node3D, String(unit["classe"]) == "PORTAAVIOES")
 		fleet[i] = unit
 
 
@@ -3276,6 +3360,155 @@ func _detonar_missil(m: Dictionary) -> void:
 		if vivos == 0 and not enemies.is_empty():
 			report_label.text = "VITÓRIA TÁTICA // a bateria encerrou o combate."
 			_encerra_batalha()
+
+
+## A silhueta do convés: uma laje plana sobre a quilha, uma ilhota a bombordo e três caçados
+## estacionados na popa. É leitura de recorte, não de volume — a laje é larga e baixa onde a bateria
+## é estreita e alta, e é isso que faz o porta-aviões ler "aviação" no mesmo quadro em que o
+## encouraçado lê "tubos". Como na bateria, a escala do nó raiz fica intocada: quem lê distância na
+## mesa é o cadastro, e um convés de pintura maior que o raio de colisão seria o convite para o
+## abalroamento que a conta nunca cobrou.
+func _pintar_conves(ship: Node3D, avioes: bool) -> void:
+	if not is_instance_valid(ship):
+		return
+	var existente := ship.get_node_or_null("Conves")
+	if avioes:
+		if existente != null:
+			return
+		var conves := Node3D.new()
+		conves.name = "Conves"
+		ship.add_child(conves)
+		var deck := _material(ACO_ESCURO.lightened(0.1), 0.35, 0.66)
+		var ilhota := _material(ACO, 0.3, 0.6)
+		var latao := _material(HUD_OURO.darkened(0.52), 0.62, 0.34, HUD_OURO * 0.4)
+		# Laje de voltagem baixa: 2,9 de boca por 5,6 de comprimento, 0,14 de espessura.
+		_box(Vector3(0, 0.86, -0.3), Vector3(2.9, 0.14, 5.6), deck, conves)
+		# Filete de eixo em latão: é a linha que o olho usa para ler o comprimento do convés.
+		_box(Vector3(0, 0.94, -0.3), Vector3(0.16, 0.03, 5.2), latao, conves)
+		# Ilhota a bombordo, atrás do meio do navio, para não tapar a proa no quadro de perto.
+		_box(Vector3(-1.05, 1.28, 1.15), Vector3(0.42, 0.62, 1.3), ilhota, conves)
+		# Três caçados em pé de pista, um por agulha que a salva vai abrir.
+		for i in range(3):
+			_box(Vector3(0.35 - float(i) * 0.7, 1.02, -2.1 + float(i) * 1.35),
+				Vector3(0.42, 0.1, 0.72), deck, conves)
+	elif existente != null:
+		# Mesmo contrato da bateria: `remove_child` antes do `queue_free`, senão o nome continua
+		# ocupado até o fim do quadro e um +1 no mesmo frame acharia que o convés já está no lugar.
+		ship.remove_child(existente)
+		existente.queue_free()
+
+
+## O lançamento e a travessia não sorteiam: nem `rng`, nem `visual_rng`, no mesmo contrato da bateria
+## — o caçado nasce porque um casco tem classe e a salva já abriu agulhas sobre o disco. É isto que
+## permite assinar o `rng.state` idêntico entre uma esquadra com dois conveses lançando e uma de linha
+## pura. O único sorteio da aviação são os dois traços do impacto, e eles saem de `visual_rng`.
+func _lancar_caca(origem: Vector3, destino: Vector3, dano: float) -> void:
+	var vetor := destino - origem
+	var distancia := vetor.length()
+	if distancia < 0.001:
+		return
+	var no := Node3D.new()
+	add_child(no)
+	no.global_position = origem
+	var casco := _material(ACO_ESCURO.lightened(0.24), 0.45, 0.4, ESCOAMENTO_ALIADO * 0.3)
+	var filete := _material(HUD_OURO.darkened(0.42), 0.6, 0.32, HUD_OURO * 0.45)
+	# Corpo de meio metro com asa de um: é o dobro do bocal do míssil e um quinto do casco, então o
+	# olho lê "caçado" e não "estilhaço" mesmo no quadro aberto da esquadra.
+	_box(Vector3(0, 0, 0), Vector3(0.22, 0.14, 0.92), casco, no)
+	var asa := _box(Vector3(0, 0, 0.18), Vector3(1.05, 0.06, 0.4), casco, no)
+	asa.rotation.y = 0.5
+	_box(Vector3(0, 0.12, 0.36), Vector3(0.1, 0.1, 0.24), filete, no)
+	_quad(Vector3(0, 0, 0.55), 0.3, _glasm(Color(ESCOAMENTO_ALIADO, 0.6)), no)
+	no.look_at(destino, Vector3.UP)
+	# A travessia é contada em ida-e-volta porque o caçado não morre no alvo: meia corda para chegar,
+	# meia para voltar. `tau` é o ciclo inteiro, e `tau_meia` é o instante do tiro.
+	var c := {"id": caca_proximo_id, "no": no, "origem": origem, "destino": destino,
+		"tau": 2.0 * distancia / CACA_VELOCIDADE, "nascido": battle_clock, "dano": dano,
+		"bateu": false}
+	caca_proximo_id += 1
+	cacas.append(c)
+	caca_contagem["lancados"] = int(caca_contagem["lancados"]) + 1
+	audio.efeito("LASER")
+
+
+## Voo por forma fechada, no mesmo molde do míssil: o caçado lê `battle_clock`, nunca soma passo, e
+## por isso 600 quadros de 0,1 s e 60 de 1,0 s devolvem o tiro no mesmo instante e o pouso no mesmo
+## quadro. Percorrer a lista de trás para frente mantém a ordem de cadastro e `remove_at` não
+## desloca índice que ainda falta ler.
+func _atualizar_cacas() -> void:
+	for i in range(cacas.size() - 1, -1, -1):
+		var c: Dictionary = cacas[i]
+		var frac := clampf((battle_clock - float(c["nascido"])) / maxf(float(c["tau"]), 0.001), 0.0, 1.0)
+		var origem: Vector3 = c["origem"]
+		var destino: Vector3 = c["destino"]
+		var no: Node3D = c["no"]
+		if frac < 0.5:
+			no.global_position = origem.lerp(destino, frac * 2.0)
+			continue
+		if not bool(c["bateu"]):
+			c["bateu"] = true
+			if _ferir_com_caca(c):
+				# Abatido: o corpo sai da lista no mesmo quadro, porque `queue_free` é adiado e
+				# `is_instance_valid` continuaria verdadeiro até o fim do frame — o caçado morto
+				# voaria o retorno e fecharia a travessia conta duas vezes (pousado E abatido),
+				# quebrando a identidade que a sonda assina.
+				no.queue_free()
+				cacas.remove_at(i)
+				continue
+		no.global_position = destino.lerp(origem, (frac - 0.5) * 2.0)
+		if frac >= 1.0:
+			caca_contagem["pousados"] = int(caca_contagem["pousados"]) + 1
+			no.queue_free()
+			cacas.remove_at(i)
+
+
+## Meia-travessia: o ponto é relido contra a barreira de AGORA, no mesmo contrato da bateria — com o
+## cinturão derivando, uma pedra que entrou no corredor depois do lançamento derruba o caçado, e é
+## esse o preço de voar baixo. Devolve `true` só quando o caçado fica no campo (pedra abate);
+## planeta ou lua mandam ele de volta para o convés, intacto.
+func _ferir_com_caca(c: Dictionary) -> bool:
+	var origem: Vector3 = c["origem"]
+	var destino: Vector3 = c["destino"]
+	var bloqueio := _barreira_entre(origem, destino)
+	if not bloqueio.is_empty():
+		caca_contagem["bloqueados"] = int(caca_contagem["bloqueados"]) + 1
+		_flash_explosao(bloqueio["pos"])
+		var pedra: Dictionary = bloqueio["pedra"]
+		if pedra.is_empty():
+			# Astro inteiro: barra, mas não abate. O caçado volta para o convés e a travessia fecha
+			# em `bloqueados` + `pousados` — contá-lo também como vão seria cobrar o mesmo caçado
+			# em dois eixos e arrebentar a identidade que a sonda assina.
+			return false
+		caca_contagem["abatidos"] = int(caca_contagem["abatidos"]) + 1
+		return true
+	var atingido := _casco_em(destino, enemies)
+	if atingido < 0:
+		caca_contagem["no_vao"] = int(caca_contagem["no_vao"]) + 1
+		# O rastro do caçado sai de `visual_rng` (`cauda_de_combate` em falso), nunca do gerador de
+		# combate: um lance de canhão é sorteado porque é conta de dano, uma agulha de aviação é
+		# pintura de um dano já fechado em conta. Do contrário cada convés empurraria a cauda do
+		# sorteio e a escada seria um reroll disfarçado — exatamente o que a corrida A/B cobra.
+		_spawn_bolt(destino, BLUE, origem, false)
+		return false
+	var enemy: Dictionary = enemies[atingido]
+	var cobro := float(c["dano"])
+	enemy["hp"] = maxf(0.0, float(enemy["hp"]) - cobro)
+	caca_contagem["feridos"] = int(caca_contagem["feridos"]) + 1
+	caca_contagem["dano"] = float(caca_contagem["dano"]) + cobro
+	_spawn_bolt(destino, BLUE, origem, false)
+	if float(enemy["hp"]) <= 0.0:
+		_mark_wreck(enemy["node"] as Node3D)
+		report_label.text = "GRUPO AÉREO // %s abatido pelos caçados." % String(enemy["name"])
+	enemies[atingido] = enemy
+	if not batalha_encerrada:
+		var vivos := 0
+		for outro in enemies:
+			if float(outro["hp"]) > 0.0 and String(outro["order"]) != "CAPTURADO":
+				vivos += 1
+		if vivos == 0 and not enemies.is_empty():
+			report_label.text = "VITÓRIA TÁTICA // o grupo aéreo encerrou o combate."
+			_encerra_batalha()
+	return false
 
 
 ## Clarão de detonação: corpo que cresce e se fecha, sem sorteio e sem tocar o tabuleiro. Mora fora
@@ -3501,6 +3734,13 @@ func _resolve_volley() -> void:
 		var cargas := _missoes_por_salva(ally)
 		for k in range(mini(cargas, pontos.size())):
 			_lancar_missil(origem, pontos[k], damage * MISSIL_FATOR)
+		# Grupo aéreo: o convés pega as agulhas do FIM do mesmo leque que a salva já abriu — a cabeça
+		# do leque é da bateria, a cauda é da aviação, e as duas escadas nunca mandam duas cargas pelo
+		# mesmo corredor. Como no míssil, nenhum sorteio novo: CONCENTRAR fecha também o grupo aéreo e
+		# DISPERSAR o espalha, porque o que ele herda é o disco, não um desenho próprio.
+		var esquadrilha := _cacas_por_salva(ally)
+		for k in range(mini(esquadrilha, pontos.size())):
+			_lancar_caca(origem, pontos[pontos.size() - 1 - k], damage * CACA_FATOR)
 	_desenhar_setor_de_fogo()
 	# Boarding parties progress in real time after reaching a sufficiently damaged ship.
 	for target_index in range(enemies.size()):
@@ -3613,6 +3853,13 @@ func _resolve_volley() -> void:
 		salva_resumo += " // bateria: %d lançados, %d detonados, %d bloqueados, %d em voo, %0.1f de dano" % [
 			int(missil_contagem["lancados"]), int(missil_contagem["detonados"]),
 			int(missil_contagem["bloqueados"]), misseis.size(), float(missil_contagem["dano"])]
+	# A linha do grupo aéreo obedece ao mesmo contrato: só nasce depois do primeiro caçado lançado,
+	# então com as duas escadas em zero o resumo fecha caractere a caractere como fechava antes.
+	if int(caca_contagem["lancados"]) > 0:
+		salva_resumo += " // aviação: %d lançados, %d feriram, %d no vão, %d bloqueados, %d abatidos, %d pousados, %d no ar, %0.1f de dano" % [
+			int(caca_contagem["lancados"]), int(caca_contagem["feridos"]), int(caca_contagem["no_vao"]),
+			int(caca_contagem["bloqueados"]), int(caca_contagem["abatidos"]),
+			int(caca_contagem["pousados"]), cacas.size(), float(caca_contagem["dano"])]
 
 ## Uma presa só vira unidade quando sai de `enemies` e entra em `fleet`: enquanto fica na
 ## lista de hostis ela não recebe ordem nenhuma e o jogador assiste à captura de fora.
@@ -3988,7 +4235,7 @@ func _update_hud() -> void:
 				living += 1
 				if item["engines"] < 70.0 or item["weapons"] < 70.0 or item["crew"] < 60.0:
 					damaged += 1
-		command_label.text = "FROTA: %d/%d NAVES | ARMAMENTO: %d/%d ENCURRAÇADO(S) | SELEÇÃO: %s\nFORMAÇÃO: %s | FOGO: %s (%.1f u) | DANIFICADAS: %d\nRECONHECIMENTO: %d%% // %d sonda(s) • %d/%d contato(s) confirmado(s)\nESTADO: %s // TEMPO REAL // ÚLTIMA SALVA: %s\n%s" % [living, fleet.size(), encoracados, ENCORACADOS_TETO, selection_scope, formation, FOGO_NOME[fogo_densidade], FOGO_RAIO[fogo_densidade], damaged, int(recon_progress), probes.size(), recon_contacts, recon_total, "PAUSADO" if paused else ("PONTE PERDIDA" if ponte_condenada else "EM COMBATE"), salva_resumo, tactical_note]
+		command_label.text = "FROTA: %d/%d NAVES | ARMAMENTO: %d/%d ENCURRAÇADO(S) + %d/%d PORTA-AVIÕES | CAÇAS: %d NO AR | SELEÇÃO: %s\nFORMAÇÃO: %s | FOGO: %s (%.1f u) | DANIFICADAS: %d\nRECONHECIMENTO: %d%% // %d sonda(s) • %d/%d contato(s) confirmado(s)\nESTADO: %s // TEMPO REAL // ÚLTIMA SALVA: %s\n%s" % [living, fleet.size(), encoracados, ENCORACADOS_TETO, porta_avioes, PORTAAVIOES_TETO, cacas.size(), selection_scope, formation, FOGO_NOME[fogo_densidade], FOGO_RAIO[fogo_densidade], damaged, int(recon_progress), probes.size(), recon_contacts, recon_total, "PAUSADO" if paused else ("PONTE PERDIDA" if ponte_condenada else "EM COMBATE"), salva_resumo, tactical_note]
 	if is_instance_valid(target_selector):
 		for i in range(enemies.size()):
 			# O casco só aparece para a ponte quando uma sonda encostou naquele hull: a

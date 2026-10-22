@@ -428,7 +428,7 @@ func _initialize() -> void:
 		linhas_depois[2].begins_with("RECONHECIMENTO:"), linhas_depois[2])
 	_assert("a última linha continua sendo a leitura da postura hostil",
 		linhas_depois[4].begins_with("POSTURA HOSTIL:"), linhas_depois[4])
-	_assert("os trinta e três comandos continuam no painel", total_botoes == 33,
+	_assert("os trinta e cinco comandos continuam no painel", total_botoes == 35,
 		"%d botões e primeira linha «%s»" % [total_botoes, linhas_antes[0]])
 	_assert("o holograma não ganha nem perde um filho por causa da escada",
 		int(gm.holo_root.get_child_count()) == blips_antes,

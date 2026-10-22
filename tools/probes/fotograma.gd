@@ -2,14 +2,16 @@ extends SceneTree
 
 ## Fotogramas reais da ponte para ajuste de pintura. Headless usa o renderizador dummy e devolve
 ## tela preta: neblina, exposição, glow e recorte da janela só se medem com PNG de verdade, e
-## estes quinze quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
+## estes dezenove quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
 ## mas os quadros do meio montam cenário de verdade, e cenário engole e queima: por isso a sonda
 ## devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção.
 ##
 ## Uso (janela real, sem --headless):
-##   godot --path . --quit-after 2000 -s res://tools/probes/fotograma.gd
-## O orçamento é em quadros e a ruína espera segundos reais: 2000 cobre a sequência inteira mesmo
-## numa máquina que desenha a 144 Hz, e `quit()` fecha a sonda antes disso quando ela termina.
+##   godot --path . --quit-after 4000 -s res://tools/probes/fotograma.gd
+## O orçamento é em quadros e a ruína espera segundos reais: 4000 cobre a sequência inteira mesmo
+## numa máquina que desenha a 144 Hz, e `quit()` fecha a sonda antes disso quando ela termina. O
+## orçamento subiu de 2000 quando a aviação entrou: o quadro 05e espera a ida do caçado em tempo
+## real, e numa janela a 144 Hz dois segundos de voo custam duzentos quadros, não cento e vinte.
 
 const OUT := "D:/Downloads/tmp-userdata/frame/"
 ## Espelho de `main.gd` para o quadro da ruína: se a tabela de fases ou o teto de rolagem mudarem
@@ -144,6 +146,47 @@ func _initialize() -> void:
 		"carga a %0.2f da corda depois de %d quadros reais, %d ainda no ar" % [
 			_frac_do_voo(game), quadros_do_voo, game.misseis.size()])
 	await _fotograma(game, "05c_missil_em_voo")
+
+	# 05d, 05e — o convés do porta-aviões e a agulha no ar. `tools/probes/cacas.gd` conta lançamentos,
+	# mede o ponto do golpe e fecha a conta da ida-e-volta; a pergunta do PNG é de silhueta, e ela é a
+	# mesma do quadro 05b: a laje larga e baixa lê «aviação» contra um cruzador puro ao lado, e o caçado
+	# de asa cruzada se vê no meio da corda? Os dois cascos promovidos no 05b voltam à linha porque a
+	# câmera é uma só e o close-up agora é da cauda da esquadra.
+	(game.fleet[0]["node"] as Node3D).position = Vector3(-12.5, 0.0, -38.0)
+	(game.fleet[2]["node"] as Node3D).position = Vector3(-2.5, 0.0, -38.0)
+	game._ajustar_porta_avioes(1)
+	var conveses := 0
+	for ally in game.fleet:
+		if (ally["node"] as Node3D).get_node_or_null("Conves") != null:
+			conveses += 1
+	var cauda: int = game.fleet.size() - 1
+	_assert("vestir um convés desenha laje em exatamente um casco, na cauda do cadastro",
+		int(game.porta_avioes) == 1 and conveses == 1
+			and String(game.fleet[cauda]["classe"]) == "PORTAAVIOES",
+		"%d degrau de aviação, %d silhuetas de convés, cauda lida como %s" % [
+			game.porta_avioes, conveses, game.fleet[cauda]["classe"]])
+	var conves: Node3D = game.fleet[cauda]["node"]
+	conves.position = Vector3(-2.6, 0.2, -16.0)
+	(game.fleet[3]["node"] as Node3D).position = Vector3(2.6, 0.2, -16.0)
+	await _fotograma(game, "05d_porta_avioes_conves")
+	game.selected_target = 0
+	game._resolve_volley()
+	_assert("há caçados no ar no quadro do voo",
+		int(game.cacas.size()) > 0 and int(game.caca_contagem["lancados"]) > 0,
+		"%d em voo, %d lançados" % [game.cacas.size(), game.caca_contagem["lancados"]])
+	# Fração 0,20 é o miolo da ida: como o ciclo é de ida-e-volta, 0,20 do ciclo é 0,40 da corda —
+	# mar aberto entre as duas linhas. A primeira versão deste quadro esperou 0,34 e saiu cega: a
+	# agulha já estava encostada na esquadra hostil, perdida entre os clarões dos cascos, e o PNG não
+	# respondia a pergunta nenhuma. Antes do toque, porque depois dele o rastro é o do impacto.
+	var quadros_da_ida := 0
+	while _frac_da_ida(game) < 0.20 and int(game.cacas.size()) > 0 and quadros_da_ida < 400:
+		await process_frame
+		quadros_da_ida += 1
+	_assert("o quadro pegou a agulha na ida, em mar aberto e antes do toque",
+		int(game.cacas.size()) > 0 and _frac_da_ida(game) >= 0.20 and _frac_da_ida(game) < 0.5,
+		"agulha a %0.2f da ida-e-volta (%0.2f da corda) depois de %d quadros reais, %d ainda no ar" % [
+			_frac_da_ida(game), _frac_da_ida(game) * 2.0, quadros_da_ida, game.cacas.size()])
+	await _fotograma(game, "05e_caca_em_voo")
 
 	# 06 — painel em acordeão: a dobra é pintura, e sonda de lógica não mede se o grupo fechado
 	# ainda cabe na janela. A camada de UI volta a ficar visível de propósito: os quadros 04 e 05 a
@@ -362,6 +405,16 @@ func _frac_do_voo(game) -> float:
 	var missil: Dictionary = game.misseis[0]
 	return clampf((float(game.battle_clock) - float(missil["nascido"]))
 		/ maxf(float(missil["tau"]), 0.001), 0.0, 1.0)
+
+## Fração da ida-e-volta em que o primeiro caçado no ar está agora — lida do mesmo relógio que
+## `_atualizar_cacas` lê. É a régua do quadro 05e: abaixo de 0,5 o caçado ainda caminha para o alvo,
+## então o rastro tem corda atrás de si e o golpe não abriu os dois traços do impacto.
+func _frac_da_ida(game) -> float:
+	if int(game.cacas.size()) == 0:
+		return 0.0
+	var caca: Dictionary = game.cacas[0]
+	return clampf((float(game.battle_clock) - float(caca["nascido"]))
+		/ maxf(float(caca["tau"]), 0.001), 0.0, 1.0)
 
 func _tabular(game) -> void:
 	for i in range(game.fleet.size()):
