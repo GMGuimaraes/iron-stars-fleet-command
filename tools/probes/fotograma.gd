@@ -2,8 +2,8 @@ extends SceneTree
 
 ## Fotogramas reais da ponte para ajuste de pintura. Headless usa o renderizador dummy e devolve
 ## tela preta: neblina, exposição, glow e recorte da janela só se medem com PNG de verdade, e
-## estes quatorze quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
-## mas os três do meio montam cenário de verdade, e cenário engole e queima: por isso a sonda
+## estes quinze quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
+## mas os quadros do meio montam cenário de verdade, e cenário engole e queima: por isso a sonda
 ## devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção.
 ##
 ## Uso (janela real, sem --headless):
@@ -213,6 +213,20 @@ func _initialize() -> void:
 	game.capital_hp = 100.0
 	game.batalha_encerrada = false
 	await _fotograma(game, "10_estrela")
+
+	# 10b — o sistema planetário: planeta alto no plano, três luas e os três aros de órbita desenhados.
+	# A conta de corpo, marca e posição é de `tools/probes/sistema.gd`; a pergunta do PNG é outra: se o
+	# olho lê o aro inclinado e a lua em órbita, e se o planeta não virou bola branca estourada no meio
+	# do campo. Nada aqui mexe nos cascos: o sistema não queima nem engole, só barra.
+	game._montar_cenario("SISTEMA")
+	await _frames(3)
+	_assert("o sistema tem corpo na cena (planeta + limbo + três aros + três luas)",
+		game.cenario_root.get_child_count() == 8 and game.holo_cenario.size() == 4,
+		"%d nós e %d marcas na mesa" % [game.cenario_root.get_child_count(),
+			game.holo_cenario.size()])
+	game.battle_clock = 6.0
+	game._orbitar_luas()
+	await _fotograma(game, "10b_sistema")
 
 	# 11 — tripulação em alarme: com a capitânia ferida, as quatro telas de console viram vermelhas
 	# e os operadores sentados se debruçam. É pintura, e pintura só se julga em PNG — mas a contagem

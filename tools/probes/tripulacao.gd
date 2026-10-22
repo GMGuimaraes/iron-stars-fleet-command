@@ -318,7 +318,7 @@ func _initialize() -> void:
 		pos_antes.append((posto["no"] as Node3D).global_position)
 	for i in range(200):
 		game._puxar_para_o_poco(PASSO)
-		game._chocar_com_rochas()
+		game._chocar_com_barreiras()
 		game._queimar_na_corona(PASSO)
 	var andaram := 0
 	for i in range(game.tripulacao.size()):

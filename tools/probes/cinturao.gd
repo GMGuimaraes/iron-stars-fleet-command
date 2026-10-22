@@ -38,6 +38,11 @@ extends SceneTree
 ## acidente. A régua local é cobrada quadro a quadro nesta peça; o desenho é cobrado em janela, em
 ## `tools/probes/fotograma.gd`.
 ##
+## E desde a seção 9 o cinturão responde por uma consequência que ganhou de rebote, quando planeta e
+## luas entraram na mesma lista de barreira da salva: pedra no corredor agora também cega a varredura
+## da sonda. Cobrada nos dois lados — com sombra e sem sombra — porque reconhecimento que só mede o
+## «não» aprovaria um tabuleiro onde a sonda não enxerga nada.
+##
 ## Uso: godot --headless --path . --quit-after 6000 -s res://tools/probes/cinturao.gd
 
 ## Espelho das constantes de `main.gd` — a instância do jogo é não tipada e elas não são alcançáveis
@@ -63,6 +68,9 @@ const ROCHA_FILHA_FRAC := 0.62
 const ROCHA_FILHA_MIN := 1.6
 const ROCHA_GERACAO_MAXIMA := 2
 const ROCHA_LIMITE_CORPOS := 40
+## Raio de varredura da sonda, espelho de `main.gd`. A seção 9 só vale se a geometria medida couber
+## nele, e medir sem conferir a precondição é a armadilha da porta que não estava fechada.
+const PROBE_SCAN_RADIUS := 9.0
 const PASSO := 0.1
 ## Sessenta segundos de mar no relógio da batalha: tempo suficiente para a pedra mais lenta cruzar a
 ## própria banda e para o empuxo errático trocar o rumo de todas — e curto o bastante para rodar em
@@ -643,6 +651,72 @@ func _secao_cauda() -> void:
 	b.queue_free()
 	await _frames(2)
 
+## ---- 9. A sombra: a régua da salva agora vale para o reconhecimento ----------------------
+## Desde o sistema planetário, barreira é uma lista só (`_barreira_entre` varre rochas e astros),
+## e a varredura da sonda passou a consultá-la. Isso deu ao cinturão um efeito que ele nunca
+## prometeu no painel: pedra no meio do corredor não para só o tiro, ela cega a sonda. A família
+## abaixo confere as duas pontas — a sombra existe, e o controle sem sombra também, porque uma
+## asserção que só mede o "não" fica verde num tabuleiro onde a varredura não funciona de jeito
+## nenhum (armadilha nº 1 da casa).
+func _secao_sombra(game) -> void:
+	game._montar_cenario("CINTURAO")
+	# Uma pedra só no corredor da prova: as outras treze derivam, e qualquer delas poderia bloquear
+	# o trecho por acaso — o que aprovaria a asserção pelo obstáculo errado, a mesma quebra que
+	# `tools/probes/cenarios.gd` já teve no «bloqueia».
+	for i in range(game.rochas.size()):
+		game.rochas[i]["pos"] = Vector3(0.0, 300.0 + float(i) * 10.0, 0.0)
+	var pedra: Dictionary = game.rochas[0]
+	var raio_pedra := float(pedra["raio"])
+	var alvo: Node3D = game.enemies[0]["node"]
+	alvo.position = Vector3(0.0, 0.0, -80.0)
+	var olho := Node3D.new()
+	game.add_child(olho)
+	olho.position = Vector3(0.0, 0.0, -72.0)
+	var distancia := alvo.global_position.distance_to(olho.global_position)
+	var meio := (olho.global_position + alvo.global_position) * 0.5
+	var cascos_proximos := 0
+	for foe in game.enemies:
+		if is_instance_valid(foe["node"]):
+			var outro: Node3D = foe["node"]
+			if outro != alvo and outro.global_position.distance_to(olho.global_position) \
+					<= PROBE_SCAN_RADIUS:
+				cascos_proximos += 1
+	_assert("a geometria da prova cabe no raio de varredura e não tem outro casco dentro dele",
+		distancia < PROBE_SCAN_RADIUS and cascos_proximos == 0,
+		"%0.1f u de sonda a casco contra %0.1f u de raio, %d vizinhos dentro do disco" % [
+			distancia, PROBE_SCAN_RADIUS, cascos_proximos])
+	pedra["pos"] = meio
+	var antes_pedo := _marcar_nao_visto(game, 0)
+	game._scan_with_probe(olho)
+	_assert("pedra no corredor cega a varredura: o casco continua não visto",
+		not bool(game.enemies[0].get("seen", false)),
+		"pedra de %0.1f u a 0,0 u do eixo sonda-casco" % raio_pedra)
+	var corte: Dictionary = game._barreira_entre(olho.global_position, alvo.global_position)
+	_assert("quem cega é a pedra, não um astro emprestado",
+		not corte.is_empty() and not (corte["pedra"] as Dictionary).is_empty()
+		and (corte["astro"] as Dictionary).is_empty(),
+		"pedra=%s astro=%s" % [str(corte.get("pedra", {})), str(corte.get("astro", {}))])
+	pedra["pos"] = meio + Vector3(0.0, raio_pedra + 4.0, 0.0)
+	game._scan_with_probe(olho)
+	_assert("a 4 u por fora da pedra a mesma sonda vê o mesmo casco",
+		bool(game.enemies[0].get("seen", false)),
+		"corredor limpo a %0.1f u do centro da pedra" % (raio_pedra + 4.0))
+	_assert("nem a sombra nem a limpeza consomem sorteio", int(game.rng.state) == antes_pedo,
+		"rng %d dos dois lados da varredura" % antes_pedo)
+	olho.queue_free()
+	game._montar_cenario("ABERTO")
+
+## Devolve o estado do gerador antes da varredura, já com o casco marcado como não visto: sem esta
+## marca o segundo lado da medida leria o `seen` que uma seção anterior deixou. A ordem volta para
+## `LINHA` porque um `CAPTURADO` pendurado aqui faria a varredura pular o alvo por outra razão.
+func _marcar_nao_visto(game, indice: int) -> int:
+	var foe: Dictionary = game.enemies[indice]
+	foe["hp"] = 100.0
+	foe["order"] = "LINHA"
+	foe["seen"] = false
+	game.enemies[indice] = foe
+	return int(game.rng.state)
+
 func _initialize() -> void:
 	var game: Node3D = await _montar_jogo()
 	_secao_leque(game)
@@ -653,6 +727,7 @@ func _initialize() -> void:
 	_secao_par_que_afasta(game)
 	await _secao_fratura(game)
 	await _secao_cauda()
+	_secao_sombra(game)
 	notes.append("veredito • quebras=%d • conferências=%d" % [breaks, notes.size()])
 	for linha in notes:
 		print("SONDA-CINTURAO: %s" % linha)

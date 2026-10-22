@@ -1,6 +1,7 @@
 extends SceneTree
 
-## Sonda dos cenários: a barreira que vale, o poço que engole e a estrela que aquece.
+## Sonda dos cenários: a barreira que vale, o poço que engole, a estrela que aquece e o sistema que
+## varre a linha.
 ##
 ## O pedido do comandante foi «diversas opções onde aplicas a estratégia», e opção falsa é a que
 ## existe só no painel. Então cada cenário é cobrado pela consequência que ele promete:
@@ -52,9 +53,11 @@ extends SceneTree
 ## ponto de perigo, `_fator_calor` devolvendo 1,0 em qualquer coordenada. É por isso que a inércia
 ## não é uma promessa de design, é a primeira família de asserções desta sonda.
 ##
-## O painel também é cobrado: o sétimo grupo existe, os quatro botões executam por `pressed`, trocar
+## O painel também é cobrado: o sétimo grupo existe, os cinco botões executam por `pressed`, trocar
 ## de cenário desmonta o anterior (rocha dobrada empurraria o casco duas vezes no mesmo quadro) e a
-## mesa holográfica mostra a barreira onde mostra os cascos — sem nunca virar blip de casco.
+## mesa holográfica mostra a barreira onde mostra os cascos — sem nunca virar blip de casco. A
+## quinta opção (SISTEMA) tem a própria sonda, `tools/probes/sistema.gd`; daqui ela é cobrada só
+## como painel e como desmonte: o botão existe, clicar acende a flag e trocar apaga tudo.
 ##
 ## Uso: godot --headless --path . --quit-after 1800 -s res://tools/probes/cenarios.gd
 
@@ -114,7 +117,7 @@ const ESTRELA_QUEIMA := 6.0
 const PASSO := 0.1
 const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "REPAROS", "RECONHECIMENTO",
 	"CENÁRIO", "TRILHA"]
-const NOMES_CENARIO := ["ABERTO", "CINTURAO", "POCO", "ESTRELA"]
+const NOMES_CENARIO := ["ABERTO", "CINTURAO", "POCO", "ESTRELA", "SISTEMA"]
 
 var breaks := 0
 var notes: Array[String] = []
@@ -254,17 +257,19 @@ func _initialize() -> void:
 
 	# ---- 1. O padrão é a ausência: campo aberto não tem cenário nenhum ----------------------
 	_assert("a ponte abre em campo aberto", String(game.cenario_atual) == "ABERTO"
-		and int(game.rochas.size()) == 0
-		and bool(game.poco_ativo) == false and bool(game.estrela_ativa) == false,
-		"cenario=%s rochas=%d poco=%s estrela=%s" % [game.cenario_atual, game.rochas.size(),
-			game.poco_ativo, game.estrela_ativa])
+		and int(game.rochas.size()) == 0 and int(game.astros.size()) == 0
+		and bool(game.poco_ativo) == false and bool(game.estrela_ativa) == false
+		and bool(game.planeta_ativa) == false,
+		"cenario=%s rochas=%d astros=%d poco=%s estrela=%s planeta=%s" % [game.cenario_atual,
+			game.rochas.size(), game.astros.size(), game.poco_ativo, game.estrela_ativa,
+			game.planeta_ativa])
 	var calor_fora: float = game._fator_calor(POCO_POS)
 	var calor_dentro: float = game._fator_calor(ESTRELA_POS)
 	_assert("sem estrela o multiplicador é 1,0 em qualquer ponto do campo",
 		_igual(float(calor_fora), 1.0, 0.000001) and _igual(float(calor_dentro), 1.0, 0.000001),
 		"1,000 na boca do poço e 1,000 na fotosfera")
 	_assert("sem rocha nenhum corredor é bloqueado",
-		game._rocha_entre(Vector3(0, 0, -38), Vector3(0, 0, -82)).is_empty(),
+		game._barreira_entre(Vector3(0, 0, -38), Vector3(0, 0, -82)).is_empty(),
 		"%d rochas na conta" % game.rochas.size())
 	_assert("a nota do campo aberto diz que não há nada no mapa",
 		String(game._nota_cenario()).contains("nenhuma barreira"), game._nota_cenario())
@@ -583,22 +588,22 @@ func _initialize() -> void:
 	# `vel`, `fase`, `id`, `integridade` e `geracao`, e uma cópia incompleta aqui congela a
 	# correnteza no primeiro `_process` sem quebrar nenhuma asserção de lógica.
 	game._nova_rocha(meio, ROCHA_RAIO_BASE, Vector3.ZERO, 0, 0.0)
-	var corte: Dictionary = game._rocha_entre(origem, destino)
+	var corte: Dictionary = game._barreira_entre(origem, destino)
 	_assert("rocha no corredor bloqueia o lance", not corte.is_empty(),
 		"ponto de contato a %0.2f u do centro da pedra" % (corte["pos"] as Vector3).distance_to(meio))
 	game.rochas[0]["pos"] = meio + Vector3(0.0, ROCHA_RAIO_BASE + 4.0, 0.0)
 	_assert("corredor a 4 u por fora da pedra está limpo",
-		game._rocha_entre(origem, destino).is_empty(),
+		game._barreira_entre(origem, destino).is_empty(),
 		"centro deslocado %0.1f u para cima do eixo do tiro" % (ROCHA_RAIO_BASE + 4.0))
 	game.rochas[0]["pos"] = meio + Vector3(0.0, ROCHA_RAIO_BASE - 0.1, 0.0)
-	var roçando: bool = not game._rocha_entre(origem, destino).is_empty()
+	var roçando: bool = not game._barreira_entre(origem, destino).is_empty()
 	game.rochas[0]["pos"] = meio + Vector3(0.0, ROCHA_RAIO_BASE + 0.1, 0.0)
 	_assert("o corte obedece ao raio: 0,1 u dentro bloqueia, 0,1 u fora fura",
-		roçando and game._rocha_entre(origem, destino).is_empty(),
+		roçando and game._barreira_entre(origem, destino).is_empty(),
 		"a %0.1f e a %0.1f u do eixo, pedra de %0.1f u" % [ROCHA_RAIO_BASE - 0.1,
 			ROCHA_RAIO_BASE + 0.1, ROCHA_RAIO_BASE])
 	_assert("origem e destino no mesmo ponto não inventam barreira",
-		game._rocha_entre(origem, origem).is_empty(), "trecho de comprimento zero")
+		game._barreira_entre(origem, origem).is_empty(), "trecho de comprimento zero")
 	game._nova_rocha(meio, ROCHA_RAIO_BASE, Vector3.ZERO, 0, 1.0)
 	_assert("a barreira mais próxima vence a mais longe",
 		_mais_perto_vence(game, origem, destino), "dois bloqueios no mesmo corredor")
@@ -698,7 +703,7 @@ func _initialize() -> void:
 	vitima["veloc"] = Vector3(0.0, 0.0, -30.0)
 	var pos_rocha_antes: Vector3 = (rocha["no"] as Node3D).position if rocha["no"] != null else Vector3.INF
 	var integridade_antes := float(rocha["integridade"])
-	game._chocar_com_rochas()
+	game._chocar_com_barreiras()
 	_assert("bater no cinturão cobra casco", float(vitima["hp"]) < 100.0,
 		"%s: %0.2f de casco após o choque" % [vitima["name"], float(vitima["hp"])])
 	_assert("a rocha não cede nem afofa", (rocha["no"] as Node3D).position == pos_rocha_antes
@@ -717,7 +722,7 @@ func _initialize() -> void:
 		"%0.3f contra %0.3f de soma de raios" % [nodo_vitima.global_position.distance_to(centro_rocha),
 			HULL_RADIUS + float(rocha["raio"])])
 	var casco_depois := float(vitima["hp"])
-	game._chocar_com_rochas()
+	game._chocar_com_barreiras()
 	_assert("o segundo contato na mesma janela não cobra de novo",
 		_igual(float(vitima["hp"]), casco_depois, 0.0001),
 		"%0.2f -> %0.2f dentro da janela de %0.1f s" % [casco_depois, float(vitima["hp"]),
@@ -728,7 +733,7 @@ func _initialize() -> void:
 	game.bridge_rig.position = centro_rocha + Vector3(0.0, float(rocha["raio"]) - 1.0, 0.0)
 	game.capital_velocity = Vector3(0.0, -40.0, 0.0)
 	var capitania_antes := float(game.capital_hp)
-	game._chocar_com_rochas()
+	game._chocar_com_barreiras()
 	_assert("a capitânia abrindo no cinturão perde casco",
 		float(game.capital_hp) < capitania_antes, "%0.2f -> %0.2f" % [capitania_antes,
 			game.capital_hp])
@@ -1002,12 +1007,12 @@ func _initialize() -> void:
 	var rotulos := ""
 	for botao in cenario_botoes:
 		rotulos += botao.text + " | "
-	_assert("o grupo CENÁRIO traz os quatro mapas", cenario_botoes.size() == 4,
+	_assert("o grupo CENÁRIO traz os cinco mapas", cenario_botoes.size() == 5,
 		"%d botões: %s" % [cenario_botoes.size(), rotulos])
 	var total := 0
 	for nome in NOMES_GRUPOS:
 		total += _botoes(game, nome).size()
-	_assert("trinta comandos agrupados", total == 30, "%d botões em 8 grupos" % total)
+	_assert("trinta e um comandos agrupados", total == 31, "%d botões em 8 grupos" % total)
 	for botao in cenario_botoes:
 		if botao.text.contains("CINTURÃO"):
 			botao.pressed.emit()
@@ -1018,14 +1023,26 @@ func _initialize() -> void:
 		if botao.text.contains("POÇO"):
 			botao.pressed.emit()
 	_assert("trocar de cenário desmonta o anterior (nada de rocha dobrada)",
-		int(game.rochas.size()) == 0 and bool(game.poco_ativo) and not bool(game.estrela_ativa),
-		"agora %d rochas, poco=%s" % [game.rochas.size(), game.poco_ativo])
+		int(game.rochas.size()) == 0 and int(game.astros.size()) == 0 and bool(game.poco_ativo)
+		and not bool(game.estrela_ativa) and not bool(game.planeta_ativa),
+		"agora %d rochas, %d astros, poco=%s" % [game.rochas.size(), game.astros.size(),
+			game.poco_ativo])
 	await _frames(4)
 	# Sombra + disco + arco = três nós. A lente inteira é um MultiMesh, então contar nós pega nó
 	# órfão (`>= 1` aprovaria o cinturão ainda pendurado) sem aprovar duzentos billets soltos.
 	_assert("os nós do cenário antigo saem de cena, não ficam pendurados",
 		is_instance_valid(game.cenario_root) and game.cenario_root.get_child_count() == 3,
 		"%d filhos em Cenario com o poço montado" % game.cenario_root.get_child_count())
+	for botao in cenario_botoes:
+		if botao.text.contains("SISTEMA"):
+			botao.pressed.emit()
+	_assert("clicar no sistema monta planeta mais três luas, e só",
+		int(game.astros.size()) == 4 and bool(game.planeta_ativa) and not bool(game.poco_ativo)
+			and int(game.rochas.size()) == 0,
+		"%d astros, planeta=%s, %d rochas, %d filhos em Cenario" % [game.astros.size(),
+			game.planeta_ativa, game.rochas.size(), game.cenario_root.get_child_count()])
+	# O dedo que monta tem de ser o mesmo que a mesa lê: um `pressed` que chamasse outra função
+	# deixaria a sonda de sistema exercitando um caminho que o jogador nunca pega.
 	for botao in cenario_botoes:
 		if botao.text.contains("CAMPO ABERTO"):
 			botao.pressed.emit()
@@ -1063,6 +1080,22 @@ func _initialize() -> void:
 	game._montar_cenario("ESTRELA")
 	_assert("a estrela tem uma marca na mesa", int(game.holo_cenario.size()) == 1,
 		"%d marcas" % game.holo_cenario.size())
+	game._montar_cenario("SISTEMA")
+	# Quatro astros, quatro marcas, nenhum blip de casco a mais: rocha nenhuma é casco, e agora
+	# astro nenhum é tampouco. A régua é a mesma do cinturão, widened para a lista nova.
+	var blips_astros: int = (game.holo_blips as Dictionary).size()
+	_assert("astro não vira blip de casco", blips_astros == cascos_vivos,
+		"%d blips para %d cascos no quadro com o sistema montado" % [blips_astros, cascos_vivos])
+	_assert("cada astro tem marca na mesa", int(game.holo_cenario.size()) == game.astros.size()
+		and int(game.holo_cenario.size()) == 4,
+		"%d marcas para %d astros" % [game.holo_cenario.size(), game.astros.size()])
+	var astro_fora := ""
+	for i in range(game.astros.size()):
+		var marca_astro: MeshInstance3D = game.holo_cenario[i]
+		if marca_astro.position.distance_to(game._holo_de(game.astros[i]["pos"])) > 0.0001:
+			astro_fora += "%d " % i
+	_assert("a marca do astro segue a posição real do astro", astro_fora == "",
+		"fora do lugar: [%s]" % astro_fora)
 	game._montar_cenario("ABERTO")
 	_assert("o campo aberto não pinta marca nenhuma", int(game.holo_cenario.size()) == 0,
 		"%d marcas" % game.holo_cenario.size())
@@ -1072,9 +1105,9 @@ func _initialize() -> void:
 	for nome in NOMES_CENARIO:
 		game._montar_cenario(nome)
 		notas += String(game.report_label.text) + "\n     "
-	_assert("as quatro notas anunciam consequência, não enfeite",
+	_assert("as cinco notas anunciam consequência, não enfeite",
 		notas.contains("14 rochas") and notas.contains("46 u") and notas.contains("25% mais quente")
-			and notas.contains("nenhuma barreira"),
+			and notas.contains("nenhuma barreira") and notas.contains("três luas em órbita"),
 		"\n     %s" % notas)
 	game._montar_cenario("ABERTO")
 
@@ -1092,7 +1125,7 @@ func _mais_perto_vence(game, origem: Vector3, destino: Vector3) -> bool:
 	var meio := (origem + destino) * 0.5
 	game.rochas[0]["pos"] = meio + Vector3(0.0, 0.0, -6.0)
 	game.rochas[1]["pos"] = meio + Vector3(0.0, 0.0, 12.0)
-	var corte: Dictionary = game._rocha_entre(origem, destino)
+	var corte: Dictionary = game._barreira_entre(origem, destino)
 	if corte.is_empty():
 		return false
 	return (corte["pos"] as Vector3).z > meio.z + 0.001

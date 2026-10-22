@@ -3,8 +3,9 @@ extends SceneTree
 ## Sonda do painel em grupos e das duas ordens de densidade (DISPERSAR / AGRUPAR).
 ##
 ## O pedido do comandante foi «menos poluição»: o painel tinha dezenove botões de ordem empilhados,
-## sempre todos à vista, e dois deles faziam a mesma coisa. Agora são trinta comandos em oito
-## categorias, uma aberta por vez — a sétima (CENÁRIO) entrou depois, com os quatro mapas, a oitava
+## sempre todos à vista, e dois deles faziam a mesma coisa. Agora são trinta e um comandos em oito
+## categorias, uma aberta por vez — a sétima (CENÁRIO) entrou depois, com os quatro mapas, e ganhou
+## o quinto (SISTEMA) na rodada das luas; a oitava
 ## (TRILHA) com as quatro faixas da ponte, e o grupo
 ## ATAQUE ganhou os dois degraus de densidade do disco de salva. Isso
 ## é pintura — mas pintura que esconde comando, e painel que esconde sem dizer o que escondeu
@@ -38,7 +39,7 @@ const PASSO := 0.1
 const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "REPAROS", "RECONHECIMENTO",
 	"CENÁRIO", "TRILHA"]
 const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "REPAROS": 5,
-	"RECONHECIMENTO": 1, "CENÁRIO": 4, "TRILHA": 4}
+	"RECONHECIMENTO": 1, "CENÁRIO": 5, "TRILHA": 4}
 
 var breaks := 0
 var notes: Array[String] = []
@@ -174,7 +175,7 @@ func _initialize() -> void:
 	var total_botoes := 0
 	for nome in NOMES_GRUPOS:
 		total_botoes += _botoes(game, nome).size()
-	_assert("trinta comandos agrupados", total_botoes == 30,
+	_assert("trinta e um comandos agrupados", total_botoes == 31,
 		"%d botões de comando em 8 grupos" % total_botoes)
 
 	# 2 — Menos poluição: o que se vê é um grupo, não a lista toda. Este era o número da rodada

@@ -101,11 +101,11 @@ const HOLO_ALT_SCALE := 0.09
 const HOLO_ALT_CEIL := 0.8
 
 ## ---- Cenários: o obstáculo que se usa, não a decoração que se passa por cima ----
-## Os três cenários são escolhas do comandante no painel, e o contrato deles é o mesmo: nenhum
+## Os mapas são escolhas do comandante no painel, e o contrato deles é o mesmo: nenhum
 ## número se move com o campo aberto (o cenário padrão), cada um cobra um preço próprio e esse
 ## preço é conferível em geometria, não em sorteio. Nada aqui usa `rng`; o que muda a conta é a
 ## posição que o jogador escolheu ocupar.
-const CENARIOS := ["ABERTO", "CINTURAO", "POCO", "ESTRELA"]
+const CENARIOS := ["ABERTO", "CINTURAO", "POCO", "ESTRELA", "SISTEMA"]
 ## Cinturão: rochas entre as duas linhas, em banda determinística. Determinística de propósito —
 ## se o cinturão saísse do `visual_rng`, cada partida mudaria o mapa e a sonda não teria com que
 ## conferir a barreira.
@@ -202,6 +202,30 @@ const ESTRELA_VENTO_ACEL := 3.0
 ## deste raio, multiplicando o raio de scan que já existia.
 const ESTRELA_RADIAO_RAIO := 120.0
 const ESTRELA_RADIAO_VARREDURA := 0.5
+## Sistema planetário: um planeta fora do plano da linha e três luas num mesmo plano inclinado. A
+## lua de dentro desce até a altitude dos cascos e varre o corredor — o que faz do mapa um
+## obstáculo que abre e fecha em vez de uma pedra parada. A órbita é FORMA FECHADA do
+## `battle_clock`, não integração quadro a quadro: mudada a taxa de quadro, a lua continua no
+## mesmo ponto do céu, e a sonda confere a posição sem espelhar laço nenhum. Zero sorteio,
+## inclusive na montagem.
+const SISTEMA_POS := Vector3(0.0, 22.0, -64.0)
+const SISTEMA_PLANETA_RAIO := 15.0
+## Raio de órbita, período em segundos do relógio de batalha e raio físico de cada lua, no mesmo
+## índice. As três velocidades de varredura saem daí — `TAU × órbita / período`:
+## 6,81 / 4,19 / 2,76 u/s. A de dentro passa do teto de abalroamento e fere; a de fora anda
+## devagar o bastante para empurrar sem ferir. É a escada que faz das três luas três perigos
+## diferentes, não um enfeite repetido três vezes.
+const SISTEMA_ORBITA := [26.0, 40.0, 58.0]
+const SISTEMA_PERIODO := [24.0, 60.0, 132.0]
+const SISTEMA_LUA_RAIO := [2.4, 3.2, 1.9]
+## Inclinação do plano orbital, medida do plano da mesa: 0,88 rad fazem o círculo de raio 26
+## descer `26 × sin(0,88) = 20,4` u abaixo do planeta, que é exatamente a altitude dele. Com o
+## plano raso a lua nunca alcançaria casco nenhum; com o plano na vertical ela varreria o mapa
+## inteiro e o mapa viraria roleta.
+const SISTEMA_INCLINACAO := 0.88
+## Fase inicial por lua, no mesmo ângulo áureo do cinturão: as três nunca nascem alinhadas e a
+## sonda reproduce o arranjo sem consultar gerador.
+const SISTEMA_FASE_AUREA := 2.39996
 
 ## ---- Tripulação de ponte ----
 ## Seis corpos na ponte: quatro operadores sentados nos consoles de bordo e dois oficiais de pé nas
@@ -383,6 +407,16 @@ var rocha_material: Material
 var rocha_marca_material: Material
 var poco_ativo := false
 var estrela_ativa := false
+## Sistema planetário ligado e o corpo dele no tabuleiro. Cada astro tem a MESMA forma de dicionário
+## de uma rocha (`no/marca/id/pos/vel/raio`) menos a integridade: planeta e lua não racham, então
+## `_fraturar_rocha` não os conhece e a barreira devolve `"pedra"` vazia para eles. `vel` da lua é a
+## derivada analítica da órbita, nunca `pos - pos_anterior`: com a derivada certa, a conta de
+## aproximação do abalroamento não depende da taxa de quadro.
+var planeta_ativa := false
+var astros: Array[Dictionary] = []
+var astro_proximo_id := 0
+var astro_lua_material: Material
+var astro_marca_material: Material
 ## Nós pintados do cenário, para `_montar_cenario` poder trocar de mapa sem deixar corpo velho
 ## no tabuleiro (e sem deixar recurso pendurado no encerramento).
 var cenario_root: Node3D
@@ -1407,6 +1441,7 @@ func _build_ui() -> void:
 	_add_button(grupo_cenario, "CINTURÃO DE ASTEROIDES — barreira", func(): _montar_cenario("CINTURAO"))
 	_add_button(grupo_cenario, "POÇO GRAVITACIONAL — não aproxime", func(): _montar_cenario("POCO"))
 	_add_button(grupo_cenario, "ESTRELA ATIVA — armas quentes", func(): _montar_cenario("ESTRELA"))
+	_add_button(grupo_cenario, "SISTEMA PLANETÁRIO — lua na linha", func(): _montar_cenario("SISTEMA"))
 	# Grupo TRILHA: o que toca na ponte é gosto do comandante, não tática. Os quatro botões
 	# trocam o arquivo carregado no `PonteSonora` e não movem número nenhum do jogo — nem
 	# casco, nem dano, nem um sorteio de `rng`. O "SILÊNCIO" existe porque no vácuo a
@@ -1573,6 +1608,8 @@ func _montar_cenario(nome: String) -> void:
 		_montar_poco()
 	elif nome == "ESTRELA":
 		_montar_estrela()
+	elif nome == "SISTEMA":
+		_montar_sistema()
 	_pintar_marcas_cenario()
 	if is_instance_valid(report_label):
 		report_label.text = _nota_cenario()
@@ -1599,8 +1636,14 @@ func _desmontar_cenario() -> void:
 	# O contador volta a zero com o mapa: sem isto a segunda montagem do cinturão da partida acordaria
 	# com ids 15..28 e as janelas de abalroamento antigas continuariam travando dano em pedras novas.
 	rocha_proxima_id = 0
+	# O mesmo motivo para as luas: a janela de abalroamento é chaveada por id de astro, e um astro
+	# novo herdando a janela do antigo sairia do mapa com o casco já "protegido" contra uma colisão
+	# que nunca aconteceu.
+	astros.clear()
+	astro_proximo_id = 0
 	poco_ativo = false
 	estrela_ativa = false
+	planeta_ativa = false
 	_desdobrar_ceu()
 	if is_instance_valid(cenario_root):
 		for filho in cenario_root.get_children():
@@ -1922,10 +1965,119 @@ func _montar_estrela() -> void:
 	raiz.add_child(luz)
 
 
+## O sistema: planeta alto no plano, anéis de órbita desenhados e três luas nascidas em fase
+## áurea. Montar não sorteia nada e não integra nada — quem anda é `_orbitar_luas`, lido do
+## `battle_clock`. O planeta entra como obstáculo de velocidade zero: casco para nele, lance para
+## nele e a varredura não o atravessa.
+func _montar_sistema() -> void:
+	var raiz := _garantir_cenario_root()
+	planeta_ativa = true
+	if astro_marca_material == null:
+		astro_marca_material = _material(Color(0.3, 0.48, 0.66), 0.0, 0.9,
+			Color(0.12, 0.3, 0.46))
+		astro_lua_material = _material(Color(0.54, 0.55, 0.6), 0.05, 0.9)
+	# O corpo do planeta É a pintura: uma esfera só serve ao olho e à conta. Pintar a decoração à
+	# parte seria o caminho pelo qual o casco pararia a quinze metros da bola azul que ele vê.
+	_novo_astro(SISTEMA_POS, Vector3.ZERO, SISTEMA_PLANETA_RAIO, -1,
+		_material(Color(0.22, 0.38, 0.56), 0.05, 0.85), 32)
+	# O limbo: um disco aditivo maior que o planeta, sempre de frente para a câmera. Sem ele o
+	# corpo lê bola pintada; com ele o bordo curvo aparece.
+	_flare(SISTEMA_POS, SISTEMA_PLANETA_RAIO * 2.35, Color(0.16, 0.42, 0.72, 0.2), raiz)
+	var aro_material := _material(Color(0.3, 0.46, 0.62), 0.0, 0.9, Color(0.08, 0.2, 0.3))
+	for i in range(SISTEMA_ORBITA.size()):
+		var orbita := float(SISTEMA_ORBITA[i])
+		var aro := MeshInstance3D.new()
+		var toro := TorusMesh.new()
+		toro.inner_radius = orbita - 0.09
+		toro.outer_radius = orbita + 0.09
+		toro.rings = 96
+		toro.ring_segments = 6
+		aro.mesh = toro
+		aro.position = SISTEMA_POS
+		aro.rotation = Vector3(SISTEMA_INCLINACAO, 0.0, 0.0)
+		aro.material_override = aro_material
+		raiz.add_child(aro)
+		_novo_astro(_posto_lua(i), _velocidade_lua(i), float(SISTEMA_LUA_RAIO[i]), i,
+			astro_lua_material, 20)
+
+
+## Um corpo do sistema no tabuleiro: pintura, marca de mesa e registro nascem juntos, como numa
+## rocha. `no_orbita` vale -1 para o planeta (corpo parado, sem forma fechada) e o índice da lua
+## para as outras — é esse número que `_orbitar_luas` consulta para saber o que anda.
+func _novo_astro(pos: Vector3, vel: Vector3, raio: float, no_orbita: int, mat: Material,
+	segmentos: int) -> Dictionary:
+	var raiz := _garantir_cenario_root()
+	var corpo := _esfera(pos, raio, mat, raiz, segmentos)
+	var marca: MeshInstance3D = null
+	if is_instance_valid(holo_root):
+		marca = _cylinder(_holo_de(pos), 0.08, 0.08, 0.16, astro_marca_material, holo_root,
+			Vector3.ZERO, 10)
+		if is_instance_valid(marca):
+			holo_cenario.append(marca)
+	astro_proximo_id += 1
+	var astro := {
+		"no": corpo,
+		"marca": marca,
+		"id": astro_proximo_id,
+		"pos": pos,
+		"vel": vel,
+		"raio": raio,
+		"orbita": no_orbita,
+	}
+	astros.append(astro)
+	return astro
+
+
+## Forma fechada da órbita, lida do relógio: `ângulo = fase + TAU × battle_clock / período`, o
+## círculo girado de `SISTEMA_INCLINACAO` em torno do eixo X. Sem estado acumulado — é por isso
+## que a sonda pode recalcular a posição esperada a qualquer `delta` e assinar a coordenada.
+func _posto_lua(no: int) -> Vector3:
+	var angulo := _angulo_lua(no)
+	return SISTEMA_POS + Vector3(cos(angulo) * float(SISTEMA_ORBITA[no]),
+		-sin(angulo) * float(SISTEMA_ORBITA[no]) * sin(SISTEMA_INCLINACAO),
+		sin(angulo) * float(SISTEMA_ORBITA[no]) * cos(SISTEMA_INCLINACAO))
+
+
+## A derivada exata do `_posto_lua`, não a diferença entre dois quadros: com a velocidade certa
+## a conta de aproximação do abalroamento é independente da taxa de quadro, e 6,81 / 4,19 / 2,76
+## u/s deixam de ser artefato do frame rate.
+func _velocidade_lua(no: int) -> Vector3:
+	var angulo := _angulo_lua(no)
+	var omega := TAU / float(SISTEMA_PERIODO[no])
+	var orbita := float(SISTEMA_ORBITA[no])
+	return Vector3(-sin(angulo) * orbita * omega,
+		cos(angulo) * orbita * sin(SISTEMA_INCLINACAO) * omega,
+		-cos(angulo) * orbita * cos(SISTEMA_INCLINACAO) * omega)
+
+
+func _angulo_lua(no: int) -> float:
+	return float(no) * SISTEMA_FASE_AUREA \
+		+ TAU * battle_clock / float(SISTEMA_PERIODO[no])
+
+
+## As três luas andam no mesmo quadro, antes de qualquer casco cobrar contato: o obstáculo tem de
+## estar onde está neste quadro, não no anterior — a mesma razão da correnteza do cinturão.
+func _orbitar_luas() -> void:
+	for astro in astros:
+		var no_orbita := int(astro["orbita"])
+		if no_orbita < 0:
+			continue
+		var posto := _posto_lua(no_orbita)
+		astro["pos"] = posto
+		astro["vel"] = _velocidade_lua(no_orbita)
+		var corpo: MeshInstance3D = astro["no"]
+		if is_instance_valid(corpo):
+			corpo.position = posto
+		var marca: MeshInstance3D = astro["marca"]
+		if is_instance_valid(marca):
+			marca.position = _holo_de(posto)
+
+
 ## Marcas na mesa holográfica: o comandante tem de ver a barreira onde vê os cascos. Moram em
 ## `holo_cenario`, nunca em `holo_blips`, porque a conta de um blip por casco vivo é o contrato da
 ## mesa e rocha nenhuma é casco. A marca da pedra nasce com a pedra, em `_nova_rocha`, e anda com
-## ela em `_derivar_rochas` — o que sobra aqui é o que não tem corpo próprio no tabuleiro.
+## ela em `_derivar_rochas`; a do astro nasce em `_novo_astro` e anda em `_orbitar_luas` — o que
+## sobra aqui é o que não tem corpo próprio no tabuleiro.
 func _pintar_marcas_cenario() -> void:
 	if not is_instance_valid(holo_root):
 		return
@@ -1962,8 +2114,19 @@ func _nota_cenario() -> String:
 				ESTRELA_VENTO_ALCANCE]
 			nota += "varredura a %0.0f%% do alcance dentro de %0.0f u." % [
 				ESTRELA_RADIAO_VARREDURA * 100.0, ESTRELA_RADIAO_RAIO]
+		"SISTEMA":
+			nota = "CENÁRIO: SISTEMA // planeta de %0.0f u de raio e três luas em órbita de " % [
+				SISTEMA_PLANETA_RAIO]
+			nota += "%0.0f, %0.0f e %0.0f u, com período de %0.0f, %0.0f e %0.0f s. " % [
+				float(SISTEMA_ORBITA[0]), float(SISTEMA_ORBITA[1]), float(SISTEMA_ORBITA[2]),
+				float(SISTEMA_PERIODO[0]), float(SISTEMA_PERIODO[1]), float(SISTEMA_PERIODO[2])]
+			nota += "A lua de dentro varre a linha a %0.1f u/s e fere quem fica no caminho; " % (
+				TAU * float(SISTEMA_ORBITA[0]) / float(SISTEMA_PERIODO[0]))
+			nota += "a de fora anda a %0.1f u/s, abaixo do teto de abalroamento: empurra sem " % (
+				TAU * float(SISTEMA_ORBITA[2]) / float(SISTEMA_PERIODO[2]))
+			nota += "ferir. O que se põe atrás de um astro sai da varredura da sonda."
 		_:
-			nota = "CENÁRIO: CAMPO ABERTO // nenhuma barreira, nenhum poço, nenhuma estrela."
+			nota = "CENÁRIO: CAMPO ABERTO // nenhuma barreira, nenhum poço, nenhuma estrela, nenhum astro."
 	return nota
 
 
@@ -1989,25 +2152,41 @@ func _fator_radiacao(de_pos: Vector3) -> float:
 	return ESTRELA_RADIAO_VARREDURA
 
 
-## Barreira é geometria de segmento, não projétil que voa: a salva resolve-se em um quadro e a
-## rocha tem de valer nesse quadro. Devolve o ponto mais próximo dentro de um raio de pedra, ou
-## vazio quando o corredor está limpo.
-func _rocha_entre(origem: Vector3, destino: Vector3) -> Dictionary:
+## Barreira é geometria de segmento, não projétil que voa: a salva resolve-se em um quadro e o
+## obstáculo tem de valer nesse quadro. Devolve o primeiro ponto de contato dentro do raio de um
+## corpo, ou vazio quando o corredor está limpo. Rocha e astro respondem pela MESMA conta: dois
+## mapas com duas réguas de bloqueio fariam o corredor depender de qual lista o código consultou,
+## que é exatamente o tipo de regra paralela que esta casa não publica. `"pedra"` só vem cheio para
+## rocha — planeta e lua não racham, e o vazio é a guarda que impede `_fraturar_rocha` de tratá-los
+## como detrito.
+func _barreira_entre(origem: Vector3, destino: Vector3) -> Dictionary:
+	var na_pedra := _corte_na_lista(rochas, origem, destino, true)
+	var no_astro := _corte_na_lista(astros, origem, destino, false)
+	if not no_astro.is_empty() and float(no_astro["t"]) < float(na_pedra.get("t", INF)):
+		return no_astro
+	return na_pedra
+
+
+## O trecho parametrizado contra cada corpo de uma lista. `t` fica no resultado porque é ele, e não
+## a distância até o ponto, que decide qual das duas listas tem o bloqueio mais adiante na linha.
+func _corte_na_lista(lista: Array[Dictionary], origem: Vector3, destino: Vector3,
+	eh_pedra: bool) -> Dictionary:
 	var melhor := {}
 	var melhor_t := INF
-	for rocha in rochas:
-		var centro: Vector3 = rocha["pos"]
+	for corpo in lista:
+		var centro: Vector3 = corpo["pos"]
 		var trecho := destino - origem
 		var comprimento := trecho.length_squared()
 		if comprimento < 0.0001:
 			continue
 		var t := clampf((centro - origem).dot(trecho) / comprimento, 0.0, 1.0)
 		var ponto := origem + trecho * t
-		if ponto.distance_to(centro) > float(rocha["raio"]):
+		if ponto.distance_to(centro) > float(corpo["raio"]):
 			continue
 		if t < melhor_t:
 			melhor_t = t
-			melhor = {"pos": ponto, "raio": float(rocha["raio"]), "pedra": rocha}
+			melhor = {"pos": ponto, "raio": float(corpo["raio"]), "t": t,
+				"pedra": corpo if eh_pedra else {}, "astro": corpo if not eh_pedra else {}}
 	return melhor
 
 
@@ -2075,11 +2254,15 @@ func _aplicar_cenario(delta: float) -> void:
 	if estrela_ativa:
 		_empurrar_no_vento(delta)
 		_queimar_na_corona(delta)
+	if planeta_ativa:
+		# Antes de cobrar qualquer contato: a lua tem de ser lida onde ela está neste quadro.
+		_orbitar_luas()
 	if not rochas.is_empty():
 		# A correnteza anda antes de cobrar quem encosta: o casco tem de ver a pedra onde ela está
 		# neste quadro, não onde ela estava no anterior.
 		_derivar_rochas(delta)
-		_chocar_com_rochas()
+	if not rochas.is_empty() or not astros.is_empty():
+		_chocar_com_barreiras()
 
 
 func _puxar_para_o_poco(delta: float) -> void:
@@ -2262,46 +2445,56 @@ func _queimar_na_corona(delta: float) -> void:
 				report_label.text = "CORONA // %s perdeu casco na Fornalha." % String(unit["name"])
 
 
-## Rocha é âncora no que diz respeito ao casco: ela não perde pontos de vida no abalroamento e não
-## afunda — o único que perde algo no encontro é o casco que nela bate, e é esse preço que faz do
-## asteroide uma barreira. Da integridade ela só cobra dos lances (`_fraturar_rocha`). O que a deriva
-## mudou é a conta de aproximação: quem fecha é a velocidade relativa, porque pedra que vem contra
-## você a 2,4 u/s já não é o mesmo obstáculo de uma parada.
-func _chocar_com_rochas() -> void:
+## Barreira é âncora no que diz respeito ao casco: ela não perde pontos de vida no abalroamento e
+## não afunda — o único que perde algo no encontro é o casco que nela bate, e é esse preço que faz
+## do asteroide e da lua uma barreira, não um enfeite. Da integridade a pedra só cobra dos lances
+## (`_fraturar_rocha`); o astro não tem integridade nenhuma. O que a deriva da pedra e a órbita da
+## lua mudam é a conta de aproximação: quem fecha é a velocidade relativa, porque uma lua vindo
+## contra você a 6,8 u/s já não é o mesmo obstáculo de uma parada.
+func _chocar_com_barreiras() -> void:
+	_cobrar_contato(rochas, "rocha")
+	_cobrar_contato(astros, "astro")
+
+
+## Uma fatura só para os dois tipos de corpo do cenário. A chave da janela de abalroamento leva o
+## prefixo porque pedra e astro têm contadores próprios: sem ele, a pedra 1 e a lua 1 dividiriam a
+## mesma janela e um mapa herdaria do outro a proteção contra uma colisão que nunca aconteceu.
+func _cobrar_contato(lista: Array[Dictionary], prefixo: String) -> void:
 	for corpo in _collision_bodies():
 		if bool(corpo["imovel"]):
 			continue
 		var node: Node3D = corpo["node"]
-		for rocha in rochas:
-			var centro: Vector3 = rocha["pos"]
-			var soma := float(corpo["raio"]) + float(rocha["raio"])
+		for barreira in lista:
+			var centro: Vector3 = barreira["pos"]
+			var soma := float(corpo["raio"]) + float(barreira["raio"])
 			var entre := node.global_position - centro
 			var distancia := entre.length()
 			if distancia >= soma:
 				continue
 			var normal := Vector3(0, 0, 1) if distancia < 0.001 else entre / distancia
 			node.global_position = centro + normal * soma
-			# O destroço continua separado da pedra — um casco afundado atravessando o cinturão
+			# O destroço continua separado da barreira — um casco afundado atravessando o cinturão
 			# seria o mesmo corpo pintado em dois lugares — mas não cobra dano nem reescreve o
 			# relatório: quem já perdeu a ponte não perde de novo a cada janela de abalroamento.
 			if capital_hp <= 0.0 and corpo["unidade"] == null:
 				continue
-			var aproximacao := -(_body_velocity(corpo) - (rocha["vel"] as Vector3)).dot(normal)
+			var aproximacao := -(_body_velocity(corpo) - (barreira["vel"] as Vector3)).dot(normal)
 			if aproximacao <= RAM_SPEED:
 				continue
-			# A chave é o id da pedra, não a coordenada: com a pedra andando, uma chave geométrica
+			# A chave é o id do corpo, não a coordenada: com ele andando, uma chave geométrica
 			# mudaria de nome todo quadro e rearmaria a janela de 1,5 s sem parar — o cinturão
 			# viraria moedor em vez de parede.
-			var chave := "rocha:%d:%d" % [node.get_instance_id(), int(rocha["id"])]
+			var chave := "%s:%d:%d" % [prefixo, node.get_instance_id(), int(barreira["id"])]
 			if battle_clock - float(ram_windows.get(chave, -RAM_WINDOW)) < RAM_WINDOW:
 				continue
 			ram_windows[chave] = battle_clock
 			var dano := clampf((aproximacao - RAM_SPEED) * RAM_DAMAGE, 1.0, RAM_MAX_DAMAGE)
+			var onde := "no cinturão" if prefixo == "rocha" else "no sistema"
 			if corpo["unidade"] == null:
 				capital_hp = maxf(0.0, capital_hp - dano)
 				audio.efeito("IMPACTO")
 				if capital_hp <= 0.0 and is_instance_valid(report_label):
-					report_label.text = "COLISÃO // a ponte abriu no cinturão."
+					report_label.text = "COLISÃO // a ponte abriu %s." % onde
 			else:
 				_apply_impact({"node": node, "unidade": corpo["unidade"], "raio": corpo["raio"],
 					"hostil": corpo["hostil"], "imovel": false}, dano)
@@ -2640,9 +2833,17 @@ func _scan_with_probe(node: Node3D) -> void:
 			continue
 		if not is_instance_valid(foe["node"]):
 			continue
-		if (foe["node"] as Node3D).global_position.distance_to(node.global_position) <= raio:
-			foe["seen"] = true
-			enemies[i] = foe
+		var alvo: Node3D = foe["node"]
+		if alvo.global_position.distance_to(node.global_position) > raio:
+			continue
+		# Corpo no meio do caminho cega a varredura: o raio é linha reta, e uma lua, um planeta ou
+		# uma pedra entre a sonda e o casco valem o mesmo em qualquer mapa. A régua é a
+		# `_barreira_entre` da salva, não uma conta paralela de reconhecimento — por isso o
+		# cinturão também ganhou sombra, e a sonda dele confere isso.
+		if not _barreira_entre(node.global_position, alvo.global_position).is_empty():
+			continue
+		foe["seen"] = true
+		enemies[i] = foe
 
 ## Uma fórmula só para o reconhecimento: a barra da ponte é a fração da linha hostil viva que
 ## já foi encostada por uma sonda. Quem morre sai do denominador, quem é capturado também.
@@ -2947,6 +3148,9 @@ func _resolve_volley() -> void:
 	var nos_vaos := 0
 	var nas_pedras := 0
 	var rachadas := 0
+	## Lances parados por planeta ou lua. Separado de `nas_pedras` porque a fatura é diferente: a
+	## pedra paga em integridade e some do tabuleiro, o astro não paga nada e continua andando.
+	var nos_astros := 0
 	var impactos := 0
 	for i in range(fleet.size()):
 		var ally: Dictionary = fleet[i]
@@ -2976,15 +3180,18 @@ func _resolve_volley() -> void:
 		# por "só atirar o que acerta" faria da densidade de fogo um reroll disfarçado.
 		for ponto in _pontos_de_impacto(origem, destino, i, fogo_densidade):
 			impactos += 1
-			var bloqueio := _rocha_entre(origem, ponto)
-			# Pedra no corredor: o lance existe, vai até a rocha e não fere ninguém. Absorver dano não
+			var bloqueio := _barreira_entre(origem, ponto)
+			# Barreira no corredor: o lance existe, vai até ela e não fere ninguém. Absorver dano não
 			# muda quantos sorteios a salva consome — ver a cauda de RNG em `_resolve_volley`.
 			_spawn_bolt((ponto if bloqueio.is_empty() else bloqueio["pos"]), BLUE, origem)
 			if not bloqueio.is_empty():
 				nas_pedras += 1
-				# O que a pedra absorveu ela paga em integridade, nunca em sorteio: rachar é conta do
-				# ângulo de chegada, e a cauda de `rng` da batalha tem de sair idêntica.
-				if _fraturar_rocha(bloqueio["pedra"] as Dictionary, por_flecha, origem):
+				# Planeta e lua param o lance e não pagam integridade: corpo inteiro não racha. Só o
+				# que veio com `"pedra"` cheia entra na conta da fratura.
+				var pedra: Dictionary = bloqueio["pedra"]
+				if pedra.is_empty():
+					nos_astros += 1
+				elif _fraturar_rocha(pedra, por_flecha, origem):
 					rachadas += 1
 				continue
 			var atingido := _casco_em(ponto, enemies)
@@ -3052,13 +3259,16 @@ func _resolve_volley() -> void:
 		var pontos_hostis: Array[Vector3] = _pontos_de_impacto(origem, destino, e_index, densidade_hostil)
 		for k in range(pontos_hostis.size()):
 			impactos_hostis += 1
-			var bloqueio := _rocha_entre(origem, pontos_hostis[k])
+			var bloqueio := _barreira_entre(origem, pontos_hostis[k])
 			_spawn_bolt((pontos_hostis[k] if bloqueio.is_empty() else bloqueio["pos"]), RED, origem, false)
 			if not bloqueio.is_empty():
 				hostis_no_vao += 1
 				# A barreira serve dos dois lados, e cobra dos dois lados: a pedra que parou o lance
 				# hostil também racha, pela mesma conta e sem sorteio.
-				if _fraturar_rocha(bloqueio["pedra"] as Dictionary, por_flecha, origem):
+				var pedra: Dictionary = bloqueio["pedra"]
+				if pedra.is_empty():
+					nos_astros += 1
+				elif _fraturar_rocha(pedra, por_flecha, origem):
 					rachadas += 1
 				continue
 			var absorvente := _casco_em(pontos_hostis[k], fleet)
@@ -3105,6 +3315,9 @@ func _resolve_volley() -> void:
 	# sem esta linha o comandante veria o cinturão encolher e rachar sem que a ponte anunciasse nada.
 	if not rochas.is_empty():
 		salva_resumo += " // cinturao: %d pedras, %d rachadas nesta salva" % [rochas.size(), rachadas]
+	if planeta_ativa:
+		# O mesmo motivo da linha das pedras: se o mapa come lances, a ponte tem de dizer quantos.
+		salva_resumo += " // sistema: %d lances parados em planeta ou lua" % nos_astros
 
 ## Uma presa só vira unidade quando sai de `enemies` e entra em `fleet`: enquanto fica na
 ## lista de hostis ela não recebe ordem nenhuma e o jogador assiste à captura de fora.
