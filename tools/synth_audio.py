@@ -11,6 +11,8 @@ sequência de notas) e o re-gerar é reproduzível byte a byte — sem sorteio n
 Timbre: senóides empilhadas (harmônicos com peso próprio) + envelope de corda.
 Baixo e arpejo entram como marcha; a melodia é a Ode à Alegria (Beethoven, domínio
 público) nas duas frases que abrem o tema, com uma variação própria em oitavas.
+As outras duas faixas são transcrições conferidas do Mutopia Project (Dvořák,
+Sinfonia n.9 "Do Novo Mundo": o Largo e o Scherzo) — ver o bloco `TRILHAS_NOVAS`.
 
 Os efeitos são propositalmente abafados: um passa-baixa de um polo cravado em
 SOFT_HZ modela o vácuo pedido — no espaço não há ar para levar o agudo. A trilha
@@ -65,8 +67,12 @@ def hz(degree):
 
 def nome_nota(degree):
     """Nome da nota em ASCII de propósito: o stdout do Windows é cp1252 e 'Dó'
-    impresso num pipe chega como mojibake no log da sonda."""
-    nomes = ("Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si")
+    impresso num pipe chega como mojibake no log da sonda.
+
+    Tabela de bemóis porque a faixa Dvořák é toda em Réb maior: impressa em sustenido
+    (Sol#4 em vez de Lab4) a sequência de notas deixa de ser conferível contra o score.
+    """
+    nomes = ("Do", "Reb", "Re", "Mib", "Mi", "Fa", "Solb", "Sol", "Lab", "La", "Sib", "Si")
     oitava = degree // 12 - 1
     return "%s%d" % (nomes[degree % 12], oitava)
 
@@ -324,6 +330,138 @@ def trilha():
     return normalizar(dados, 0.86)
 
 
+# ---- as outras duas faixas: Dvorak, Sinfonia n.9 "Do Novo Mundo" -----------
+# Transcricoes conferidas nota a nota, não de memória. A fonte e o metodo:
+#   https://www.mutopiaproject.org/ftp/DvorakA/O95/Sym9/Sym9-lys.zip
+#   (partitura publica do Mutopia Project, dominio publico; arquivos LilyPond)
+#   LARGO    = oboeIImL em woods.notesL.ily, 2o movimento. A parte esta gravada em
+#              nota escrita com \transposition f (corne ingles em Fa): nota real =
+#              nota escrita menos 1 quinta. A mesma frase foi conferida contra a
+#              transcricao MusicXML em Do maior de "Goin' Home" baixada nesta sessao
+#              as 12 primeiras compassos batem classe por classe (a quinta de DOb
+#              sai como Si natural nos dois lados).
+#   SCHERZO  = violinImS em strings.notesS.ily, 3o movimento. Compasso 3/4 conferido
+#              barra a barra pela soma das duracoes (todo "|" do arquivo fecha em 3
+#              tempos). A fonte nao declara \time, entao a soma e a prova.
+# O que e transcricao e o que e reducao minha esta dito em cada tabela: a melodia e
+# do score; a harmonia e reducao propria (o score completo tem as doze vozes de
+# cordas, e embutir as doze aqui seria outro projeto, nao outra faixa).
+#
+# Formato: lista de compassos, cada um uma lista de (grau MIDI, duracao em tempos)
+# ou (None, duracao) para repouso. Tempo = semiminima.
+LARGO_TEMPO = 4
+
+LARGO_TEMAS = [
+    # c1-4: o tema do corne ingles (F4 pontuado, Lab4, Lab4, F4..., Reb4)
+    [(65, .75), (68, .25), (68, 1.0), (65, .75), (63, .25), (61, 1.0)],
+    [(63, .75), (65, .25), (68, .75), (65, .25), (63, 2.0)],
+    [(65, .75), (68, .25), (68, 1.0), (65, .75), (63, .25), (61, 1.0)],
+    [(63, .5), (65, .5), (63, .75), (61, .25), (61, 2.0)],
+    # c5-8: a resposta, uma oitava e meia acima (Sib4, Reb5, Si=Reb5 de passagem)
+    [(70, .75), (73, .25), (73, 1.0), (72, .5), (68, .5), (70, 1.0)],
+    [(70, .5), (73, .5), (72, .5), (68, .5), (70, 2.0)],
+    [(70, .75), (73, .25), (73, 1.0), (72, .5), (68, .5), (70, 1.0)],
+    [(70, .5), (73, .5), (72, .5), (68, .5), (70, 2.0)],
+    # c9-12: a volta do tema, fechando na tonica
+    [(65, .75), (68, .25), (68, 1.0), (65, .5), (63, .5), (61, 1.0)],
+    [(63, .75), (65, .25), (68, .75), (65, .25), (63, 2.0)],
+    [(65, .75), (68, .25), (68, 1.0), (73, .75), (75, .25), (77, 1.0)],
+    [(75, .75), (73, .25), (75, .5), (70, .5), (73, 2.0)],
+    # c13-16: a reapresentacao do score (mesmo periodo, cauda diferente: o 2o
+    # compasso sobe para Lab4 em vez de pousar em Mib4)
+    [(65, .75), (68, .25), (68, 1.0), (65, .75), (63, .25), (61, 1.0)],
+    [(63, .75), (65, .25), (68, .75), (65, .25), (63, .5), (68, 1.5)],
+    [(65, .75), (68, .25), (68, 1.0), (73, .75), (75, .25), (77, 1.0)],
+    [(75, .75), (73, .25), (75, .5), (70, .5), (73, 2.0)],
+]
+# Reducao propria, Reb maior: baixo + triade do coro de cordas.
+_I = (49, (61, 65, 68))    # Reb  (I)
+_V = (44, (60, 63, 68))    # Lab  (V)
+_IV = (42, (58, 61, 66))   # Solb (IV)
+LARGO_HARMONIA = [_I, _V, _I, _I, _I, _V, _I, _V, _I, _V, _IV, _I, _I, _V, _IV, _I]
+
+SCHERZO_TEMPO = 3
+SCHERZO_TEMAS = [
+    # c1-9: o tema do 3o movimento (Si Sol Si Sol | Mi pausa Si Si Si | ...)
+    [(83, 1.0), (79, .5), (83, .5), (79, 1.0)],
+    [(76, .5), (None, .5), (83, .5), (83, .5), (83, 1.0)],
+    [(76, 1.0), (76, 1.0), (None, 1.0)],
+    [(None, 1.0), (78, 1.0), (81, 1.0)],
+    [(79, .5), (78, .5), (76, 1.0), (None, 1.0)],
+    [(None, 1.0), (83, .5), (83, .5), (83, 1.0)],
+    [(76, 1.0), (76, 1.0), (None, 1.0)],
+    [(None, 1.0), (78, 1.0), (81, 1.0)],
+    [(79, .5), (78, .5), (76, 1.0), (None, 1.0)],
+    # c10-13: a resposta (Sol Sol Mi Re Sol | Mi Re Si Mi Re Si)
+    [(None, 1.0), (76, 1.0), (79, 1.0)],
+    [(76, .5), (74, .5), (71, 1.0), (74, .5), (71, .5)],
+    [(79, 1.0), (79, .5), (76, .5), (74, .5), (79, .5)],
+    [(76, .5), (74, .5), (71, .5), (76, .5), (74, .5), (71, .5)],
+]
+_Em = (52, (55, 59, 64))    # Mi menor
+_C = (48, (55, 60, 64))     # Do
+_B7 = (47, (54, 59, 63))    # Si 7
+_Am = (45, (52, 57, 60))    # La menor
+# A e B tocam duas vezes: 26 compassos de 3/4 a 132 bpm sao ~35 s de laco, a mesma
+# ordem de grandeza da marcha de Beethoven (38,4 s). Laço de 13 compassos repetiria
+# o tema a cada 18 s no meio de uma batalha.
+SCHERZO_TEMAS = SCHERZO_TEMAS + SCHERZO_TEMAS
+SCHERZO_HARMONIA = (
+    [_Em, _Em, _Em, _C, _Em, _Em, _Em, _C, _B7]
+    + [_C, _Em, _Am, _Em]
+)
+SCHERZO_HARMONIA = SCHERZO_HARMONIA + SCHERZO_HARMONIA
+
+TRILHAS_NOVAS = (
+    {"arquivo": "novo_mundo.wav", "titulo": "Largo do Novo Mundo (Dvorak, op.95 II)",
+     "bpm": 66.0, "tempos": LARGO_TEMPO, "tema": LARGO_TEMAS, "harmonia": LARGO_HARMONIA,
+     "estilo": "coral"},
+    {"arquivo": "novo_mundo_scherzo.wav", "titulo": "Scherzo do Novo Mundo (Dvorak, op.95 III)",
+     "bpm": 132.0, "tempos": SCHERZO_TEMPO, "tema": SCHERZO_TEMAS, "harmonia": SCHERZO_HARMONIA,
+     "estilo": "valsa"},
+)
+
+
+def tocar_classica(cfg):
+    """Renderiza uma das faixas novas no andamento e compasso delas.
+
+    A trilha do Beethoven fica com a funcao dela: o arquivo embarcado e medido pela
+    sonda com rms e duracao cravados, e mexer no caminho que o gera para "generalizar"
+    seria trocar contrato por elegancia. Esta funcao e o mesmo motor de soma com duas
+    harmonias de accompanhamento e compasso variavel.
+    """
+    bata = 60.0 / cfg["bpm"]
+    compasso = cfg["tempos"] * bata
+    total = len(cfg["tema"]) * compasso
+    alocar(total + 1.0, SR_MUSICA)
+    for i, barra in enumerate(cfg["tema"]):
+        t0 = i * compasso
+        baixo, interno = cfg["harmonia"][i % len(cfg["harmonia"])]
+        if cfg["estilo"] == "coral":
+            # coro de cordas: triade sustentada e baixo longo, sem marcha. No Largo
+            # quem move e a melodia; o fundo so segura a harmonia.
+            nota(baixo, t0, compasso * 0.94, 0.20, BASS, 2.6, SR_MUSICA)
+            for grau in interno:
+                nota(grau, t0, compasso * 0.94, 0.075, STRING, 2.2, SR_MUSICA)
+        else:
+            # valsa em 3/4: baixo no 1, acorde picado no 2 e no 3.
+            nota(baixo, t0, 0.8 * bata, 0.30, BASS, CAUDA_BASS, SR_MUSICA)
+            for k in (1, 2):
+                for grau in interno:
+                    nota(grau, t0 + k * bata, 0.45 * bata, 0.070, PLUCK, CAUDA_PLUCK, SR_MUSICA)
+        t = t0
+        for grau, dur in barra:
+            if grau is not None:
+                nota(grau, t, dur * bata * 0.98, 0.30, STRING, CAUDA_STRING, SR_MUSICA, vibrato=True)
+            t += dur * bata
+    dados = buf[:int(total * SR_MUSICA)]
+    cauda = buf[int(total * SR_MUSICA):int(total * SR_MUSICA) + int(0.5 * SR_MUSICA)]
+    n = len(cauda)
+    for i in range(n):
+        dados[i] += cauda[i] * (1.0 - float(i) / float(n))
+    return normalizar(dados, 0.86)
+
+
 def fx_laser():
     global buf
     dur = 0.30
@@ -395,9 +533,15 @@ def main():
     linhas = []
     musica = trilha()
     c_mus, b600, b1200 = analise(SR_MUSICA, musica[2 * SR_MUSICA:2 * SR_MUSICA + MEDIDA])
-    linhas.append(("tema_batalha.wav", SR_MUSICA, musica, c_mus, b1200))
+    linhas.append(("tema_batalha.wav", SR_MUSICA, musica, c_mus, b1200, 0.86))
     print("%-16s crua:    centro %5.0f Hz | >600: %5.1f%%  >1200: %5.1f%%  (a trilha NAO passa por filtro)"
           % ("tema_batalha.wav", c_mus, 100.0 * b600, 100.0 * b1200))
+    for cfg in TRILHAS_NOVAS:
+        dados = tocar_classica(cfg)
+        c, k600, k1200 = analise(SR_MUSICA, dados[2 * SR_MUSICA:2 * SR_MUSICA + MEDIDA])
+        linhas.append((cfg["arquivo"], SR_MUSICA, dados, c, k1200, 0.86))
+        print("%-22s %5.1f bpm  centro %5.0f Hz | >600: %5.1f%%  >1200: %5.1f%%  (%s)"
+              % (cfg["arquivo"], cfg["bpm"], c, 100.0 * k600, 100.0 * k1200, cfg["titulo"]))
     # Cortes: o laser, a detonação e o abalroamento acontecem lá fora, no vácuo, e perdem a
     # casca aguda. Quatro polos (24 dB/oitava) porque dois ainda deixavam 16% da energia do
     # laser acima de 1,2 kHz — abafar de verdade é derrubar a banda, não só aplainá-la. O
@@ -417,12 +561,12 @@ def main():
         # filtro exatamente preserva.
         c_crua, k600_cru, k1200_cru = analise(SR_FX, cru[200:])
         c_abaf, k600_abf, k1200_abf = analise(SR_FX, abafado[200:])
-        linhas.append((nome, SR_FX, abafado, c_abaf, k1200_abf))
+        linhas.append((nome, SR_FX, abafado, c_abaf, k1200_abf, 0.8))
         print("%-16s abafou:  centro %5.0f -> %5.0f Hz | >600: %5.1f%% -> %4.1f%% | >1200: %5.1f%% -> %4.1f%% (corte %.0f Hz, %d polos)"
               % (nome, c_crua, c_abaf, 100.0 * k600_cru, 100.0 * k600_abf,
                  100.0 * k1200_cru, 100.0 * k1200_abf, corte, polos))
-    for nome, sr, dados, centro, brilho in linhas:
-        dados = normalizar(dados, 0.86 if nome.startswith("tema") else 0.8)
+    for nome, sr, dados, centro, brilho, pico in linhas:
+        dados = normalizar(dados, pico)
         caminho = gravar(nome, sr, dados)
         print("%-16s %6.2f s  centro %5.0f Hz  agudo %5.1f%%  rms %.3f  pico %.3f  %s" % (
             nome, len(dados) / float(sr), centro, 100.0 * brilho, rms(dados),
@@ -432,6 +576,13 @@ def main():
         for grau, _ in compasso:
             notas.append(nome_nota(grau))
     print("tema (Ode a Alegria, C maior): " + " ".join(notas))
+    for cfg in TRILHAS_NOVAS:
+        notas = []
+        for barra in cfg["tema"]:
+            for grau, _ in barra:
+                notas.append(nome_nota(grau) if grau is not None else "-")
+        print("%s (%d compassos de %d tempos): %s" % (
+            cfg["arquivo"], len(cfg["tema"]), cfg["tempos"], " ".join(notas)))
     print("afinacao: Mi4 = %.1f Hz, Do4 = %.1f Hz, Sol5 = %.1f Hz" % (hz(64), hz(60), hz(79)))
 
 

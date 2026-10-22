@@ -1100,6 +1100,16 @@ func _build_ui() -> void:
 	_add_button(grupo_cenario, "CINTURÃO DE ASTEROIDES — barreira", func(): _montar_cenario("CINTURAO"))
 	_add_button(grupo_cenario, "POÇO GRAVITACIONAL — não aproxime", func(): _montar_cenario("POCO"))
 	_add_button(grupo_cenario, "ESTRELA ATIVA — armas quentes", func(): _montar_cenario("ESTRELA"))
+	# Grupo TRILHA: o que toca na ponte é gosto do comandante, não tática. Os quatro botões
+	# trocam o arquivo carregado no `PonteSonora` e não movem número nenhum do jogo — nem
+	# casco, nem dano, nem um sorteio de `rng`. O "SILÊNCIO" existe porque no vácuo a
+	# alternativa razoável a ouvir música é não ouvir nada, e um botão de mudo valeria mais
+	# que uma discussão sobre qual das três faixas combina com a batalha.
+	var grupo_trilha := _add_grupo(col, "TRILHA")
+	_add_button(grupo_trilha, "SILÊNCIO — nenhuma faixa", func(): _escolher_trilha("SILENCIO"))
+	_add_button(grupo_trilha, "ODE À ALEGRIA — Beethoven", func(): _escolher_trilha("ALEGRIA"))
+	_add_button(grupo_trilha, "LARGO DO NOVO MUNDO — Dvorak", func(): _escolher_trilha("NOVO_MUNDO"))
+	_add_button(grupo_trilha, "SCHERZO DO NOVO MUNDO — Dvorak", func(): _escolher_trilha("SCHERZO"))
 	# O grupo aberto na abertura é escolhido aqui, não por `_toggle_grupo`, porque o relatório
 	# ainda não existe nesta altura da montagem do painel.
 	if group_bodies.has(grupo_aberto):
@@ -1259,6 +1269,18 @@ func _montar_cenario(nome: String) -> void:
 	_pintar_marcas_cenario()
 	if is_instance_valid(report_label):
 		report_label.text = _nota_cenario()
+
+
+## Troca a faixa clássica da ponte. A escolha é de gosto: nenhum número do jogo se move aqui
+## — a sonda do áudio confere que a cauda de `rng` fica idêntica antes e depois de um
+## `escolher_trilha`. Se a trilha já estava tocando, a nova entra no lugar dela sem o
+## comandante precisar pedir o play de novo; se estava parada, continua parada.
+func _escolher_trilha(id: String) -> void:
+	if not audio.escolher_trilha(id):
+		return
+	if is_instance_valid(report_label):
+		report_label.text = "TRILHA: %s // %s" % [audio.trilha_nome(),
+			"em laço na ponte" if audio.trilha_ao_vivo() else "em espera"]
 
 
 func _desmontar_cenario() -> void:

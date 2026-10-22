@@ -10,6 +10,11 @@ extends SceneTree
 ##    38,4 s: a Ode à Alegria recomeçaria no meio da frase, todos os dias, sem um erro na
 ##    tela. Por isso a sonda cobra o laço pelo número de amostras que a duração anuncia, e
 ##    cobra o formato PCM que torna a conta conferível.
+##    A casa agora tem TRÊS faixas (Beethoven e as duas transcrições do Novo Mundo de Dvořák,
+##    58,18 s e 35,45 s) e um grupo TRILHA no painel para escolher entre elas. Isso multiplica a
+##    superfície do mesmo defeito: o laço é recalculado a cada troca, então a sonda roda as três
+##    faixas e confere cada `loop_end` contra o próprio arquivo — um `load()` que devolvesse a
+##    faixa errada passaria na Ode à Alegria e quebraria o Largo em silêncio.
 ## 2) «Efeitos abafados porque no vácuo não há ar»: isto é uma alegação sobre FREQUÊNCIA, e
 ##    frequência não se prova por counter de player. A sonda lê os bytes do próprio WAV e
 ##    mede o brilho espectral (energia da primeira diferença sobre energia do sinal — o
@@ -41,15 +46,19 @@ const PASTA := "res://assets/audio/"
 ## sonda lê: o número é porta de conferência, não alvo a acertar de memória.
 const ARQUIVOS := {
 	"tema_batalha.wav": {"sr": 32000, "dur": 38.40, "rms": 0.254},
+	"novo_mundo.wav": {"sr": 32000, "dur": 58.18, "rms": 0.240},
+	"novo_mundo_scherzo.wav": {"sr": 32000, "dur": 35.45, "rms": 0.249},
 	"laser.wav": {"sr": 22050, "dur": 0.30, "rms": 0.292},
 	"explosao.wav": {"sr": 22050, "dur": 1.15, "rms": 0.195},
 	"impacto.wav": {"sr": 22050, "dur": 0.42, "rms": 0.155},
 	"alarme.wav": {"sr": 22050, "dur": 0.90, "rms": 0.439},
 }
-## Teto de amostras por arquivo: a trilha inteira são 1,23 M de quadros e o GDScript percorre
-## isso em fração de segundo, então a sonda mede o mesmo trecho que o gerador reportou, em vez
-## de uma fatia dos primeiros segundos — fatia faria do rms uma grandeza diferente da comparada.
-const MEDIDA_MAX := 1400000
+## Teto de amostras por arquivo: a maior das três trilhas são 1,86 M de quadros (o Largo,
+## 58,18 s em 32 kHz) e o GDScript percorre isso em fração de segundo, então a sonda mede o
+## mesmo trecho que o gerador reportou, em vez de uma fatia dos primeiros segundos — fatia faria
+## do rms uma grandeza diferente da comparada. Medido: cortar o Largo em 1,4 M dava rms 0,240
+## contra 0,2401 do arquivo inteiro, o que passaria na tolerância por acaso, não por contrato.
+const MEDIDA_MAX := 1900000
 ## PCM de 16 bits assinado — o valor da enumeração `Format` do `AudioStreamWAV` do motor. Em
 ## 4.7 o nome `FORMAT_PCM_16` não resolve na parse (`Cannot find member`), então o número cru
 ## entra aqui, com a convenção escrita: 0 = IMA ADPCM, 1 = PCM 16, 2 = PCM 8, 3 = float.
@@ -210,6 +219,16 @@ func _initialize() -> void:
 		b_tema > b_explosao * 4.0 and b_tema > b_impacto * 4.0,
 		"tema %.4f contra explosao %.4f e impacto %.4f | alarme %.4f, a exceção dentro da ponte" % [
 			b_tema, b_explosao, b_impacto, b_alarme])
+	# As duas faixas Dvořák também não passam pelo filtro — e a régua é a mesma: cada uma contra
+	# os corpos graves da ponte, não uma contra a outra. O Scherzo é por natureza dez vezes mais
+	# inclinado que o Largo (35,45 s de 3/4 em 132 bpm, registered de violino), e medir o brilho
+	# das duas é o que prova que nenhuma das duas saiu da síntese abafada por engano.
+	var b_largo := float(medidos["novo_mundo.wav"]["brilho"])
+	var b_scherzo := float(medidos["novo_mundo_scherzo.wav"]["brilho"])
+	_assert("as duas faixas do Novo Mundo conservam o agudo da própria escrita",
+		b_largo > b_explosao * 4.0 and b_scherzo > b_explosao * 4.0,
+		"largo %.4f | scherzo %.4f contra explosao %.4f e impacto %.4f" % [b_largo, b_scherzo,
+			b_explosao, b_impacto])
 
 	# ---- 2. O nó dentro da ponte ------------------------------------------------------
 	var game: Node3D = await _montar_jogo()
@@ -271,6 +290,105 @@ func _initialize() -> void:
 			and stream.loop_begin == 0,
 		"loop_end=%d, última amostra do WAV=%d, começo=%d" % [stream.loop_end,
 			amostras_do_arquivo, stream.loop_begin])
+
+	# ---- 3b. Troca de faixa: as três trilhas montam a mesma ponte ----------------------
+	# O grupo TRILHA do painel é escolha de gosto, e a conta que ele não pode mover é a do
+	# combate. Duas coisas precisam cair aqui, e nenhuma das duas é vista pelas asserções de
+	# cima: (a) cada uma das três faixas tem de chegar ao laço certo — o `loop_end` é recalculado
+	# no `_carregar_trilha`, então um `load()` que devolvesse o arquivo errado ou um PCM comprimido
+	# daria laço cortado numa das faixas sem tocar na Ode à Alegria que a sonda já conferiu;
+	# (b) a troca tem de ser inerte para o `rng`, porque a cauda de combate é a invariância
+	# central deste repositório e um `load()` que sorteasse seria um bug de gameplay, não de áudio.
+	var estado_rng_antes: int = game.rng.state
+	var estado_visual_antes: int = game.visual_rng.state
+	var pedidos_da_troca := int(audio.pedidos["TRILHA"])
+	var soaram_da_troca := int(audio.soaram["TRILHA"])
+	var stream_alegria: AudioStreamWAV = audio.trilha_stream
+	for troca in [["NOVO_MUNDO", "novo_mundo.wav"], ["SCHERZO", "novo_mundo_scherzo.wav"],
+			["ALEGRIA", "tema_batalha.wav"]]:
+		var id := String(troca[0])
+		var arquivo := String(troca[1])
+		pedidos_da_troca += 1
+		soaram_da_troca += 1
+		_assert("trocar para %s é aceito" % id, bool(audio.escolher_trilha(id)),
+			"escolher_trilha devolveu falso")
+		var nova: AudioStreamWAV = audio.trilha_stream
+		var esp: Dictionary = medidos[arquivo]
+		_assert("%s: a stream montada é a do arquivo escolhido" % id,
+			String(audio.trilha_arquivo()) == "res://assets/audio/" + arquivo
+				and nova == (load("res://assets/audio/" + arquivo) as AudioStreamWAV),
+			"arquivo=%s" % audio.trilha_arquivo())
+		_assert("%s: PCM 16 bits mono na amostragem da partitura" % id,
+			nova.format == FORMATO_PCM_16 and nova.mix_rate == int(esp["sr"])
+				and nova.stereo == false,
+			"format=%d mix=%d stereo=%s" % [nova.format, nova.mix_rate, nova.stereo])
+		# O laço de cada faixa conferido contra o próprio arquivo (a mesma régua da seção 3):
+		# 58,18 s de Largo e 35,45 s de Scherzo são durações que nenhum valor emprestado da
+		# Ode à Alegria cobriria.
+		var amostras := int(esp["amostras"])
+		_assert("%s: laço até a última amostra do próprio arquivo" % id,
+			absi(nova.loop_end - amostras) <= 1 and nova.loop_mode == AudioStreamWAV.LOOP_FORWARD
+				and nova.loop_begin == 0
+				and _igual(nova.get_length(), float(esp["dur"]), 0.02),
+			"loop_end=%d, última amostra=%d, %.3f s (anunciado %.2f s)" % [nova.loop_end,
+				amostras, nova.get_length(), float(esp["dur"])])
+		_assert("%s: como a trilha estava ao vivo, a faixa nova assume sem novo play" % id,
+			bool(audio.trilha_ao_vivo()) and int(audio.pedidos["TRILHA"]) == pedidos_da_troca
+				and int(audio.soaram["TRILHA"]) == soaram_da_troca,
+			"ao_vivo=%s pedidos=%d soaram=%d" % [audio.trilha_ao_vivo(),
+				int(audio.pedidos["TRILHA"]), int(audio.soaram["TRILHA"])])
+	# Trocar de volta não duplica o recurso: o `load()` do motor devolve a mesma stream, e é isso
+	# que permite ao comandante folhear as três faixas sem inchar a memória da ponte.
+	_assert("voltar à Ode à Alegria reaproveita a mesma stream importada",
+		audio.trilha_stream == stream_alegria, "instância trocou")
+	# SILÊNCIO é ausência de stream, não um WAV de nada: se fosse um arquivo mudo, a ponte
+	# continuaria segurando 3,7 MB de PCM e o `playing` ligado.
+	audio.escolher_trilha("SILENCIO")
+	_assert("silêncio larga a stream e para a trilha",
+		audio.trilha_stream == null and audio.trilha_player.stream == null
+			and not bool(audio.trilha_ao_vivo())
+			and int(audio.pedidos["TRILHA"]) == pedidos_da_troca,
+		"stream=%s ao_vivo=%s pedidos=%d" % [audio.trilha_stream, audio.trilha_ao_vivo(),
+			int(audio.pedidos["TRILHA"])])
+	# Id de faixa que não existe no catálogo: recusado sem mover nada — nem o catálogo, nem o
+	# contador, nem a stream. A ponte muda de faixa por botão do painel, e um nome digitado errado
+	# ali tem de ser um não, não um silêncio inesperado.
+	var trilha_id_antes := String(audio.trilha_id)
+	_assert("faixa inexistente é recusada sem estrago",
+		not bool(audio.escolher_trilha("NAO_EXISTE"))
+			and String(audio.trilha_id) == trilha_id_antes
+			and int(audio.pedidos["TRILHA"]) == pedidos_da_troca
+			and audio.trilha_stream == null,
+		"id=%s pedidos=%d stream=%s" % [audio.trilha_id, int(audio.pedidos["TRILHA"]),
+			audio.trilha_stream])
+	# Escolher faixa com a ponte em silêncio não religa o play por cima da vontade do comandante:
+	# carrega, fica pronto, mudo.
+	audio.escolher_trilha("NOVO_MUNDO")
+	_assert("escolher a faixa com a ponte muda carrega sem religar",
+		audio.trilha_stream != null and not bool(audio.trilha_ao_vivo())
+			and int(audio.pedidos["TRILHA"]) == pedidos_da_troca,
+		"stream=%s ao_vivo=%s" % [audio.trilha_stream, audio.trilha_ao_vivo()])
+	audio.tocar_trilha()
+	pedidos_da_troca += 1
+	soaram_da_troca += 1
+	_assert("e um pedido de play assume a faixa escolhida",
+		bool(audio.trilha_ao_vivo()) and String(audio.trilha_id) == "NOVO_MUNDO"
+			and int(audio.pedidos["TRILHA"]) == pedidos_da_troca
+			and int(audio.soaram["TRILHA"]) == soaram_da_troca,
+		"ao_vivo=%s id=%s pedidos=%d soaram=%d" % [audio.trilha_ao_vivo(), audio.trilha_id,
+			int(audio.pedidos["TRILHA"]), int(audio.soaram["TRILHA"])])
+	audio.escolher_trilha("ALEGRIA")
+	pedidos_da_troca += 1
+	soaram_da_troca += 1
+	_assert("a troca final conta um pedido e um som, como qualquer outra",
+		int(audio.pedidos["TRILHA"]) == pedidos_da_troca
+			and int(audio.soaram["TRILHA"]) == soaram_da_troca,
+		"pedidos=%d (esperado %d), soaram=%d (esperado %d)" % [int(audio.pedidos["TRILHA"]),
+			pedidos_da_troca, int(audio.soaram["TRILHA"]), soaram_da_troca])
+	_assert("cinco pedidos de trilha entre as trocas não movem um dígito do rng nem do gerador do visual",
+		int(game.rng.state) == estado_rng_antes and int(game.visual_rng.state) == estado_visual_antes,
+		"rng %d -> %d | visual %d -> %d" % [estado_rng_antes, int(game.rng.state),
+			estado_visual_antes, int(game.visual_rng.state)])
 
 	# ---- 4. Pausa tática abaixa, não silencia -----------------------------------------
 	var db_aberto := float(audio.trilha_player.volume_db)

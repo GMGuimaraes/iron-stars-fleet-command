@@ -8,7 +8,8 @@ extends Node
 ## em 62,9% -> 1,4% de energia acima de 1,2 kHz no laser), então rodar não custa filtro
 ## nenhum e a medida do abafamento é conferível no próprio WAV.
 ##
-## Uso no jogo: `main.gd` monta este nó em `_ready`, chama `tocar_trilha()`, e cada
+## Uso no jogo: `main.gd` monta este nó em `_ready`, chama `tocar_trilha()`, troca a faixa
+## pelo `escolher_trilha(id)` do grupo TRILHA, e cada
 ## evento da batalha (`_spawn_bolt`, `_spawn_explosion`, `_apply_impact`, fim de
 ## combate) pede `efeito(nome)`. O filtro anti-spam por espécie existe porque uma
 ## salva inteira são até doze lances: sem janela, doze lasers no mesmo quadro viram
@@ -19,7 +20,19 @@ extends Node
 ## amostragem, centróide). Que o som sai alto e afinado num par de fones é o que só
 ## o comandante prova no editor.
 
-const TRILHA := "res://assets/audio/tema_batalha.wav"
+## Catálogo de trilhas. O comandante escolhe uma no grupo TRILHA do painel; o padrão é
+## a marcha de Beethoven que o jogo sempre abriu. `SILENCIO` não tem arquivo de propósito:
+## ponte em silêncio é ausência de stream, não um WAV de quatro segundos de nada.
+## As duas faixas Dvořák são transcrições conferidas do score público do Mutopia Project
+## (Sinfonia n.9 "Do Novo Mundo", op.95 — ver o bloco `TRILHAS_NOVAS` em
+## `tools/synth_audio.py`); a melodia é do score, a harmonia é redução própria.
+const TRILHAS := {
+	"ALEGRIA": {"arquivo": "res://assets/audio/tema_batalha.wav", "nome": "ODE À ALEGRIA"},
+	"NOVO_MUNDO": {"arquivo": "res://assets/audio/novo_mundo.wav", "nome": "LARGO DO NOVO MUNDO"},
+	"SCHERZO": {"arquivo": "res://assets/audio/novo_mundo_scherzo.wav", "nome": "SCHERZO DO NOVO MUNDO"},
+	"SILENCIO": {"arquivo": "", "nome": "SILÊNCIO"},
+}
+const TRILHA_PADRAO := "ALEGRIA"
 ## Volume da trilha em dB: a ponte ouve a música, não é concerto. -13 dB deixa a
 ## trilha em segundo plano sem sumir quando o combate esfria.
 const TRILHA_DB := -13.0
@@ -44,6 +57,7 @@ var soaram := {"LASER": 0, "EXPLOSAO": 0, "IMPACTO": 0, "ALARME": 0, "TRILHA": 0
 
 var trilha_player: AudioStreamPlayer
 var trilha_stream: AudioStreamWAV
+var trilha_id := TRILHA_PADRAO
 var vozes := {}
 var _ultimo_toque := {}
 var _trilha_ao_vivo := false
@@ -73,18 +87,10 @@ func _motor_de_saida() -> String:
 
 func _ready() -> void:
 	_saida_real = _motor_de_saida() != "Dummy"
-	trilha_stream = load(TRILHA) as AudioStreamWAV
-	# Laço explícito até a última amostra: com `loop_end` em zero o motor não tem para onde
-	# voltar e a trilha pararia no fim dos 38 s em vez de emendar. A conta é pela duração, não
-	# por `data.size() / 2`: medido em 2026-10-20, com o import em modo comprimido o `data` é
-	# um contêiner Ogg e a divisão devolvia `loop_end` de 7,8 s — a frase recomeçaria no meio.
-	trilha_stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
-	trilha_stream.loop_begin = 0
-	trilha_stream.loop_end = int(round(trilha_stream.get_length() * float(trilha_stream.mix_rate)))
 	trilha_player = AudioStreamPlayer.new()
-	trilha_player.stream = trilha_stream
 	trilha_player.volume_db = TRILHA_DB
 	add_child(trilha_player)
+	_carregar_trilha()
 	for nome in EFEITOS:
 		var config: Dictionary = EFEITOS[nome]
 		var stream: AudioStreamWAV = load(String(config["arquivo"])) as AudioStreamWAV
@@ -96,6 +102,55 @@ func _ready() -> void:
 			add_child(voz)
 			grupo.append(voz)
 		vozes[nome] = grupo
+
+
+## Monta a stream da trilha escolhida no player. Existe separada porque a troca acontece
+## com o nó já vivo: `_ready` carrega uma vez e `escolher_trilha` recarrega quantas vezes
+## o comandante mudar de ideia.
+##
+## Só uma stream fica apontada no player de cada vez — as três faixas juntas são ~6 MB de
+## PCM, e um player por faixa seria memória tocando em paralelo com a escolhida.
+func _carregar_trilha() -> void:
+	trilha_player.stream = null
+	trilha_stream = null
+	var arquivo := String((TRILHAS[trilha_id] as Dictionary)["arquivo"])
+	if arquivo == "":
+		return
+	trilha_stream = load(arquivo) as AudioStreamWAV
+	# Laço explícito até a última amostra: com `loop_end` em zero o motor não tem para onde
+	# voltar e a trilha pararia no fim dos 38 s em vez de emendar. A conta é pela duração, não
+	# por `data.size() / 2`: medido em 2026-10-20, com o import em modo comprimido o `data` é
+	# um contêiner Ogg e a divisão devolvia `loop_end` de 7,8 s — a frase recomeçaria no meio.
+	trilha_stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	trilha_stream.loop_begin = 0
+	trilha_stream.loop_end = int(round(trilha_stream.get_length() * float(trilha_stream.mix_rate)))
+	trilha_player.stream = trilha_stream
+
+
+## Troca a faixa da ponte. Devolve falso se o identificador não está no catálogo — e não
+## move estado nenhum: ordem digitada errado no painel não pode deixar a ponte sem música.
+## Se a trilha estava ao vivo, a nova emenda no lugar; se o combate acabou (e a trilha
+## foi parada), a troca prepara a faixa sem religar o som da derrota.
+func escolher_trilha(id: String) -> bool:
+	if not TRILHAS.has(id):
+		return false
+	if id == trilha_id:
+		return true
+	var estava_ao_vivo := _trilha_ao_vivo
+	parar_trilha()
+	trilha_id = id
+	_carregar_trilha()
+	if estava_ao_vivo and id != "SILENCIO":
+		tocar_trilha()
+	return true
+
+
+func trilha_nome() -> String:
+	return String((TRILHAS[trilha_id] as Dictionary)["nome"])
+
+
+func trilha_arquivo() -> String:
+	return String((TRILHAS[trilha_id] as Dictionary)["arquivo"])
 
 
 ## Toca (ou religa) o tema da batalha. Idempotente: um segundo clique não reinicia a
