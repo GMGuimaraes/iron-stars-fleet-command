@@ -9,9 +9,10 @@ extends SceneTree
 ## desapareceu por uma rodada; (2) a camada visual não consome `rng`, e o traço aliado custa
 ## exatamente os dois sorteios de sempre; (3) o material que conta como leitura de dano acende
 ## na porta certa (55% de abordagem), o nó raiz continua parado enquanto a silhueta ondula, e o
-## destroço fica visível e imóvel. A prova central é a corrida A/B de dois jogos na mesma
-## semente: mesma assinatura, mesmo `rng.state` — e o céu estrelado idêntico entre os dois,
-## porque a estrela sai de `visual_rng` com semente cravada.
+## destroço fica visível e imóvel; (4) as quatro gramáticas de casco têm caixas próprias, vestem os
+## mesmos vinte bilhetes e nenhuma passa da meia-boca que a faixa de cinco unidades permite. A prova
+## central é a corrida A/B de dois jogos na mesma semente: mesma assinatura, mesmo `rng.state` — e o
+## céu estrelado idêntico entre os dois, porque a estrela sai de `visual_rng` com semente cravada.
 ##
 ## Uso: godot --headless --path . --quit-after 1800 -s res://tools/probes/graficos.gd
 
@@ -91,6 +92,41 @@ func _somar_casco(game) -> float:
 		for unit in list:
 			total += float(unit["hp"])
 	return total
+
+## Caixa dos bilhetes de METAL do filho "Casco", medida na moldura do próprio Casco. A caixa vem de
+## `mesh.get_aabb()` e do encadeamento de `global_transform`, nunca de `global_aabb`: em headless o
+## AABB de mundo é serviço do renderizador, e o renderizador dummy devolve caixa vazia — a primeira
+## versão desta medição deu as quatro silhuetas em 0.00x0.00x0.00 e passou a asserção por acidente.
+## Como `affine_inverse()` do Casco desfaz a cadeia inteira, a escala do cadastro já sai dividida: o
+## que se compara é costura, não tamanho de cadastro. Ficam de fora a pluma e a luz de proa, billets
+## aditivos que escalam com o motor todo quadro e não são chapa.
+func _silhueta(unit: Dictionary) -> Vector3:
+	var ship: Node3D = unit["node"]
+	var casco: Node3D = ship.get_meta("casco")
+	var mats: Dictionary = ship.get_meta("mat")
+	var inverso: Transform3D = casco.global_transform.affine_inverse()
+	var minimo: Vector3 = Vector3(INF, INF, INF)
+	var maximo: Vector3 = Vector3(-INF, -INF, -INF)
+	var medidos := 0
+	for billete in casco.get_children():
+		var mi := billete as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		if mi.material_override == mats["flare"] or mi.material_override == mats["luz"]:
+			continue
+		var caixa: AABB = mi.mesh.get_aabb()
+		var base: Transform3D = inverso * mi.global_transform
+		for k in range(8):
+			var canto: Vector3 = base * Vector3(
+				caixa.position.x if (k & 1) == 0 else caixa.end.x,
+				caixa.position.y if (k & 2) == 0 else caixa.end.y,
+				caixa.position.z if (k & 4) == 0 else caixa.end.z)
+			minimo = minimo.min(canto)
+			maximo = maximo.max(canto)
+		medidos += 1
+	if medidos == 0:
+		return Vector3.ZERO
+	return (maximo - minimo) / 2.0
 
 func _frames(n: int) -> void:
 	for i in range(n):
@@ -286,7 +322,89 @@ func _initialize() -> void:
 	_assert("blip continua com o casco morto no ar", game.holo_blips.size() == 12,
 		"%d blips" % game.holo_blips.size())
 
-	# 12 — Prova central: dois jogos, mesma semente, a mesma batalha com a pintura nova.
+	# 12 — As quatro gramáticas de casco. A esquadra deixou de ser o mesmo navio dozenado, e a
+	# sonda não julga beleza: cobra as três leis que a tabela promete. (1) Vinte bilhetes no filho
+	# "Casco" em TODA gramática — é o que mantém verdes as asserções de bateria e convés, que comparam
+	# a casarola de um casco promovido com a de um cruzador puro. (2) Meia-boca de metal abaixo de
+	# 2,5 u na moldura do próprio casco, porque a faixa fecha a 5,0 de passo. (3) Forma é tabela, não
+	# sorteio: duas montadas da mesma cena têm silhuetas byte a byte idênticas e o mesmo estado de
+	# `visual_rng` depois de montar.
+	var g_a: Node3D = await _montar_jogo()
+	var g_b: Node3D = await _montar_jogo()
+	# A tabela não é lida por const: a instância do jogo é não tipada e as constantes de `main.gd`
+	# não são alcançáveis por ela (o mesmo motivo dos `const` copiados no topo desta sonda). O que se
+	# mede é o casco montado — se faltasse uma chave na tabela, `_make_ship` abortaria em runtime com
+	# Nil e a casarola viria incompleta, que é exatamente o que a asserção de bilhetes cobra.
+	var nomes: Array[String] = []
+	var billetes_ok := true
+	for i in range(6):
+		var casco_gram: Node3D = _casco_of(g_a.fleet[i])
+		if casco_gram.get_child_count() != 20:
+			billetes_ok = false
+		var nome_gram: String = String(g_a.fleet[i]["node"].get_meta("gramatica"))
+		if not nomes.has(nome_gram):
+			nomes.append(nome_gram)
+	for unit in g_a.enemies:
+		var nome_hostil: String = String(unit["node"].get_meta("gramatica"))
+		if not nomes.has(nome_hostil):
+			nomes.append(nome_hostil)
+	_assert("as quatro famílias de casco convivem nas duas esquadras",
+		nomes.size() == 4 and nomes.count(nomes[0]) == 1, "%s" % str(nomes))
+	_assert("toda gramática veste os mesmos vinte bilhetes de linha", billetes_ok,
+		"seis cascos azuis conferidos um a um")
+	_assert("a capitânia leva o mastro dourado sobre a torre da própria gramática",
+		_casco_of(g_a.enemies[0]).get_child_count() == 21,
+		"%d billetes" % _casco_of(g_a.enemies[0]).get_child_count())
+	var silhuetas: Dictionary = {}
+	for i in range(6):
+		var nome_amostra: String = String(g_a.fleet[i]["node"].get_meta("gramatica"))
+		if not silhuetas.has(nome_amostra):
+			silhuetas[nome_amostra] = _silhueta(g_a.fleet[i])
+	var distintas := true
+	var medida_por_nome: Array[String] = []
+	for nome in silhuetas:
+		var caixa_nome: Vector3 = silhuetas[nome]
+		medida_por_nome.append("%s %.2fx%.2fx%.2f" % [nome, caixa_nome.x, caixa_nome.y, caixa_nome.z])
+	var chaves_gram: Array = silhuetas.keys()
+	for i in range(chaves_gram.size()):
+		for j in range(i + 1, chaves_gram.size()):
+			var caixa_a: Vector3 = silhuetas[chaves_gram[i]]
+			var caixa_b: Vector3 = silhuetas[chaves_gram[j]]
+			if absf(caixa_a.x - caixa_b.x) <= 0.05 and absf(caixa_a.y - caixa_b.y) <= 0.05 \
+					and absf(caixa_a.z - caixa_b.z) <= 0.05:
+				distintas = false
+	_assert("as quatro silhuetas têm caixas próprias, não a mesma caixa rotulada",
+		distintas and chaves_gram.size() == 4, "%s" % str(medida_por_nome))
+	var boca_maxima := 0.0
+	var mais_largo := ""
+	for list in [g_a.fleet, g_a.enemies]:
+		for unit in list:
+			var caixa := _silhueta(unit)
+			if caixa.x > boca_maxima:
+				boca_maxima = caixa.x
+				mais_largo = String(unit["name"])
+	_assert("nenhum casco passa de dois metros e meio de meia-boca de metal",
+		boca_maxima <= 2.5, "%.3f u em %s (faixa fecha a 5,0 de passo)" % [boca_maxima, mais_largo])
+	var ruído := 0.0
+	for i in range(6):
+		var caixa_montada_a: Vector3 = _silhueta(g_a.fleet[i])
+		var caixa_montada_b: Vector3 = _silhueta(g_b.fleet[i])
+		ruído = maxf(ruído, maxf(absf(caixa_montada_a.x - caixa_montada_b.x),
+			maxf(absf(caixa_montada_a.y - caixa_montada_b.y),
+				absf(caixa_montada_a.z - caixa_montada_b.z))))
+	# A folga não é preguiça: a caixa sai do encadeamento `affine_inverse() * global_transform`, e os
+	# dois jogos foram montados em instantes diferentes do relógio de parede — o filho "Casco" está
+	# em fases diferentes da deriva animada, e o arredondado do inverso muda. Um `==` aqui reprovaria
+	# o jogo por ele ter animado, que é a mesma armadilha do `rng.state` entre montadas.
+	_assert("a costura é tabela, não sorteio: duas montadas, mesmas caixas", ruído <= 0.01
+		and int(g_a.visual_rng.state) == int(g_b.visual_rng.state),
+		"maior diferença de caixa %.6f u; visual_rng A=%d B=%d" % [ruído,
+			int(g_a.visual_rng.state), int(g_b.visual_rng.state)])
+	_assert("a camada de cascos não criou nó no tabuleiro",
+		g_a.get_child_count() == 22 and g_b.get_child_count() == 22,
+		"%d filhos na montagem" % g_a.get_child_count())
+
+	# 13 — Prova central: dois jogos, mesma semente, a mesma batalha com a pintura nova.
 	var a: Node3D = await _montar_jogo()
 	var b: Node3D = await _montar_jogo()
 	a.rng.seed = 20261020

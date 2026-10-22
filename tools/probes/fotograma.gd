@@ -2,9 +2,9 @@ extends SceneTree
 
 ## Fotogramas reais da ponte para ajuste de pintura. Headless usa o renderizador dummy e devolve
 ## tela preta: neblina, exposição, glow e recorte da janela só se medem com PNG de verdade, e
-## estes vinte quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
-## mas os quadros do meio montam cenário de verdade, e cenário engole e queima: por isso a sonda
-## devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção.
+## estes vinte e dois quadros são o material de leitura. Não mexe na economia nem no sorteio de
+## combate — mas os quadros do meio montam cenário de verdade, e cenário engole e queima: por isso a
+## sonda devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção.
 ##
 ## Uso (janela real, sem --headless):
 ##   godot --path . --quit-after 4000 -s res://tools/probes/fotograma.gd
@@ -215,27 +215,119 @@ func _initialize() -> void:
 		"%d traço(s) a menos de 1,8 u de (%s)" % [bocais, olho])
 	await _fotograma(game, "05f_capitania_atira")
 
-	# 05g — a chapa por fora. Os quadros 05 e 05b julgam o casco a 19 e 29 u pelo visor da ponte, e a
-	# essa distância a junta de 32 px da chapa tem menos de um pixel: nenhuma foto existente dizia se o
-	# metal procedural que vestiu a ponte veste também o lado de fora. O olho é filho do casco, a 3,9 u
-	# dele e picando de cima, porque a 4,5 u atrás do tombadilho o quadro vinha mostrando a ponte inteira
-	# por trás da nave e não a chapa; yaw e pitch saem do próprio desloc em vez de número escrito à mão,
-	# já que o olho tem de encarar o centro do casco em qualquer offset.
+	# 05g — a chapa por fora, com o quadro derivado da própria chapa. Os quadros 05 e 05b julgam o
+	# casco a 19 e 29 u pelo visor da ponte, e a essa distância a junta de 32 px da chapa tem menos de
+	# um pixel: nenhuma foto existente dizia se o metal procedural que vestiu a ponte veste também o
+	# lado de fora. O desloc deste quadro era `Vector3(1.9, 3.2, 1.4)` escrito à mão, calibrado sobre
+	# o casco que existia antes das gramáticas; com quatro famílias na esquadra o mesmo número passou
+	# a fotografar um palmo de chapa contra um quadro de espaço vazio. A distância vem agora da caixa
+	# medida do próprio casco (bilhete a bilhete, porque `global_aabb` servido pelo renderizador volta
+	# vazio) com 6% de folga, e a direção é de través de estibordo com um dedo de proa e 20° de picada.
+	# O ângulo é medido, não escolhido de ouvido: a 16° de través o casco enche mais o quadro, a média
+	# da tela cai a 0,0091 e o `05g` reprova no próprio portão de imagem — aço escuro sobre espaço
+	# escuro, e quanto menos céu na moldura menos luz. A 32° a luminância volta a 0,0119 com a junta
+	# de chapa lida na crista e no flanco.
 	var casco_foto: Node3D = game.fleet[2]["node"]
+	var caixa_foto: Array = _caixa_do_casco(casco_foto)
+	var olhar_ext := Vector3(0.80, 0.34, -0.50).normalized()
+	var meia_foto: Vector3 = Vector3.ZERO
+	var distancia_ext := 0.0
+	if caixa_foto.size() == 2:
+		meia_foto = (caixa_foto[1] - caixa_foto[0]) / 2.0
+		distancia_ext = _distancia_de_enquadramento(caixa_foto[0], caixa_foto[1],
+			olhar_ext, 55.0) * 1.06
+	_assert("a moldura de %s vem da caixa do próprio casco" % String(casco_foto.get_meta("gramatica")),
+		caixa_foto.size() == 2 and meia_foto.length() > 1.0 and distancia_ext > 1.0,
+		"meia-caixa %s, olho a %0.2f u com 6%% de folga" % [_caixa_texto(caixa_foto), distancia_ext])
+	# O casco sai da linha para água funda: com o olho agora a ~11 u dele, o quadro deixaria de ser
+	# close-up de chapa e viria fotografando a parede de bombordo da própria ponte, que o quadro 05f
+	# estacionou a 45 u. O posto volta exatamente onde estava, e nenhum outro quadro lê esta banda.
+	var posto_foto: Vector3 = casco_foto.position
+	casco_foto.position = Vector3(0.0, 0.0, -190.0)
 	var camera_exterior := Camera3D.new()
 	camera_exterior.name = "SondaCascoPerto"
 	camera_exterior.fov = 55.0
-	var desloc := Vector3(1.9, 3.2, 1.4)
-	camera_exterior.position = desloc
-	var horizonte := Vector2(desloc.x, desloc.z).length()
+	# O olho é filho do casco: a posição local passa na mesma escala do navio, então o enquadramento
+	# derivado acima vale para qualquer `scale_factor` — inclusive o de um casco de fase futura.
+	camera_exterior.position = olhar_ext * distancia_ext
+	var horizonte := Vector2(camera_exterior.position.x, camera_exterior.position.z).length()
 	camera_exterior.rotation = Vector3(
-		-atan2(desloc.y, horizonte), atan2(desloc.x, desloc.z), 0.0)
+		-atan2(camera_exterior.position.y, horizonte),
+		atan2(camera_exterior.position.x, camera_exterior.position.z), 0.0)
 	casco_foto.add_child(camera_exterior)
 	await _frames(1)
 	camera_exterior.make_current()
 	await _fotograma(game, "05g_chapa_de_fora")
 	game.ponte_camera.make_current()
 	camera_exterior.queue_free()
+	casco_foto.position = posto_foto
+
+	# 05h — as quatro famílias lado a lado. `tools/probes/graficos.gd` prova por caixa que cada
+	# gramática tem silhueta própria, mas caixa é número: a pergunta do PNG é se o olho separa
+	# `lamina`, `marrelo`, `agulha` e `portao` na mesma moldura, na mesma escala, sem depender da
+	# memória de quem desenhou a tabela. Os quatro cascos da proa (índices 0..3, um por família)
+	# saem da linha, formam uma faixa com folga medida entre bordas, e voltam exatamente onde
+	# estavam: nenhuma outra moldura desta sonda lê a água funda onde a faixa é fotografada, e os
+	# quadros seguintes continuam vendo a mesma esquadra de antes.
+	var quarteto: Array[int] = [0, 1, 2, 3]
+	var nomes: Array[String] = []
+	var guarda: Array[Vector3] = []
+	var caixas: Array = []
+	var boca_max := 0.0
+	for i in quarteto:
+		var corpo: Node3D = game.fleet[i]["node"]
+		guarda.append(corpo.position)
+		var caixa_i: Array = _caixa_do_casco(corpo)
+		caixas.append(caixa_i)
+		nomes.append("%s %s" % [String(corpo.get_meta("gramatica")), _caixa_texto(caixa_i)])
+		if caixa_i.size() == 2:
+			var meia_i: Vector3 = (caixa_i[1] - caixa_i[0]) / 2.0
+			boca_max = maxf(boca_max, meia_i.x * corpo.scale.x)
+	var passo := 2.0 * boca_max + 2.2
+	var faixa_z := -140.0
+	var minimo_faixa := Vector3(INF, INF, INF)
+	var maximo_faixa := Vector3(-INF, -INF, -INF)
+	var medidos := 0
+	for k in range(quarteto.size()):
+		var casco_k: Node3D = game.fleet[quarteto[k]]["node"]
+		casco_k.position = Vector3((float(k) - 1.5) * passo, 0.0, faixa_z)
+		if caixas[k].size() == 2:
+			var escala_k: Vector3 = casco_k.scale
+			var canto_min: Vector3 = caixas[k][0]
+			var canto_max: Vector3 = caixas[k][1]
+			minimo_faixa = minimo_faixa.min(casco_k.position + canto_min * escala_k)
+			maximo_faixa = maximo_faixa.max(casco_k.position + canto_max * escala_k)
+			medidos += 1
+	var centro := (minimo_faixa + maximo_faixa) / 2.0
+	var meio_faixa: Vector3 = (maximo_faixa - minimo_faixa) / 2.0
+	var olhar_faixa := Vector3(0.0, 0.26, -1.0).normalized()
+	var distancia_faixa := 0.0
+	if medidos == quarteto.size():
+		distancia_faixa = _distancia_de_enquadramento(-meio_faixa, meio_faixa,
+			olhar_faixa, 50.0) * 1.05
+	_assert("a faixa das quatro famílias tem caixa e passo medidos",
+		medidos == quarteto.size() and passo > 4.0 and distancia_faixa > 1.0,
+		"%s | passo %0.2f u, olho a %0.2f u de (%s)" % [", ".join(nomes), passo,
+			distancia_faixa, centro])
+	# Sem caixa não há moldura que derivar: o quadro é pulado e a asserção acima reprova a faixa, em
+	# vez de fotografar a ponte de sempre e passar por comparativo de silhueta.
+	if distancia_faixa > 1.0:
+		var camera_faixa := Camera3D.new()
+		camera_faixa.name = "SondaQuatroGramaticas"
+		camera_faixa.fov = 50.0
+		var desloc_faixa: Vector3 = olhar_faixa * distancia_faixa
+		camera_faixa.position = centro + desloc_faixa
+		var horiz_faixa := Vector2(desloc_faixa.x, desloc_faixa.z).length()
+		camera_faixa.rotation = Vector3(-atan2(desloc_faixa.y, horiz_faixa),
+			atan2(desloc_faixa.x, desloc_faixa.z), 0.0)
+		game.add_child(camera_faixa)
+		await _frames(1)
+		camera_faixa.make_current()
+		await _fotograma(game, "05h_quatro_gramaticas")
+		game.ponte_camera.make_current()
+		camera_faixa.queue_free()
+	for k in range(quarteto.size()):
+		(game.fleet[quarteto[k]]["node"] as Node3D).position = guarda[k]
 
 	# 06 — painel em acordeão: a dobra é pintura, e sonda de lógica não mede se o grupo fechado
 	# ainda cabe na janela. A camada de UI volta a ficar visível de propósito: os quadros 04 e 05 a
@@ -482,6 +574,72 @@ func _frac_da_ida(game) -> float:
 	var caca: Dictionary = game.cacas[0]
 	return clampf((float(game.battle_clock) - float(caca["nascido"]))
 		/ maxf(float(caca["tau"]), 0.001), 0.0, 1.0)
+
+## Caixa do casco, bilhete a bilhete, na escala própria do navio. `global_aabb` é servido pelo
+## renderizador e devolve caixa vazia sob `--headless`, então a medição é `mesh.get_aabb()` puxado
+## pelo transform do nó dentro do `Casco` — o mesmo instrumento de `tools/probes/graficos.gd`. Pluma
+## e luz ficam de fora: são brilho, não volume, e entrariam na conta como silhueta que não existe.
+## Devolve `[minimo, maximo]`, ou Array vazio quando nenhum bilhete foi medido — enquadramento
+## nenhum se assina sobre caixa vazia.
+func _caixa_do_casco(ship: Node3D) -> Array:
+	var casco: Node3D = ship.get_meta("casco")
+	var mats: Dictionary = ship.get_meta("mat")
+	var minimo := Vector3(INF, INF, INF)
+	var maximo := Vector3(-INF, -INF, -INF)
+	var inverso: Transform3D = casco.global_transform.affine_inverse()
+	var medidos := 0
+	for billete in casco.get_children():
+		var mi := billete as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		if mi.material_override == mats["flare"] or mi.material_override == mats["luz"]:
+			continue
+		var caixa: AABB = mi.mesh.get_aabb()
+		var base: Transform3D = inverso * mi.global_transform
+		for k in range(8):
+			var canto: Vector3 = base * Vector3(
+				caixa.position.x if (k & 1) == 0 else caixa.end.x,
+				caixa.position.y if (k & 2) == 0 else caixa.end.y,
+				caixa.position.z if (k & 4) == 0 else caixa.end.z)
+			minimo = minimo.min(canto)
+			maximo = maximo.max(canto)
+		medidos += 1
+	if medidos == 0:
+		return []
+	return [minimo, maximo]
+
+func _caixa_texto(caixa: Array) -> String:
+	if caixa.size() != 2:
+		return "nada medido"
+	var meia: Vector3 = (caixa[1] - caixa[0]) / 2.0
+	return "%0.2fx%0.2fx%0.2f" % [meia.x, meia.y, meia.z]
+
+## Distância, ao longo de `olhar`, que mete a caixa inteira no quadro: para cada canto vale
+## `dist >= ao_longe + perpendicular / tan(meia-abertura)` nos dois eixos, e o pior canto manda. É a
+## conta que aposenta o desloc escrito à mão, que só servia ao casco que existia quando foi medido.
+## A abertura horizontal sai da proporção real da janela — fingir 16:9 fixo estreitaria a moldura de
+## propósito numa janela quadrada, e o quadro é lido na janela, não na tabela.
+func _distancia_de_enquadramento(minimo: Vector3, maximo: Vector3, olhar: Vector3,
+		fov: float) -> float:
+	var e: Vector3 = olhar.normalized()
+	var chao := Vector3.UP if absf(e.y) < 0.99 else Vector3.RIGHT
+	var direita := chao.cross(e).normalized()
+	var cima := e.cross(direita)
+	var janela := DisplayServer.window_get_size()
+	var proporcao := float(janela.x) / maxf(float(janela.y), 1.0)
+	var tan_v := tan(deg_to_rad(fov) * 0.5)
+	var tan_h := tan_v * proporcao
+	var pior := 0.0
+	for k in range(8):
+		var canto := Vector3(
+			minimo.x if (k & 1) == 0 else maximo.x,
+			minimo.y if (k & 2) == 0 else maximo.y,
+			minimo.z if (k & 4) == 0 else maximo.z)
+		var ao_longe := canto.dot(e)
+		var proj := canto - e * ao_longe
+		pior = maxf(pior, ao_longe + absf(proj.dot(direita)) / tan_h)
+		pior = maxf(pior, ao_longe + absf(proj.dot(cima)) / tan_v)
+	return maxf(pior, 0.5)
 
 func _tabular(game) -> void:
 	for i in range(game.fleet.size()):

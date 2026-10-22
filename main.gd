@@ -1188,22 +1188,98 @@ func _build_fleets() -> void:
 		var x := (float(i) - 2.5) * 5.0
 		var z := -38.0 - (i % 2) * 5.0
 		var ship := _make_ship(Vector3(x, visual_rng.randf_range(-2, 2), z), BLUE,
-			1.1 + float(i % 3) * 0.06, "ALIADA %02d" % (i + 1), false, i)
+			1.1 + float(i % 3) * 0.06, "ALIADA %02d" % (i + 1), false, i, i % 4)
 		fleet.append({"node": ship, "order": "LINHA", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "repair_priority": "AUTO", "team": "friendly", "name": "ALIADA %02d" % (i + 1), "squadron": "ALFA" if i < 3 else "BETA", "classe": "CRUZADOR"})
 	for i in range(6):
 		var x := (float(i) - 2.5) * 6.0
 		var z := -82.0 - (i % 2) * 7.0
 		var is_command := i == 0
 		var ship := _make_ship(Vector3(x, visual_rng.randf_range(-3, 3), z), RED,
-			1.55 if is_command else 1.3, "HOSTIL %02d" % (i + 1), is_command, i + 6)
+			1.55 if is_command else 1.3, "HOSTIL %02d" % (i + 1), is_command, i + 6,
+			1 if is_command else (i + 6) % 4)
 		enemies.append({"node": ship, "order": "AVANÇAR", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "team": "enemy", "name": "CAPITÂNIA HOSTIL" if is_command else "HOSTIL %02d" % (i + 1), "squadron": "INIMIGO", "role": "COMANDO" if is_command else "LINE"})
+
+## Quatro gramáticas de casco, todas com os MESMOS vinte bilhetes: o que muda é a costura, nunca a
+## contagem. É assim que a linha deixa de ser o mesmo navio dozenado e a sonda de bateria continua
+## conferindo vinte corpos no filho "Casco" de qualquer casco da esquadra — promoted e puro.
+##
+## A leitura é Legend of the Galactic Heroes: uma esquadra não é doze navios iguais, é famílias de
+## casco convivendo na mesma faixa. `lamina` é o cruzador de linha de sempre (byte a byte o casco
+## que as sondas já assinaram); `marrelo` é o couraçado pesado, largo, alto e de proa rombuda;
+## `agulha` é o cruzador ligeiro de escolta, comprido, fino e armado à proa; `portao` é o
+## navio-bandeira de apoio, casco baixo e pançudo com as torres adernas nas espáduas.
+##
+## As três regras que toda gramática obedece, medidas em `tools/probes/graficos.gd`:
+## (1) vinte bilhetes no filho "Casco" — nem um a mais, nem um a menos;
+## (2) meia-boca de metal até 2,5 u, porque a faixa fecha a 5,0 de passo e casco mais largo que
+##     isso abalroa o vizinho no desenho antes de abalroar na conta;
+## (3) a escala do nó raiz é o que a mesa lê, então a gramática muda forma dentro do mesmo
+##     `scale_factor` e não encosta em `HULL_RADIUS`.
+const GRAMATICAS: Array[Dictionary] = [
+	{
+		"nome": "lamina",
+		"espinha": Vector3(1.5, 0.66, 5.4), "espinha_pos": Vector3(0, 0, 0),
+		"popa": Vector3(1.9, 0.78, 1.4), "popa_pos": Vector3(0, 0.02, 2.5),
+		"dorso": Vector3(0.78, 0.34, 3.3), "dorso_pos": Vector3(0, 0.5, -0.8),
+		"proa": Vector3(0.74, 0.05, 2.6), "proa_pos": Vector3(0, 0, -4.02),
+		"torre": Vector3(0.62, 0.5, 1.15), "torre_pos": Vector3(0, 0.86, 0.25),
+		"asa": Vector3(1.5, 0.15, 2.6), "asa_pos": Vector3(1.28, -0.02, 0.75),
+		"asa_varredura": 0.42, "asa_rolagem": 0.0,
+		"nacele": Vector3(0.28, 0.2, 3.4), "nacele_pos": Vector3(1.72, 0.14, 1.5),
+		"torres_z": [-1.9, -0.4, 1.1, 2.0], "torres_x": [0.0, 0.0, 0.0, 0.0],
+		"torres_y": 0.72, "torre_tamanho": Vector3(0.4, 0.2, 0.6),
+		"luz": Vector3(0.0, 0.0, -3.2), "luz_tamanho": 0.3, "marca_y": 0.95,
+	},
+	{
+		"nome": "marrelo",
+		"espinha": Vector3(1.86, 0.9, 5.0), "espinha_pos": Vector3(0, 0.06, 0.1),
+		"popa": Vector3(2.15, 0.7, 1.6), "popa_pos": Vector3(0, 0.0, 2.6),
+		"dorso": Vector3(1.05, 0.5, 2.9), "dorso_pos": Vector3(0, 0.68, -0.6),
+		"proa": Vector3(1.05, 0.4, 2.0), "proa_pos": Vector3(0, 0.06, -3.6),
+		"torre": Vector3(0.86, 0.72, 1.5), "torre_pos": Vector3(0, 1.05, 0.5),
+		"asa": Vector3(1.45, 0.2, 2.7), "asa_pos": Vector3(1.1, 0.26, 0.95),
+		"asa_varredura": 0.62, "asa_rolagem": -0.12,
+		"nacele": Vector3(0.34, 0.26, 2.6), "nacele_pos": Vector3(1.82, 0.3, 1.9),
+		"torres_z": [-2.3, -1.5, 1.3, 2.2], "torres_x": [0.0, 0.0, 0.52, -0.52],
+		"torres_y": 0.98, "torre_tamanho": Vector3(0.46, 0.26, 0.68),
+		"luz": Vector3(0.0, 0.06, -3.0), "luz_tamanho": 0.36, "marca_y": 1.21,
+	},
+	{
+		"nome": "agulha",
+		"espinha": Vector3(1.15, 0.46, 6.1), "espinha_pos": Vector3(0, -0.04, -0.2),
+		"popa": Vector3(1.5, 0.6, 1.2), "popa_pos": Vector3(0, 0.0, 2.9),
+		"dorso": Vector3(0.5, 0.28, 3.9), "dorso_pos": Vector3(0, 0.4, -0.4),
+		"proa": Vector3(0.52, 0.02, 3.4), "proa_pos": Vector3(0, 0, -4.9),
+		"torre": Vector3(0.44, 0.34, 0.9), "torre_pos": Vector3(0, 0.5, 1.2),
+		"asa": Vector3(1.3, 0.1, 2.0), "asa_pos": Vector3(0.98, -0.12, -0.55),
+		"asa_varredura": 0.3, "asa_rolagem": 0.08,
+		"nacele": Vector3(0.2, 0.14, 4.0), "nacele_pos": Vector3(1.58, 0.02, 1.2),
+		"torres_z": [-2.7, -2.05, -1.4, -0.75], "torres_x": [0.0, 0.0, 0.0, 0.0],
+		"torres_y": 0.4, "torre_tamanho": Vector3(0.3, 0.16, 0.44),
+		"luz": Vector3(0, 0, -4.2), "luz_tamanho": 0.24, "marca_y": 0.82,
+	},
+	{
+		"nome": "portao",
+		"espinha": Vector3(1.95, 0.56, 4.6), "espinha_pos": Vector3(0, -0.06, 0.3),
+		"popa": Vector3(2.3, 0.9, 1.5), "popa_pos": Vector3(0, 0.06, 2.35),
+		"dorso": Vector3(0.9, 0.26, 2.6), "dorso_pos": Vector3(0, 0.4, -1.2),
+		"proa": Vector3(0.92, 0.25, 1.7), "proa_pos": Vector3(0, -0.02, -3.0),
+		"torre": Vector3(0.72, 0.86, 1.05), "torre_pos": Vector3(0, 0.86, -0.2),
+		"asa": Vector3(1.35, 0.12, 2.9), "asa_pos": Vector3(1.0, -0.18, 1.35),
+		"asa_varredura": 0.7, "asa_rolagem": 0.1,
+		"nacele": Vector3(0.36, 0.3, 2.2), "nacele_pos": Vector3(1.62, -0.05, 2.3),
+		"torres_z": [-1.6, -0.9, 0.1, 1.0], "torres_x": [-0.62, 0.62, -0.62, 0.62],
+		"torres_y": 0.31, "torre_tamanho": Vector3(0.36, 0.18, 0.52),
+		"luz": Vector3(0, 0, -2.4), "luz_tamanho": 0.42, "marca_y": 0.81,
+	},
+]
 
 ## Casco de linha em leitura Legend of the Galactic Heroes: aço neutro, um só filete de cor por
 ## nação, e o brilho guardado para motor e torre — nunca para o casco inteiro. Toda a geometria
 ## mora num filho "Casco": o nó raiz continua sendo a peça de xadrez que a sonda assina, e o
 ## balanço visual acontece no filho, sem mover um centímetro de tabuleiro.
 func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: String,
-		comando := false, superficie := 0) -> Node3D:
+		comando := false, superficie := 0, gramatica := 0) -> Node3D:
 	var ship := Node3D.new()
 	ship.name = ship_name
 	ship.position = pos
@@ -1232,39 +1308,71 @@ func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: Stri
 	_vestir(mat_steel, chapa, Vector3(3.2, 3.2, 1.4), desl)
 	_vestir(mat_gun, chapa, Vector3(4.0, 4.0, 4.0), desl)
 	var plumas: Array[MeshInstance3D] = []
+	var g: Dictionary = GRAMATICAS[clampi(gramatica, 0, GRAMATICAS.size() - 1)]
+	ship.set_meta("gramatica", String(g["nome"]))
+	var espinha: Vector3 = g["espinha"]
+	var espinha_pos: Vector3 = g["espinha_pos"]
+	var popa: Vector3 = g["popa"]
+	var popa_pos: Vector3 = g["popa_pos"]
+	var dorso: Vector3 = g["dorso"]
+	var dorso_pos: Vector3 = g["dorso_pos"]
+	var proa: Vector3 = g["proa"]
+	var proa_pos: Vector3 = g["proa_pos"]
+	var torre: Vector3 = g["torre"]
+	var torre_pos: Vector3 = g["torre_pos"]
+	var asa: Vector3 = g["asa"]
+	var asa_pos: Vector3 = g["asa_pos"]
+	var varredura: float = g["asa_varredura"]
+	var rolagem: float = g["asa_rolagem"]
+	var nacele: Vector3 = g["nacele"]
+	var nacele_pos: Vector3 = g["nacele_pos"]
+	var torres_z: Array = g["torres_z"]
+	var torres_x: Array = g["torres_x"]
+	var torre_tamanho: Vector3 = g["torre_tamanho"]
+	var torres_y: float = g["torres_y"]
+	var luz: Vector3 = g["luz"]
+	var luz_tamanho: float = g["luz_tamanho"]
 	# Espinha comprida: é o volume que lê a nave como lâmina mesmo de fora do visor.
-	_box(Vector3(0, 0, 0), Vector3(1.5, 0.66, 5.4), mat_hull, casco)
-	# Proa em cone: sem caixa no nariz, a silhueta afila.
-	_cylinder(Vector3(0, 0, -4.02), 0.74, 0.05, 2.6, mat_hull, casco, Vector3(-PI / 2, 0, 0), 8)
-	_box(Vector3(0, 0.02, 2.5), Vector3(1.9, 0.78, 1.4), mat_steel, casco)
-	_box(Vector3(0, 0.5, -0.8), Vector3(0.78, 0.34, 3.3), mat_steel, casco)
+	_box(espinha_pos, espinha, mat_hull, casco)
+	# Proa em cone: sem caixa no nariz, a silhueta afila. Na gramática pesada o mesmo cone vira
+	# marreta — raio grande, topo aberto e comprimento curto.
+	_cylinder(proa_pos, proa.x, proa.y, proa.z, mat_hull, casco, Vector3(-PI / 2, 0, 0), 8)
+	_box(popa_pos, popa, mat_steel, casco)
+	_box(dorso_pos, dorso, mat_steel, casco)
 	# Torre de comando: na capitânia ela sobe e leva o mastro dourado, a silhueta que se
-	# aprende a procurar no meio da linha.
+	# aprende a procurar no meio da linha. O mastro nasce do teto da torre da própria gramática,
+	# senão o ouro ficaria flutuando acima de um casco que mudou de altura.
+	_box(torre_pos, torre, mat_hull, casco)
 	if comando:
-		_box(Vector3(0, 1.05, 0.25), Vector3(0.7, 0.95, 1.45), mat_hull, casco)
-		_box(Vector3(0, 1.75, 0.25), Vector3(0.16, 0.75, 0.16),
+		_box(Vector3(0, torre_pos.y + torre.y / 2.0 + 0.35, torre_pos.z), Vector3(0.16, 0.75, 0.16),
 			_material(HUD_OURO.darkened(0.3), 0.6, 0.28, HUD_OURO * 0.5), casco)
-	else:
-		_box(Vector3(0, 0.86, 0.25), Vector3(0.62, 0.5, 1.15), mat_hull, casco)
 	for lado in [-1.0, 1.0]:
 		# Asa varrida para trás: o ângulo é o que separa cruzador de tijolo. A largura é a
 		# conta: a linha fecha a 5 unidades de passo, então casco com envergadura acima de
 		# ~4 unidades faz a frota se sobrepor e o tabuleiro vira uma mancha só.
-		var asa := _box(Vector3(lado * 1.28, -0.02, 0.75), Vector3(1.5, 0.15, 2.6), mat_hull, casco)
-		asa.rotation.y = lado * 0.42
-		var filete := _box(Vector3(lado * 1.32, 0.09, 0.75), Vector3(1.42, 0.06, 0.34), mat_trim, casco)
-		filete.rotation.y = lado * 0.42
-		# Nacele gêmea, bocal fechado e pluma por trás do bocal.
-		_cylinder(Vector3(lado * 1.72, 0.14, 1.5), 0.28, 0.2, 3.4, mat_steel, casco,
-			Vector3(-PI / 2, 0, 0), 8)
-		_cylinder(Vector3(lado * 1.72, 0.14, 3.35), 0.2, 0.17, 0.4, mat_engine, casco,
-			Vector3(-PI / 2, 0, 0), 8)
-		plumas.append(_quad(Vector3(lado * 1.72, 0.14, 3.9), 0.8, mat_flare, casco))
-	# Torres por toda a dorsal: é a parte que acende com o `weapons` e apaga com ele.
-	for z in [-1.9, -0.4, 1.1, 2.0]:
-		_box(Vector3(0, 0.72, z), Vector3(0.4, 0.2, 0.6), mat_gun, casco)
+		var asa_no := _box(Vector3(lado * asa_pos.x, asa_pos.y, asa_pos.z), asa, mat_hull, casco)
+		asa_no.rotation = Vector3(rolagem, lado * varredura, 0.0)
+		var filete := _box(Vector3(lado * (asa_pos.x + 0.04), asa_pos.y + 0.11, asa_pos.z),
+			Vector3(asa.x - 0.08, 0.06, 0.34), mat_trim, casco)
+		filete.rotation = asa_no.rotation
+		# Nacele gêmea, bocal fechado e pluma por trás do bocal. O bocal e a pluma saem do fim
+		# da nacele, não de cota escrita à mão: casco de nacele curta não pode ter luz a meio do
+		# comprimento, nem nacele comprida pode ter a pluma colada ao bocal.
+		var fim := nacele_pos.z + nacele.z / 2.0
+		var boca := Vector3(lado * nacele_pos.x, nacele_pos.y, 0.0)
+		_cylinder(Vector3(boca.x, boca.y, nacele_pos.z), nacele.x, nacele.y, nacele.z,
+			mat_steel, casco, Vector3(-PI / 2, 0, 0), 8)
+		_cylinder(Vector3(boca.x, boca.y, fim + 0.15), nacele.y, nacele.y * 0.85, 0.4,
+			mat_engine, casco, Vector3(-PI / 2, 0, 0), 8)
+		plumas.append(_quad(Vector3(boca.x, boca.y, fim + 0.7), 0.8, mat_flare, casco))
+	# Torres por toda a dorsal: é a parte que acende com o `weapons` e apaga com ele. A
+	# distribuição é da gramática — à proa na escolta ligeira, adernas nas espáduas do
+	# navio-bandeira, em fila sobre a quilha do cruzador de linha.
+	for k in range(4):
+		_box(Vector3(float(torres_x[k]), torres_y, float(torres_z[k])), torre_tamanho,
+			mat_gun, casco)
 	# Luz de proa: o mesmo billete da pluma, com material próprio para a presa reacender azul.
-	_quad(Vector3(0, 0.0, -3.2), 0.3, mat_luz, casco)
+	_quad(luz, luz_tamanho, mat_luz, casco)
 	ship.set_meta("casco", casco)
 	ship.set_meta("mat", {"hull": mat_hull, "steel": mat_steel, "trim": mat_trim,
 		"gun": mat_gun, "engine": mat_engine, "flare": mat_flare, "luz": mat_luz})
@@ -4103,9 +4211,19 @@ func _mark_as_prize(ship: Node3D) -> void:
 	# O material da pluma é reescrito todo quadro a partir desta chave: trocá-la é trocar a cor
 	# do escapamento sem encostar em nenhum dos dois nós.
 	ship.set_meta("escape", ESCOAMENTO_ALIADO)
-	_box(Vector3(0, 0.95, 0.0), Vector3(0.55, 0.4, 0.55), _material(GOLD, 0.3, 0.25, GOLD * 0.8),
-		ship.get_meta("casco"))
+	_box(Vector3(0, float(_gramatica_de(ship)["marca_y"]), 0.0), Vector3(0.55, 0.4, 0.55),
+		_material(GOLD, 0.3, 0.25, GOLD * 0.8), ship.get_meta("casco"))
 	ship.rotation.y = 0.0
+
+## A marca dourada e o mastro da capitânia precisam da altura do convés da gramática do casco, e
+## não de uma cota escrita para o cruzador de linha: sem isto a presa montada num casco baixo
+## acordava com o ouro flutuando meio corpo acima da quilha.
+func _gramatica_de(ship: Node3D) -> Dictionary:
+	var nome: String = String(ship.get_meta("gramatica"))
+	for g in GRAMATICAS:
+		if String(g["nome"]) == nome:
+			return g
+	return GRAMATICAS[0]
 
 ## Escopo, alvo e escolta leem os arrays reais. add_item não reemite item_selected, então a
 ## escolha do comandante sobrevive à reconstrução enquanto o item correspondente existir.
