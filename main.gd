@@ -1952,6 +1952,11 @@ func _apply_hostile_tactics() -> void:
 	if hostile_posture == "ESCOLTA":
 		var command_index := int(read["command_index"])
 		var anchor: Vector3 = (enemies[command_index]["node"] as Node3D).global_position
+		# Contra-medida lida do tabuleiro, não sorteada: quando a ponte concentra o disco em 4,5 u,
+		# a guarda fecha por dentro. A ±3 os escoltas ficam fora do lance âncora e a capitânia apanha
+		# sozinha; a ±2 os dois cascos entram no corredor do tiro e absorvem o que a postura deles
+		# (ESCOLTA → densidade 0) já sabe que vem.
+		var folga := 2.0 if fogo_densidade == 0 else 3.0
 		var near := living.duplicate()
 		near.sort_custom(func(a, b): return _enemy_distance(a, anchor) < _enemy_distance(b, anchor))
 		for i in near:
@@ -1959,7 +1964,7 @@ func _apply_hostile_tactics() -> void:
 				continue
 			var escort: Dictionary = enemies[i]
 			escort["order"] = "ESCOLTAR"
-			escort["escort_offset"] = -3.0 if guards == 0 else 3.0
+			escort["escort_offset"] = -folga if guards == 0 else folga
 			enemies[i] = escort
 			guards += 1
 			if guards >= 2:
@@ -2018,17 +2023,55 @@ func _casco_em(ponto: Vector3, lista: Array[Dictionary]) -> int:
 	return melhor
 
 
-## Iniciativa de casco: o hostil vivo mais próximo de quem pergunta. É isto que tira a linha
-## aliada do "todos no mesmo número de série" sem tirar o setor comandado de ninguém.
-func _hostil_mais_perto(de_pos: Vector3) -> int:
+## Hostil que encosta na capitânia da ponte: é a ameaça que fecha a batalha, então a linha aliada
+## o põe acima de qualquer outro contato na escada de iniciativa.
+func _hostil_da_ponte() -> int:
 	var melhor := -1
 	var melhor_d := INF
 	for i in range(enemies.size()):
 		if float(enemies[i]["hp"]) <= 0.0 or String(enemies[i]["order"]) == "CAPTURADO":
 			continue
-		var distancia: float = (enemies[i]["node"] as Node3D).global_position.distance_to(de_pos)
+		var distancia: float = (enemies[i]["node"] as Node3D).global_position.distance_to(bridge_rig.global_position)
 		if distancia < melhor_d:
 			melhor_d = distancia
+			melhor = i
+	return melhor
+
+
+## Escada de iniciativa da linha aliada. Quem não está sob ordem expressa de ataque escolhe o
+## próprio alvo, e a escolha obedece a três pesos declaredos aqui (a sonda os mede um por um):
+## o hostil que encosta na capitânia vale +14 (perder a ponte é perder a batalha, e 14 u é mais do
+## que qualquer aproximação racional justifica trocar por ele); um casco no último quarto de arco
+## vale +6,0 contra um intacto — terminar um trabalho custa menos que começar outro; e o resto é
+## distância pura de quem atira. Deconfliction: um alvo já apontado por um casco não perde o
+## segundo, mas a partir do terceiro a fila anda (-8,0 por lance excedente), que é o que impede a
+## esquadra de formar uma fila para o mesmo número de série enquanto os outros viram alvo livre.
+## Em CONCENTRADO a escada cede ao comando: o disco de 4,5 u existe justamente para jogar a frota
+## inteira sobre o casco escolhido pela ponte. Leitura pura do tabuleiro — nenhum sorteio, e é por
+## isso que a densidade mudou o *para onde* do dano, nunca o *quantos dados* rolados.
+func _alvo_aliado_autonomo(no_aliado: int, foco: int, engajados: Dictionary) -> int:
+	if fogo_densidade == 0:
+		return foco
+	if no_aliado < 0 or no_aliado >= fleet.size():
+		return -1
+	var pos: Vector3 = (fleet[no_aliado]["node"] as Node3D).global_position
+	var ameaca := _hostil_da_ponte()
+	var melhor := -1
+	var melhor_valor := -INF
+	for i in range(enemies.size()):
+		if float(enemies[i]["hp"]) <= 0.0 or String(enemies[i]["order"]) == "CAPTURADO":
+			continue
+		var valor := -pos.distance_to((enemies[i]["node"] as Node3D).global_position)
+		valor += (100.0 - float(enemies[i]["hp"])) * 0.06
+		if i == ameaca:
+			valor += 14.0
+		var carga := int(engajados.get(i, 0))
+		if carga >= 2:
+			valor -= 8.0 * float(carga - 1)
+		# `>` estrito: dois cascos no mesmo degrau da escada deixam o de índice menor no alvo,
+		# que é o que torna a salva reproduzível de rodada para rodada.
+		if valor > melhor_valor:
+			melhor_valor = valor
 			melhor = i
 	return melhor
 
@@ -2101,8 +2144,9 @@ func _resolve_volley() -> void:
 	setor_fogo_pos = (enemies[focus_target]["node"] as Node3D).global_position
 	# Cada casco vivo atira por conta própria e manda FLECHAS_POR_SALVA impactos sobre o disco.
 	# Quem está sob ordem de ataque (ou fechando para abordar) obedece ao setor da ponte; o resto
-	# da linha tem iniciativa e engaja o hostil mais próximo de si — é isto que separa uma esquadra
-	# de doze torretas todas apontadas para o mesmo número de série.
+	# da linha tem iniciativa e sobe a escada de alvo — é isto que separa uma esquadra de doze
+	# torretas todas apontadas para o mesmo número de série.
+	var engajados: Dictionary = {}
 	var feridos := 0
 	var nos_vaos := 0
 	var nas_pedras := 0
@@ -2114,9 +2158,10 @@ func _resolve_volley() -> void:
 		var ordem := String(ally["order"])
 		var alvo_index := focus_target
 		if ordem != "ATACAR" and ordem != "ABORDAR":
-			alvo_index = _hostil_mais_perto((ally["node"] as Node3D).global_position)
+			alvo_index = _alvo_aliado_autonomo(i, focus_target, engajados)
 		if alvo_index < 0:
 			continue
+		engajados[alvo_index] = int(engajados.get(alvo_index, 0)) + 1
 		var damage := 2.5 * float(ally["weapons"]) / 100.0 * maxf(0.25, float(ally["crew"]) / 100.0)
 		if ordem == "ATACAR":
 			damage *= 1.8
@@ -2246,8 +2291,9 @@ func _resolve_volley() -> void:
 			_mark_wreck(victim["node"] as Node3D)
 			report_label.text = "ALERTA // %s foi perdida." % victim["name"]
 		fleet[absorvente_foco] = victim
-	salva_resumo = "salva: %d/%d aliadas feriram, %d/%d hostis, %d cairam no vao" % [
-		feridos, impactos, hostis_feriram, impactos_hostis, nos_vaos + nas_pedras + hostis_no_vao]
+	salva_resumo = "salva: %d/%d aliadas feriram, %d/%d hostis, %d cairam no vao // %d alvo(s) engajado(s)" % [
+		feridos, impactos, hostis_feriram, impactos_hostis, nos_vaos + nas_pedras + hostis_no_vao,
+		engajados.size()]
 	salva_contagem = {"aliados": impactos, "aliados_feriram": feridos, "hostis": impactos_hostis,
 		"hostis_feriram": hostis_feriram, "vaos": nos_vaos + hostis_no_vao, "pedras": nas_pedras}
 

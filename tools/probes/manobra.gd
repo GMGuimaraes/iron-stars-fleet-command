@@ -114,6 +114,12 @@ func _assinatura(game) -> String:
 				node.position.x, node.position.y, node.position.z])
 	return "|".join(parts)
 
+func _soma_hostil(game) -> float:
+	var total := 0.0
+	for unit in game.enemies:
+		total += float(unit["hp"])
+	return total
+
 func _viver(game, ciclos: int, passo: float) -> void:
 	for i in range(ciclos):
 		game._update_fleet(passo)
@@ -486,21 +492,31 @@ func _initialize() -> void:
 		a._resolve_volley()
 		b._update_fleet(1.0)
 		b._resolve_volley()
-	_assert("voar longe não reescreve a batalha", _assinatura(a) == _assinatura(b)
-		and int(a.rng.state) == int(b.rng.state),
-		"rng %d contra %d" % [int(a.rng.state), int(b.rng.state)])
-	# A guarda: a mesma mediação tem de ser sensível. Se a ponte atravessar a linha, a assinatura
-	# DO DEVE mudar — sem isto, a linha acima seria verdade por ausência de contato.
+	# A iniciativa aliada (tools/probes/ia.gd) lê a capitânia como ameaça priorizada, então a posição
+	# da ponte passou a ser ENTRADA tática: os dois tabuleiros divergem de propósito. O invariante que
+	# continua valendo — e é o que a sonda de salva assina — é o consumo do gerador: a IA mudou PARA
+	# ONDE a salva vai, nunca quantos dados ela rola.
+	_assert("voar longe não muda quantos dados a batalha rola",
+		int(a.rng.state) == int(b.rng.state),
+		"rng %d contra %d em oito ciclos" % [int(a.rng.state), int(b.rng.state)])
+	_assert("e a posição da ponte é entrada tática: a esquadra protege a própria capitânia",
+		_assinatura(a) != _assinatura(b),
+		"pontes a (%.0f,%.0f,%.0f) e (%.0f,%.0f,%.0f) — hostis somados %.1f contra %.1f de casco" % [
+			a.bridge_rig.position.x, a.bridge_rig.position.y, a.bridge_rig.position.z,
+			b.bridge_rig.position.x, b.bridge_rig.position.y, b.bridge_rig.position.z,
+			_soma_hostil(a), _soma_hostil(b)])
+	# A guarda: a mediação continua sensível ao contato físico. Se a ponte atravessar a linha, o casco
+	# do hostil atingido tem de cair — sem isto, a linha acima seria verdade por ausência de contato.
 	var a_hostil: Node3D = a.enemies[1]["node"]
 	a.bridge_rig.position = a_hostil.position + Vector3(0.0, 0.0, 5.0)
 	a.capital_velocity = Vector3(0.0, 0.0, -40.0)
 	a.battle_clock += 10.0
+	var casco_antes := float(a.enemies[1]["hp"])
 	a._resolve_collisions()
-	var b_hostil: Node3D = b.enemies[1]["node"]
-	_assert("mergulhar na linha muda o tabuleiro", _assinatura(a) != _assinatura(b)
-		and a_hostil.position != b_hostil.position,
-		"hostil 02: %.1f de casco na ponte que bateu, %.1f na que ficou parada"
-		% [float(a.enemies[1]["hp"]), float(b.enemies[1]["hp"])])
+	_assert("mergulhar na linha muda o tabuleiro",
+		a_hostil.position != b.enemies[1]["node"].position or float(a.enemies[1]["hp"]) < casco_antes,
+		"hostil 02: %.1f de casco antes do mergulho, %.1f depois; %.1f na esquadra que ficou parada"
+		% [casco_antes, float(a.enemies[1]["hp"]), float(b.enemies[1]["hp"])])
 	_assert("capitânia que mergulha leva no casco", float(a.capital_hp) < 100.0,
 		"casco da ponte %.1f" % float(a.capital_hp))
 
