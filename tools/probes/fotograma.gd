@@ -243,6 +243,9 @@ func _initialize() -> void:
 	# mesmo com o holograma deslocado pelo offset da raiz, porque nada lê `marca.position`.
 	var deriva_fora := 0
 	var marca_fora := 0
+	var matriz := 0
+	var filhas := 0
+	var miudo := 0
 	for i in range(90):
 		await process_frame
 	for rocha in game.rochas:
@@ -255,10 +258,25 @@ func _initialize() -> void:
 			marca_fora += 1
 		elif marca_rocha.position.distance_to(game._holo_de(pos_rocha)) > 0.01:
 			marca_fora += 1
+		var geracao := int(rocha["geracao"])
+		if geracao <= 0:
+			matriz += 1
+		elif geracao == 1:
+			filhas += 1
+		else:
+			miudo += 1
+	# A população não é mais o número 14: estes noventa quadros são batalha viva, e a salva que
+	# fecha a integridade de uma pedra é a mecânica da fatia, não um defeito dela. O que vale é a
+	# contabilidade da rachadura — cada matriz perdida devolve duas filhas, miúdo nenhum sobre
+	# (geração 2 esmiúça sem deixar corpo) e o total bate com as partes. Cravar `== 14` reprovaria
+	# o jogo por ele ter funcionado, e aprovaria por nada ter acontecido: as duas coisas que esta
+	# casa não faz. Medido em cinco janelas desta fatia: duas acordaram com a pedra rachada (13 + 2)
+	# e três com o leque inteiro (14 + 0), porque o `delta` de janela é tempo de parede.
 	_assert("depois de noventa quadros voando, corpo e marca continuam colados no dicionário",
-		deriva_fora == 0 and marca_fora == 0 and int(game.rochas.size()) == 14,
-		"%d corpos e %d marcas fora do lugar, %d corpos no mapa" % [deriva_fora, marca_fora,
-			game.rochas.size()])
+		deriva_fora == 0 and marca_fora == 0 and miudo == 0 and filhas % 2 == 0 \
+			and matriz + filhas / 2 == 14 and int(game.rochas.size()) == matriz + filhas,
+		"%d corpos e %d marcas fora do lugar, %d corpos no mapa (%d matriz + %d filha(s), %d miúdo)" % [
+			deriva_fora, marca_fora, game.rochas.size(), matriz, filhas, miudo])
 	await _fotograma(game, "08b_cinturao_a_deriva")
 
 	game._montar_cenario("POCO")

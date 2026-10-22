@@ -395,6 +395,11 @@ var batalha_encerrada := false
 var status_label: Label
 var report_label: Label
 var pause_button: Button
+## Botão logo depois do PAUSAR, no mesmo trilho de cima: refaz a batalha do zero dentro da ponte
+## que já está em pé, sem voltar ao menu. Nasce para o teste repetido, e o contrato dele é uma
+## única frase — depois de um recomeço o tabuleiro tem de ser indistinguível do de uma partida que
+## acabou de abrir. É o que `tools/probes/recomecar.gd` mede.
+var restart_button: Button
 ## Letreiro do canhão da capitânia dentro do grupo ARMAMENTO. É Label, não Button: leitura de
 ## estado não é comando, e por isso os trinta e cinco botões que `tools/probes/menu.gd` conta
 ## continuam sendo trinta e cinco.
@@ -407,6 +412,11 @@ var rng := RandomNumberGenerator.new()
 ## a cauda de combate: cada sorteio a mais reescreve todo o dano da salva seguinte (é o que a
 ## corrida A/B de `tools/probes/sondas.gd` mede). Nada aqui consome `rng`.
 var visual_rng := RandomNumberGenerator.new()
+## Estado do gerador visual no instante em que a esquadra é montada pela primeira vez. Recravar a
+## base a cada RECOMEÇAR é o que faz a pintura de formação — o `y` de cada casco — sair idêntica à
+## de uma partida nova. Sem isto a batalha até se repetiria com a mesma semente de `rng`, mas a
+## esquadra acordaria em outra altura a cada recomeço.
+var visual_base := 0
 ## Blips da mesa holográfica: `id do nó lógico` -> `MeshInstance3D`. A mesa espelha o tabuleiro
 ## real, então ela é construída a partir das listas vivas e não de um cadastro paralelo.
 var holo_blips: Dictionary = {}
@@ -568,6 +578,11 @@ var ponte_energia_fria := 0.0
 ## a asserção do fim é voltar para ela com exatidão de vírgula.
 var ponte_camera: Camera3D
 var ponte_camera_base := Vector3.ZERO
+## Fotografia da ponte no quadro em que ela foi montada: atitude, posição, câmera, materiais do
+## deck, telas, luzes e holografia. É a base que o RECOMEÇAR devolve, e ela é lida dos nós, nunca
+## reescrita como constante — a ruína pinta a ponte escrevendo exatamente nesses valores, e uma
+## segunda cópia deles em código divergiria na primeira retocada de cor.
+var ponte_base: Dictionary = {}
 ## Rumo no quadro da ignição: a guinada da ruína é medida em cima dele, porque a ponte pode adernar
 ## para bombordo ou para estibordo dependendo só de para onde o comandante olhava quando o casco
 ## fechou — e o teto assinado pela sonda é o acréscimo, não a bússola final.
@@ -615,6 +630,9 @@ func _ready() -> void:
 	_registra_voo()
 	_build_environment()
 	_build_bridge()
+	# A base visual é cravada aqui, entre a ponte e a esquadra: é o estado exato do gerador com que
+	# a frota nasce, e é para ele que o RECOMEÇAR volta antes de remontar os doze cascos.
+	visual_base = visual_rng.state
 	_build_fleets()
 	_rebuild_holo()
 	# Antes da primeira UI: sem isto a ponte abriria com 0/0 quando o tabuleiro já tem seis
@@ -877,6 +895,9 @@ func _build_bridge() -> void:
 	bridge_rig.add_child(camera)
 	ponte_camera = camera
 	ponte_camera_base = camera.position
+	# O retrato da ponte montada é a última coisa que `_build_bridge` faz: ele lê os nós como eles
+	# acordaram, e é para esse estado que o RECOMEÇAR volta.
+	_gravar_base_da_ponte()
 
 ## Postos da tripulação: quatro operadores sentados nos consoles de bordo (x ±3,5, de frente para a
 ## própria bancada) e dois oficiais de pé nas asas do visor com holograma de leitura na mão. Os
@@ -1171,6 +1192,7 @@ func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: Stri
 	ship.name = ship_name
 	ship.position = pos
 	ship.scale = Vector3.ONE * scale_factor
+	ship.set_meta("de_batalha", true)
 	add_child(ship)
 	var casco := Node3D.new()
 	casco.name = "Casco"
@@ -1301,6 +1323,7 @@ func _spawn_explosion(pos: Vector3, cor: Color) -> void:
 	audio.efeito("EXPLOSAO")
 	for i in range(DETONACAO.size()):
 		var estouro := _flare(pos + DETONACAO[i], 1.4 + float(i) * 0.4, Color(cor, 0.85), self)
+		estouro.set_meta("de_batalha", true)
 		var tween := create_tween()
 		tween.set_parallel(true)
 		tween.tween_property(estouro, "scale", Vector3.ONE * (3.2 + float(i) * 0.9), 0.5)
@@ -1355,6 +1378,7 @@ func _acende_clarao(fase: Dictionary) -> void:
 		else bridge_rig.position + (fase["pos"] as Vector3)
 	var pai: Node = bridge_rig if de_dentro else self
 	var billet := _flare(onde, float(fase["size"]), Color(BRASA, 0.9), pai)
+	billet.set_meta("de_batalha", true)
 	morte_claroes.append({"no": billet, "nasc": morte_t})
 	audio.efeito(String(fase["som"]))
 
@@ -1437,6 +1461,7 @@ func _build_ui() -> void:
 	speed_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_row.add_child(speed_label)
 	pause_button = _add_button(top_row, "PAUSAR [ESPAÇO]", _toggle_pause)
+	restart_button = _add_button(top_row, "RECOMEÇAR", _recomecar_batalha)
 	var panel := PanelContainer.new()
 	panel.position = Vector2(24, 94)
 	panel.custom_minimum_size = Vector2(396, 620)
@@ -2906,6 +2931,7 @@ func _launch_probes(indices: Array[int]) -> int:
 func _make_probe(pos: Vector3) -> Node3D:
 	var probe := Node3D.new()
 	probe.position = pos
+	probe.set_meta("de_batalha", true)
 	add_child(probe)
 	var glow := Color(0.35, 0.9, 1.0)
 	_box(Vector3(0, 0, 0), Vector3(0.5, 0.5, 0.9), _material(glow.darkened(0.55), 0.5, 0.3, glow * 0.7), probe)
@@ -3282,6 +3308,7 @@ func _lancar_missil(origem: Vector3, destino: Vector3, dano: float) -> void:
 	if distancia < 0.001:
 		return
 	var no := Node3D.new()
+	no.set_meta("de_batalha", true)
 	add_child(no)
 	no.global_position = origem
 	var corpo := MeshInstance3D.new()
@@ -3441,6 +3468,7 @@ func _lancar_caca(origem: Vector3, destino: Vector3, dano: float) -> void:
 	if distancia < 0.001:
 		return
 	var no := Node3D.new()
+	no.set_meta("de_batalha", true)
 	add_child(no)
 	no.global_position = origem
 	var casco := _material(ACO_ESCURO.lightened(0.24), 0.45, 0.4, ESCOAMENTO_ALIADO * 0.3)
@@ -3549,6 +3577,7 @@ func _ferir_com_caca(c: Dictionary) -> bool:
 ## por casco vivo da holografia não pode ler efeito.
 func _flash_explosao(ponto: Vector3) -> void:
 	var flash := MeshInstance3D.new()
+	flash.set_meta("de_batalha", true)
 	var esfera := SphereMesh.new()
 	esfera.radius = MISSIL_RAIO * 0.3
 	esfera.height = MISSIL_RAIO * 0.6
@@ -4108,6 +4137,7 @@ func _spawn_bolt(destino: Vector3, cor: Color, origem: Vector3, cauda_de_combate
 	lance.mesh = corpo
 	lance.material_override = _material(cor, 0.0, 0.2, cor * 1.4)
 	lance.material_override.emission_energy_multiplier = 2.4
+	lance.set_meta("de_batalha", true)
 	# No tree, no global transform: global_position lida antes de add_child devolve
 	# Transform3D() e imprime um ERROR por salva (medido no smoke headless).
 	add_child(lance)
@@ -4349,6 +4379,162 @@ func _encerra_batalha() -> void:
 	batalha_encerrada = true
 	audio.efeito("ALARME")
 	audio.parar_trilha()
+
+## RECOMEÇAR: desmonta a batalha e a monta de novo dentro da mesma ponte. A régua é uma frase só e
+## a sonda a mede casco a casco — depois de um recomeço o tabuleiro tem de ser indistinguível do de
+## uma partida que acabou de abrir: os mesmos doze corpos, os mesmos 100% em cada subsistema, as
+## mesmas contas zeradas e o mesmo `rng.state` com a mesma semente cravada dos dois lados.
+##
+## O rig da ponte nunca é libertado: trocar a câmera filha enquanto ela é a corrente do visor não é
+## seguro, e a mesa holográfica é o instrumento de toda sonda vizinha. O que a ruína pintou nele é
+## devolvido a partir de `ponte_base`, gravada na ignição. Cenário e trilha são escolhas do
+## comandante, não do combate: ficam onde ele os deixou — com uma exceção escrita de propósito, a
+## trilha cortada pelo fim de combate, que volta porque a batalha voltou.
+func _recomecar_batalha() -> void:
+	_libertar_corpos_da_batalha()
+	_restaurar_ponte_da_base()
+	# A ruína se apaga antes de qualquer relógio: enquanto `capital_hp <= 0`, `_process` roda
+	# `_atualizar_ruina` e escreve atitude na ponte que a linha abaixo acabou de içar.
+	ponte_condenada = false
+	ponte_sem_energia = false
+	ponte_em_alarme = false
+	morte_t = 0.0
+	morte_fase = 0
+	morte_claroes.clear()
+	batalha_encerrada = false
+	# Voo e relógio: a partida nova nasce parada, com casco cheio e sem inércia herdada.
+	paused = false
+	throttle = 0.0
+	capital_hp = 100.0
+	capital_velocity = Vector3.ZERO
+	ram_windows.clear()
+	battle_clock = 0.0
+	fire_clock = 0.0
+	# Toda ordem volta ao degrau de abertura. Não é capricho de painel: `_give_order` monta o destino
+	# a partir da formação e do alvo de agora, e uma esquadra nova herdando fogo CONCENTRADO sobre um
+	# hostil que acabou de deixar de existir mandaria a linha atirar no vão.
+	formation = "LINHA"
+	fogo_densidade = 1
+	selection_scope = "FROTA"
+	selected_target = 0
+	reserve_mode = false
+	encoracados = 0
+	porta_avioes = 0
+	hostile_posture = "AVANÇAR"
+	hostile_focus = -1
+	tactical_note = "POSTURA HOSTIL: AVANÇAR"
+	move_x = 0.0
+	move_z = -55.0
+	# As contas zeron com as MESMAS chaves da declaração: as identidades que o HUD e a sonda assinam
+	# (`feriram + no_vao + parados == lancados`) têm de fechar em zero, não em chave faltando.
+	salva_resumo = "0/0 impactos"
+	salva_contagem = {"aliados": 0, "aliados_feriram": 0, "hostis": 0, "hostis_feriram": 0,
+		"vaos": 0, "pedras": 0}
+	missil_contagem = {"lancados": 0, "detonados": 0, "bloqueados": 0, "rachadas": 0, "cascos": 0,
+		"dano": 0.0}
+	caca_contagem = {"lancados": 0, "abatidos": 0, "bloqueados": 0, "pousados": 0, "no_vao": 0,
+		"feridos": 0, "dano": 0.0}
+	capitania_contagem = {"salvas": 0, "lancados": 0, "feriram": 0, "no_vao": 0, "parados": 0,
+		"dano": 0.0}
+	capitania_em_alcance = false
+	setor_fogo_pos = Vector3(0.0, 0.0, HOLO_ANCHOR_Z)
+	# Corpo: míssil, caçado, sonda e casco saem da conta aqui; o nó já foi libertado pelo carimbo.
+	misseis.clear()
+	missil_proximo_id = 1
+	cacas.clear()
+	caca_proximo_id = 1
+	probes.clear()
+	fleet.clear()
+	enemies.clear()
+	# Montagem. A semente de batalha é sorteada de novo, exatamente como `_ready` faz, e o gerador
+	# visual é recravado na base da esquadra para que a pintura de formação — o `y` de cada casco —
+	# saia idêntica à da primeira partida, e não a meia-dúzia de sorteios que o tracer já gastou.
+	rng.randomize()
+	visual_rng.state = visual_base
+	_build_fleets()
+	# O mapa se refaz no cenário escolhido pelo comandante: pedra rachada e janela de abalroamento são
+	# estado da batalha, não do mapa — é pela mesma razão que `_desmontar_cenario` devolve os ids a
+	# zero quando o botão do painel troca de faixa.
+	_montar_cenario(cenario_atual)
+	_desenhar_setor_de_fogo()
+	_recompute_recon()
+	# Blips e seletores reemitidos pelo caminho que a incorporação de presa já usa: um cadastro
+	# paralelo de mesa seria a ponte mostrando uma frota que o tabuleiro não tem. O seletor de
+	# subsistema e os dois campos de destino NÃO são tocados: são input pendente do comandante,
+	# lido de novo na ordem que o usar, e apagar o que ele digitou seria trocar uma escolha por um
+	# reset — papel do painel, não do combate.
+	_rebuild_selectors()
+	if is_instance_valid(pause_button):
+		pause_button.text = "PAUSAR [ESPAÇO]"
+	if is_instance_valid(report_label):
+		report_label.text = "RECOMEOU // esquadra remontada do zero: %d casco(s) aliado(s), %d hostil(is)." % [fleet.size(), enemies.size()]
+	# A trilha é escolha do comandante: a que está tocando continua a frase. Só volta a tocar a que
+	# o fim de combate cortou, porque a batalha que a cortou acabou de recomeçar.
+	audio.abafar_trilha(false)
+	if not audio.trilha_ao_vivo():
+		audio.tocar_trilha()
+	_update_hud()
+
+## Varre o carimbo `de_batalha`. Todo corpo que nasce de uma esquadra montada, de uma salva, de um
+## lançamento ou de uma fase da ruína é carimbado no próprio `add_child`, e é por ele — não por nome,
+## não por lista paralela — que o RECOMEÇAR liberta. Um reset que tivesse de lembrar de cada efeito
+## ia esquecer um, e estilhaço velho navegando na partida nova é exatamente o defeito que nenhuma
+## asserção de economia pega.
+func _libertar_corpos_da_batalha() -> void:
+	_demolir_carimbados(self)
+	_demolir_carimbados(bridge_rig)
+
+## `remove_child` antes do `queue_free`: o nome do casco velho tem de ficar livre antes do novo
+## nascer, senão a esquadra acordaria `ALIADA 01@2!` e toda sonda que procura por nome perderia o
+## rastro — o mesmo contrato que a bateria e o convés já cobram no lançamento.
+func _demolir_carimbados(pai: Node) -> void:
+	if not is_instance_valid(pai):
+		return
+	for filho in pai.get_children():
+		if not filho.has_meta("de_batalha"):
+			continue
+		pai.remove_child(filho)
+		filho.queue_free()
+
+## Fotografia da ponte montada, lida dos nós e nunca reescrita em constante: a ruína escreve
+## exatamente sobre esses valores, então devolver o que estava lá é a única forma de não duplicar a
+## paleta. Entram no retrato a atitude e a posição do rig, a câmera, as duas luzes, os quatro nós da
+## holografia e cada material do deck com tela e vidro. A tripulação não precisa: ela já se refaz a
+## cada quadro a partir das próprias bases, e o que a congelava era `ponte_sem_energia`.
+func _gravar_base_da_ponte() -> void:
+	var mats: Dictionary = bridge_rig.get_meta("mat")
+	var retrato: Dictionary = {"rig_pos": bridge_rig.position, "rig_rot": bridge_rig.rotation,
+		"camera": ponte_camera.position,
+		"luz": [ponte_luz_trabalho.light_energy, ponte_luz_fria.light_energy],
+		"holo_visivel": holo_root.visible, "tela": [ponte_telas.albedo_color, ponte_telas.emission,
+			ponte_telas.emission_energy_multiplier], "mat": {}}
+	for chave in mats:
+		var mat: StandardMaterial3D = mats[chave]
+		retrato["mat"][chave] = [mat.albedo_color, mat.emission, mat.emission_energy_multiplier]
+	ponte_base = retrato
+
+func _restaurar_ponte_da_base() -> void:
+	bridge_rig.position = ponte_base["rig_pos"]
+	bridge_rig.rotation = ponte_base["rig_rot"]
+	ponte_camera.position = ponte_base["camera"]
+	var luz: Array = ponte_base["luz"]
+	ponte_luz_trabalho.light_energy = float(luz[0])
+	ponte_luz_fria.light_energy = float(luz[1])
+	var visivel := bool(ponte_base["holo_visivel"])
+	for nos in [holo_root, holo_anel, holo_capitania, holo_setor]:
+		(nos as Node3D).visible = visivel
+	var tela: Array = ponte_base["tela"]
+	ponte_telas.albedo_color = tela[0] as Color
+	ponte_telas.emission = tela[1] as Color
+	ponte_telas.emission_energy_multiplier = float(tela[2])
+	var retrato_mat: Dictionary = ponte_base["mat"]
+	var mats: Dictionary = bridge_rig.get_meta("mat")
+	for chave in retrato_mat:
+		var pinta: Array = retrato_mat[chave]
+		var mat: StandardMaterial3D = mats[chave]
+		mat.albedo_color = pinta[0] as Color
+		mat.emission = pinta[1] as Color
+		mat.emission_energy_multiplier = float(pinta[2])
 
 func _update_hud() -> void:
 	if is_instance_valid(command_label):
