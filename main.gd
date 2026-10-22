@@ -126,6 +126,39 @@ const POCO_POS := Vector3(0.0, 0.0, -78.0)
 const POCO_ALCANCE := 46.0
 const POCO_PUXO := 11.0
 const POCO_HORIZONTE := 9.0
+## Lente de Gargantua: o buraco negro do Interstellar não é um donut visto de cima. É uma sombra
+## redonda com um fio de luz colado na borda, um disco fino atravessando o meio, e a imagem do lado
+## de lá dobrada por CIMA e por BAIXO da sombra. Nada aqui mexe em casco, dano ou sorteio: os três
+## números que mandam no poço (`POCO_ALCANCE`, `POCO_PUXO`, `POCO_HORIZONTE`) ficam exatamente como
+## a sonda `tools/probes/cenarios.gd` já confere.
+## Raios em unidades de horizonte — é assim que a sombra e o aro ficam sempre proporcionais.
+const POCO_ANEL_FOTON := 1.08
+const POCO_DISCO_INTERNO := 1.55
+const POCO_DISCO_EXTERNO := 3.80
+const POCO_DISCO_FAIXAS := 3
+const POCO_DISCO_AMOSTRAS := 44
+## Sem inclinação o disco é visto de gume puro e não aparece um pixel. 0,17 rad bastam para ler a
+## face de cima sem quebrar o perfil fino da imagem.
+const POCO_DISCO_INCLINACAO := 0.17
+## O arco lentificado é uma elipse no plano do quadro: larga como o disco, alta como 1,24 sombra.
+const POCO_ARCO_ALTO := 1.24
+const POCO_ARCO_BAIXO := 1.06
+const POCO_ARCO_AMOSTRAS := 40
+const POCO_ARCO_LARGO := 3.10
+## Feixe relativístico: o lado que vem para nós chega mais claro. 1 ± 0,45 sobre o ângulo, contado
+## do índice da amostra — deterministicamente, sem um sorteio.
+const POCO_DOPPLER := 0.45
+## Lente sobre o céu de fundo. `POCO_LENTE_EINSTEIN` é o raio de Einstein em radianos de separação
+## aparente; uma estrela a `sep` do centro aparenta estar a `sep + E²/sep`, tocado em 2E. O efeito
+## é uma zona escura de 2E e um amontoado luminoso logo fora — é isso que olhos humanos leem como
+## "aquilo dobrou o céu".
+const POCO_LENTE_EINSTEIN := 0.16
+const POCO_LENTE_FLEXAO_TETO := 2.0
+const POCO_LENTE_BANDA := 3.0
+## Margem do anel de acúmulo: nenhuma estrela termina antes de `2E * POCO_LENTE_ANEL`. O mínimo
+## analítico de `sep + E²/sep` é exatamente 2E (em `sep = E`), e um miolo que encosta na borda por
+## 1e-9 não é preto — a margem é o que separa um céu varrido de um empate de vírgula flutuante.
+const POCO_LENTE_ANEL := 1.02
 ## Estrela ativa: dentro do raio de calor as armas disparam mais quentes (o dano sobe), dentro da
 ## corona o casco cozinha. É a única mecânica do slice que mexe em dano de salva, e mexe por
 ## posição, não por sorteio.
@@ -310,6 +343,23 @@ var estrela_ativa := false
 ## no tabuleiro (e sem deixar recurso pendurado no encerramento).
 var cenario_root: Node3D
 var holo_cenario: Array[MeshInstance3D] = []
+## A lente pintada: o disco de matéria e o conjunto de arcos lentificados. Ambos são um único
+## MultiMesh — duzentos nós separados seriam duzentos draw calls no Compatibility por uma decoração
+## que nunca colide. `poco_lente` é o nó que segura aro e arcos e que, a cada quadro, vira o plano
+## para o olho da ponte: a imagem lentificada é do observador, não do mundo.
+var poco_disco: MultiMeshInstance3D
+var poco_lente: MultiMeshInstance3D
+## Céu de fundo em estado vivo: a base crua de cada estrela e o que está pintado agora. A base é a
+## transformada AUTORGADA pelo sorteio, nunca a leitura de volta do MultiMesh: sob renderizador sem
+## janela o `set_instance_transform` é descartado em silêncio e a leitura devolve identidade, então
+## quem depende do readback dobra um céu de estrelas todas em (0,0,0). Com a base própria, a lente
+## pode ser conferida por sonda em qualquer driver e o undo da dobra não reconstrói o MultiMesh.
+var campo_estelar: MultiMeshInstance3D
+var estrelas_base: Array[Transform3D] = []
+var estrelas_pintadas: Array[Transform3D] = []
+## Quantas estrelas o céu emprestou para a lente no último quadro. Medido pela sonda: zero em
+## campo aberto, e o teto da conta quando o poço está montado e a proa apontada para ele.
+var estrelas_dobradas := 0
 ## Tripulação pintada na ponte: cada posto guarda o nó e as peças que se mexem, mais a posição
 ## crua delas. Sem a base guardada, a animação acumularia um empurrão por quadro e o operador
 ## desceria pelo soalho em dois minutos de batalha.
@@ -552,10 +602,14 @@ func _build_starfield() -> void:
 		if i % 37 == 0:
 			tam *= 3.4
 			brilho = minf(1.0, brilho * 1.6)
-		mm.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * tam), pos))
+		var autorgada := Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * tam), pos)
+		mm.set_instance_transform(i, autorgada)
 		mm.set_instance_color(i, Color(brilho, brilho * 1.05, brilho * 1.18))
+		estrelas_base.append(autorgada)
+		estrelas_pintadas.append(autorgada)
 	stars.multimesh = mm
 	add_child(stars)
+	campo_estelar = stars
 
 func _build_bridge() -> void:
 	bridge_rig = Node3D.new()
@@ -1500,9 +1554,12 @@ func _desmontar_cenario() -> void:
 	rochas.clear()
 	poco_ativo = false
 	estrela_ativa = false
+	_desdobrar_ceu()
 	if is_instance_valid(cenario_root):
 		for filho in cenario_root.get_children():
 			filho.queue_free()
+	poco_disco = null
+	poco_lente = null
 
 
 func _garantir_cenario_root() -> Node3D:
@@ -1530,19 +1587,143 @@ func _montar_cinturao() -> void:
 		rochas.append({"no": bloco, "pos": Vector3(x, y, z), "raio": raio})
 
 
-## Poço: a boca preta e o disco de matéria caindo. O aro luminoso é a régua do alcance — é ele que
-## o comandante lê como "não passe daqui", e a distância a que o puxo começa a mover o casco.
+## Poço: a sombra, o disco de matéria caindo e a dobra do céu atrás dele. O aro luminoso continua
+## sendo a régua do alcance — é ele que o comandante lê como "não passe daqui", e a distância a que
+## o puxo começa a mover o casco. O resto é lente gravitacional: a imagem do lado de lá do disco
+## dobra por cima e por baixo da sombra, e as estrelas de fundo são empurradas para fora do raio de
+## Einstein, deixando um buraco escuro cercado de céu mais apertado. Nada disso tem corpo, dano ou
+## sorteio — `POCO_ALCANCE`, `POCO_PUXO` e `POCO_HORIZONTE` mandam exatamente como antes.
 func _montar_poco() -> void:
 	var raiz := _garantir_cenario_root()
 	poco_ativo = true
-	var boca := _material(Color(0.008, 0.006, 0.014), 0.0, 1.0)
-	_cylinder(POCO_POS, POCO_HORIZONTE, POCO_HORIZONTE, 1.2, boca, raiz, Vector3(PI / 2.0, 0, 0), 24)
-	var brasa := _material(Color(0.9, 0.44, 0.12), 0.0, 0.6, Color(1.0, 0.5, 0.14))
-	for i in range(28):
-		var ang := float(i) * TAU / 28.0
-		var raio := POCO_ALCANCE * (0.62 + 0.03 * float(i % 3))
-		_box(POCO_POS + Vector3(cos(ang) * raio, sin(ang * 2.0) * 2.0, sin(ang) * raio),
-			Vector3(2.2, 0.5, 2.2), brasa, raiz)
+	# A sombra: um casco preto sem luz nenhuma, do tamanho exato do horizonte. Esferas com material
+	# sombreado ficam cinza sob a luz da ponte, e uma sombra cinza não é um buraco negro.
+	var sombra := StandardMaterial3D.new()
+	sombra.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	sombra.albedo_color = Color(0.0, 0.0, 0.0, 1.0)
+	sombra.roughness = 1.0
+	_esfera(POCO_POS, POCO_HORIZONTE, sombra, raiz, 32)
+	_montar_disco_de_acrescao(raiz)
+	_montar_arco_de_lente(raiz)
+	# Dobrar o quadro já na montagem: o painel anuncia quantas estrelas saíram do miolo no mesmo
+	# quadro em que o cenário entra, e não um quadro depois.
+	_lentificar_quadro()
+
+
+## Faixas concêntricas de matéria caindo, todas num só MultiMesh. O disco é inclinado 0,17 rad
+## porque visto de gume puro ele não pinta um pixel; o brilho de cada amostra é cor de instância,
+## nunca material novo por amostra. O feixe relativístico entra como `1 ± POCO_DOPPLER · cos`: um
+## lado do disco chega mais claro que o outro, que é como se lê a rotação.
+func _montar_disco_de_acrescao(raiz: Node3D) -> void:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = _quadro_aditivo()
+	var total := POCO_DISCO_FAIXAS * POCO_DISCO_AMOSTRAS
+	mm.instance_count = total
+	var incl := Basis(Vector3.RIGHT, POCO_DISCO_INCLINACAO)
+	for faixa in range(POCO_DISCO_FAIXAS):
+		var t := 0.0
+		if POCO_DISCO_FAIXAS > 1:
+			t = float(faixa) / float(POCO_DISCO_FAIXAS - 1)
+		var raio := POCO_HORIZONTE * lerpf(POCO_DISCO_INTERNO, POCO_DISCO_EXTERNO, t)
+		# A faixa de dentro é branca e fina; a de fora é brasa e larga. É a ordem da temperatura do
+		# disco, não um capricho de cor.
+		var cor := Color(1.0, lerpf(0.42, 0.86, 1.0 - t), lerpf(0.16, 0.62, 1.0 - t))
+		for i in range(POCO_DISCO_AMOSTRAS):
+			var ang := float(i) * TAU / float(POCO_DISCO_AMOSTRAS) + float(faixa) * 0.11
+			var ponto := POCO_POS + incl * (Vector3(cos(ang), 0.0, sin(ang)) * raio)
+			var feixe := 1.0 + POCO_DOPPLER * cos(ang)
+			var tam := 1.5 + 1.9 * t
+			mm.set_instance_transform(faixa * POCO_DISCO_AMOSTRAS + i,
+				Transform3D(incl.scaled(Vector3(tam, tam, tam)), ponto))
+			mm.set_instance_color(faixa * POCO_DISCO_AMOSTRAS + i,
+				Color(cor.r * feixe, cor.g * feixe, cor.b * feixe, 0.72 - 0.16 * t))
+	poco_disco = MultiMeshInstance3D.new()
+	poco_disco.name = "DiscoDeAcrecao"
+	poco_disco.multimesh = mm
+	raiz.add_child(poco_disco)
+
+
+## O aro de fótons e os dois arcos lentificados, num único MultiMesh preso a um nó que vira o plano
+## para a câmera. A imagem lentificada é do observador, não do mundo: se o poço passar para a
+## beirada do visor, o aro continua redondo em volta da sombra.
+func _montar_arco_de_lente(raiz: Node3D) -> void:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = _quadro_aditivo()
+	mm.instance_count = POCO_ARCO_AMOSTRAS * 3
+	# `PI/2` em torno de +X deita o plano do quadro (normal +Y) sobre o XY do nó, que é o plano do
+	# visor depois de `look_at`.
+	var deitado := Basis(Vector3.RIGHT, PI / 2.0)
+	var no_arco := 0
+	# 1) Aro de fótons: um fio colado na borda da sombra, o número mais perto do horizonte que a
+	#    lente entrega. É a assinatura do buraco negro — sem ele a sombra é uma bola pintada.
+	for i in range(POCO_ARCO_AMOSTRAS):
+		var ang := float(i) * TAU / float(POCO_ARCO_AMOSTRAS)
+		var raio := POCO_HORIZONTE * POCO_ANEL_FOTON
+		var feixe := 1.0 + POCO_DOPPLER * 0.5 * cos(ang)
+		mm.set_instance_transform(no_arco, Transform3D(deitado.scaled(Vector3(0.62, 0.62, 0.62)),
+			Vector3(cos(ang), sin(ang), 0.0) * raio))
+		mm.set_instance_color(no_arco, Color(1.0 * feixe, 0.82 * feixe, 0.55 * feixe, 0.9))
+		no_arco += 1
+	# 2) Cima e 3) baixo: a metade de lá do disco, dobrada por cima e por baixo da sombra. A de cima
+	#    é mais aberta e mais clara; a de baixo afunda na própria luz do disco e perde meio brilho.
+	for lado in range(2):
+		var amplitude := POCO_HORIZONTE * (POCO_ARCO_ALTO if lado == 0 else POCO_ARCO_BAIXO)
+		var sinal := 1.0 if lado == 0 else -1.0
+		var base := 1.0 if lado == 0 else 0.55
+		for i in range(POCO_ARCO_AMOSTRAS):
+			var u := float(i) * PI / float(POCO_ARCO_AMOSTRAS - 1)
+			var x := -POCO_ARCO_LARGO * POCO_HORIZONTE * cos(u)
+			var y := sinal * amplitude * sin(u)
+			var altura := sin(u)
+			var feixe := 1.0 + POCO_DOPPLER * cos(u - PI / 2.0)
+			var tam := 0.7 + 2.2 * altura
+			mm.set_instance_transform(no_arco, Transform3D(deitado.scaled(Vector3(tam, tam, tam)),
+				Vector3(x, y, 0.0)))
+			mm.set_instance_color(no_arco,
+				Color(base * feixe, base * 0.78 * feixe, base * 0.5 * feixe, 0.2 + 0.6 * altura))
+			no_arco += 1
+	poco_lente = MultiMeshInstance3D.new()
+	poco_lente.name = "ArcoDeLente"
+	poco_lente.multimesh = mm
+	poco_lente.position = POCO_POS
+	raiz.add_child(poco_lente)
+
+
+## Billet plano aditivo usado pelos MultiMesh do poço. As cores vêm por instância, então é UM
+## material para duzentas amostras: foi assim que o campo de estrelas deixou de ser 260 nós.
+func _quadro_aditivo() -> PlaneMesh:
+	var quadro := PlaneMesh.new()
+	quadro.size = Vector2(1.0, 1.0)
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.vertex_color_use_as_albedo = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.roughness = 1.0
+	quadro.material = mat
+	return quadro
+
+
+## Bola de raio cravado. A propriedade chama `radial_segments` e `rings`; errar o nome não falha no
+## parse — aborta a função em runtime, devolve Nil e o cenário nasce incompleto.
+func _esfera(pos: Vector3, raio: float, mat: Material, parent: Node,
+	segmentos: int = 24) -> MeshInstance3D:
+	var mesh_instance := MeshInstance3D.new()
+	var esfera := SphereMesh.new()
+	esfera.radius = raio
+	esfera.height = raio * 2.0
+	esfera.radial_segments = segmentos
+	esfera.rings = maxi(2, int(segmentos / 2.0))
+	mesh_instance.mesh = esfera
+	mesh_instance.position = pos
+	mesh_instance.material_override = mat
+	parent.add_child(mesh_instance)
+	return mesh_instance
 
 
 ## Estrela: o disco incandescente, a coroa em anel e uma luz pontual. É o único cenário que mexe em
@@ -1594,8 +1775,10 @@ func _nota_cenario() -> String:
 			nota = "CENÁRIO: CINTURÃO // %d rochas entre as linhas. " % rochas.size()
 			nota += "O lance que bate na pedra não chega ao casco: barreira serve de escudo."
 		"POCO":
-			nota = "CENÁRIO: POÇO // a %0.0f u do centro o casco já não escapa. " % POCO_ALCANCE
-			nota += "Quem cruza o horizonte é perdido, e o hostil obedece à mesma conta."
+			nota = "CENÁRIO: POÇO // a %0.0f u o casco começa a cair, a %0.0f u não escapa. " % [
+				POCO_ALCANCE, POCO_HORIZONTE]
+			nota += "Quem cruza o horizonte é perdido, e o hostil obedece à mesma conta. "
+			nota += "O céu atrás dele é dobrado: %d estrelas saíram do miolo." % estrelas_dobradas
 		"ESTRELA":
 			nota = "CENÁRIO: ESTRELA // arma a %0.0f u do disco bate %0.0f%% mais quente; " % [
 				ESTRELA_CALOR_RAIO, (ESTRELA_CALOR_FATOR - 1.0) * 100.0]
@@ -1643,6 +1826,7 @@ func _rocha_entre(origem: Vector3, destino: Vector3) -> Dictionary:
 func _aplicar_cenario(delta: float) -> void:
 	if poco_ativo:
 		_puxar_para_o_poco(delta)
+		_lentificar_quadro()
 	if estrela_ativa:
 		_queimar_na_corona(delta)
 	if not rochas.is_empty():
@@ -1663,6 +1847,93 @@ func _puxar_para_o_poco(delta: float) -> void:
 			continue
 		var peso := 1.0 - distancia / POCO_ALCANCE
 		node.global_position += vetor / distancia * POCO_PUXO * peso * delta
+
+
+## A lente, quadro a quadro: o arco gira para encarar a ponte e o céu de fundo é dobrado em volta
+## do poço. Zero sorteio — é conta pura sobre posição, e é por isso que pode rodar dentro de
+## `_aplicar_cenario` sem empurrar a cauda de `rng` nem a de `visual_rng`.
+func _lentificar_quadro() -> void:
+	var olho: Vector3 = ponte_camera.global_position if is_instance_valid(ponte_camera) \
+		else Vector3(0.0, 0.0, 0.0)
+	if is_instance_valid(poco_lente):
+		var ate_olho := olho - POCO_POS
+		# `look_at` com alvo no próprio nó aborta em runtime; com a ponte encostada no centro do
+		# poço o casco já foi devorado, mas a função ainda roda neste quadro.
+		if ate_olho.length_squared() > 0.01:
+			poco_lente.look_at(olho, Vector3.UP)
+	if not is_instance_valid(campo_estelar) or campo_estelar.multimesh == null:
+		return
+	var ate_poco := POCO_POS - olho
+	var distancia := ate_poco.length()
+	if distancia < 0.01:
+		_desdobrar_ceu()
+		return
+	var e := ate_poco / distancia
+	var mm := campo_estelar.multimesh
+	var banda := POCO_LENTE_BANDA * POCO_LENTE_EINSTEIN
+	var dobradas := 0
+	for i in range(estrelas_base.size()):
+		var base: Transform3D = estrelas_base[i]
+		var ate_estrela := base.origin - olho
+		var alcance := ate_estrela.length()
+		if alcance < 0.01:
+			_pintar_estrela(i, mm, base)
+			continue
+		var dir := ate_estrela / alcance
+		var cosseno := clampf(dir.dot(e), -1.0, 1.0)
+		var sep := acos(cosseno)
+		if sep >= banda:
+			_pintar_estrela(i, mm, base)
+			continue
+		# A regra fraca da lente fina: a separação aparenta ser `sep + E²/sep`, tocada em 2E. É o
+		# que esvazia o miolo e amontoa céu logo fora do raio de Einstein — a borda clara do disco
+		# escuro que o olho lê como "aquilo dobrou o céu atrás de si". O AM-GM dá o mínimo exato em
+		# 2E (para `sep = E`), e um miolo que encosta na borda por 1e-9 não é preto: o anel pede a
+		# margem `POCO_LENTE_ANEL` para que a asserção mea um céu varrido, não um empate numérico.
+		var flexao := minf(POCO_LENTE_EINSTEIN * POCO_LENTE_EINSTEIN / maxf(sep, 0.0001),
+			POCO_LENTE_FLEXAO_TETO * POCO_LENTE_EINSTEIN)
+		var sep_alvo := maxf(sep + flexao, POCO_LENTE_ANEL * 2.0 * POCO_LENTE_EINSTEIN)
+		# Rodar no par ortonormal (direção do poço, perpendicular À DIREÇÃO DA ESTRELA). Somar a
+		# flexão numa tangente perpendicular ao eixo do poço não é rotação: a base não é ortonormal
+		# e o ângulo de saída perde ~0,006 rad — pouco no pixel, suficiente para deixar céu dentro
+		# do miolo que a sonda jura varrido.
+		var perpendicular := dir - e * cosseno
+		var eixo_u: Vector3
+		if perpendicular.length_squared() < 1.0e-9:
+			# Estrela alinhada com o poço: sem plano de rotação escolhido, mas a lente real joga
+			# exatamente esse caso no anel de Einstein. O eixo auxiliar é constante, nunca sorteado.
+			var aux := Vector3.UP if absf(e.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+			eixo_u = e.cross(aux).normalized()
+		else:
+			eixo_u = perpendicular.normalized()
+		var novo := e * cos(sep_alvo) + eixo_u * sin(sep_alvo)
+		_pintar_estrela(i, mm, Transform3D(base.basis, olho + novo * alcance))
+		dobradas += 1
+	estrelas_dobradas = dobradas
+
+
+## Uma estrela, dois lugares: o espelho em RAM (o que a sonda lê, e o que a conta da lente usa no
+## quadro seguinte) e o MultiMesh (o que a tela desenha). Escrever só no MultiMesh deixaria a lente
+## cega no driver sem janela, onde a escrita é descartada e a leitura volta identidade.
+func _pintar_estrela(i: int, mm: MultiMesh, tr: Transform3D) -> void:
+	if estrelas_pintadas.size() == estrelas_base.size():
+		if estrelas_pintadas[i] != tr:
+			estrelas_pintadas[i] = tr
+			mm.set_instance_transform(i, tr)
+	else:
+		estrelas_pintadas.append(tr)
+		mm.set_instance_transform(i, tr)
+
+
+## Campo aberto, cinturão, estrela: o céu volta exatamente ao que era, estrela por estrela, e a
+## contagem zera. Sem isto, trocar de mapa deixaria a dobra gravada no MultiMesh para sempre.
+func _desdobrar_ceu() -> void:
+	estrelas_dobradas = 0
+	if not is_instance_valid(campo_estelar) or campo_estelar.multimesh == null:
+		return
+	var mm := campo_estelar.multimesh
+	for i in range(estrelas_base.size()):
+		_pintar_estrela(i, mm, estrelas_base[i])
 
 
 ## O poço não fere: engole. Sem dano gradual e sem sorteio — um casco dentro do horizonte já está

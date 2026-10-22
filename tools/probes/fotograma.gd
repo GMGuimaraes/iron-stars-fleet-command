@@ -16,6 +16,23 @@ const OUT := "D:/Downloads/tmp-userdata/frame/"
 ## lá, o asserção aqui quebra — é de propósito, o mesmo motivo de `tools/probes/morte.gd`.
 const FASES_DA_TABELA := 5
 const TETO_ROLAGEM := 0.3
+## Espelho do poço em `main.gd`: é aqui, e só aqui, que a pintura das 252 amostras pode ser conferida
+## instância a instância. Sob `--headless` o `MultiMesh.set_instance_transform` é descartado sem erro
+## e a leitura volta identidade; em janela os dois lados batem. Um `ang` trocado num laço de desenho
+## não dá exceção — dá um céu torto, e é de desenho que esta sonda trata.
+const POCO_POS := Vector3(0.0, 0.0, -78.0)
+const POCO_HORIZONTE := 9.0
+const POCO_ANEL_FOTON := 1.08
+const POCO_DISCO_INTERNO := 1.55
+const POCO_DISCO_EXTERNO := 3.80
+const POCO_DISCO_FAIXAS := 3
+const POCO_DISCO_AMOSTRAS := 44
+const POCO_DISCO_INCLINACAO := 0.17
+const POCO_ARCO_ALTO := 1.24
+const POCO_ARCO_BAIXO := 1.06
+const POCO_ARCO_AMOSTRAS := 40
+const POCO_ARCO_LARGO := 3.10
+const POCO_DOPPLER := 0.45
 
 var breaks := 0
 var notes: Array[String] = []
@@ -108,10 +125,56 @@ func _initialize() -> void:
 
 	game._montar_cenario("POCO")
 	await _frames(3)
-	_assert("o poço tem corpo na cena (boca + 28 billets do aro)",
-		game.cenario_root.get_child_count() == 29 and game.holo_cenario.size() == 1,
+	_assert("o poço pinta três nós: sombra, disco e arco",
+		game.cenario_root.get_child_count() == 3 and game.holo_cenario.size() == 1,
 		"%d nós e %d marcas na mesa" % [game.cenario_root.get_child_count(),
 			game.holo_cenario.size()])
+	# Em janela a escrita por instância pega, então a régua volta a ser o MultiMesh — e a comparação
+	# com o espelho em RAM é o que prova que os dois lados são o mesmo céu, não dois céus.
+	var disco_mm: MultiMesh = game.poco_disco.multimesh
+	var arco_mm: MultiMesh = game.poco_lente.multimesh
+	_assert("disco e arco têm a conta de amostras da tabela",
+		int(disco_mm.instance_count) == POCO_DISCO_FAIXAS * POCO_DISCO_AMOSTRAS
+			and int(arco_mm.instance_count) == POCO_ARCO_AMOSTRAS * 3,
+		"%d de disco e %d de arco" % [disco_mm.instance_count, arco_mm.instance_count])
+	var fora_disco := 0
+	for faixa in range(POCO_DISCO_FAIXAS):
+		for i in range(POCO_DISCO_AMOSTRAS):
+			var n := faixa * POCO_DISCO_AMOSTRAS + i
+			var esperado := _ponto_disco(faixa, i)
+			if _tr_errado(disco_mm.get_instance_transform(n), esperado["tr"]) \
+					or _cor_errada(disco_mm.get_instance_color(n), esperado["cor"]):
+				fora_disco += 1
+	_assert("cada amostra do disco está no lugar, no tamanho e no tom da fórmula",
+		fora_disco == 0, "%d de %d amostras fora do esperado" % [fora_disco,
+			disco_mm.instance_count])
+	var fora_arco := 0
+	for i in range(POCO_ARCO_AMOSTRAS * 3):
+		var quer := _ponto_arco(i)
+		if _tr_errado(arco_mm.get_instance_transform(i), quer["tr"]) \
+				or _cor_errada(arco_mm.get_instance_color(i), quer["cor"]):
+			fora_arco += 1
+	_assert("aro de fótons e os dois arcos dobrados batem com a tabela",
+		fora_arco == 0, "%d de %d amostras fora do esperado" % [fora_arco,
+			arco_mm.instance_count])
+	var aro_ok := 0
+	for i in range(POCO_ARCO_AMOSTRAS):
+		if absf((arco_mm.get_instance_transform(i) as Transform3D).origin.length()
+				- POCO_HORIZONTE * POCO_ANEL_FOTON) < 0.002:
+			aro_ok += 1
+	_assert("o aro de fótons está colado na sombra: os %d a %0.2f u do centro" % [
+			POCO_ARCO_AMOSTRAS, POCO_HORIZONTE * POCO_ANEL_FOTON],
+		aro_ok == POCO_ARCO_AMOSTRAS, "%d de %d no raio cravado" % [aro_ok, POCO_ARCO_AMOSTRAS])
+	var pintadas: Array = game.estrelas_pintadas
+	var fora_ceu := 0
+	for i in range(pintadas.size()):
+		if _tr_errado((game.campo_estelar as MultiMeshInstance3D).multimesh
+				.get_instance_transform(i), pintadas[i]):
+			fora_ceu += 1
+	_assert("o céu pintado no MultiMesh é o mesmo céu do espelho em RAM",
+		int(pintadas.size()) == 900 and fora_ceu == 0 and int(game.estrelas_dobradas) > 0,
+		"%d de %d estrelas fora do espelho, %d dobradas pela lente" % [fora_ceu,
+			pintadas.size(), game.estrelas_dobradas])
 	await _fotograma(game, "09_poco")
 
 	game._montar_cenario("ESTRELA")
@@ -217,3 +280,56 @@ func _tabular(game) -> void:
 func _frames(n: int) -> void:
 	for i in range(n):
 		await process_frame
+
+## Espelho literal de `_montar_disco_de_acrescao`: um `ang` trocado no laço mudaria o disco inteiro
+## sem dar erro de parse, e em pintura não há exceção que avise.
+func _ponto_disco(faixa: int, i: int) -> Dictionary:
+	var t := 0.0
+	if POCO_DISCO_FAIXAS > 1:
+		t = float(faixa) / float(POCO_DISCO_FAIXAS - 1)
+	var raio := POCO_HORIZONTE * lerpf(POCO_DISCO_INTERNO, POCO_DISCO_EXTERNO, t)
+	var ang := float(i) * TAU / float(POCO_DISCO_AMOSTRAS) + float(faixa) * 0.11
+	var incl := Basis(Vector3.RIGHT, POCO_DISCO_INCLINACAO)
+	var feixe := 1.0 + POCO_DOPPLER * cos(ang)
+	var cor := Color(1.0, lerpf(0.42, 0.86, 1.0 - t), lerpf(0.16, 0.62, 1.0 - t))
+	var tam := 1.5 + 1.9 * t
+	return {"tr": Transform3D(incl.scaled(Vector3(tam, tam, tam)),
+			POCO_POS + incl * (Vector3(cos(ang), 0.0, sin(ang)) * raio)),
+		"cor": Color(cor.r * feixe, cor.g * feixe, cor.b * feixe, 0.72 - 0.16 * t)}
+
+## Espelho de `_montar_arco_de_lente`: aro de fótons primeiro, depois o arco de cima e o de baixo,
+## na mesma ordem em que as instâncias foram escritas.
+func _ponto_arco(i: int) -> Dictionary:
+	var deitado := Basis(Vector3.RIGHT, PI / 2.0)
+	if i < POCO_ARCO_AMOSTRAS:
+		var ang := float(i) * TAU / float(POCO_ARCO_AMOSTRAS)
+		var feixe := 1.0 + POCO_DOPPLER * 0.5 * cos(ang)
+		return {"tr": Transform3D(deitado.scaled(Vector3(0.62, 0.62, 0.62)),
+				Vector3(cos(ang), sin(ang), 0.0) * POCO_HORIZONTE * POCO_ANEL_FOTON),
+			"cor": Color(1.0 * feixe, 0.82 * feixe, 0.55 * feixe, 0.9)}
+	var k := (i - POCO_ARCO_AMOSTRAS) % POCO_ARCO_AMOSTRAS
+	var lado: int = int(float(i - POCO_ARCO_AMOSTRAS) / float(POCO_ARCO_AMOSTRAS))
+	var amplitude := POCO_HORIZONTE * (POCO_ARCO_ALTO if lado == 0 else POCO_ARCO_BAIXO)
+	var sinal := 1.0 if lado == 0 else -1.0
+	var base := 1.0 if lado == 0 else 0.55
+	var u := float(k) * PI / float(POCO_ARCO_AMOSTRAS - 1)
+	var altura := sin(u)
+	var feixe := 1.0 + POCO_DOPPLER * cos(u - PI / 2.0)
+	var tam := 0.7 + 2.2 * altura
+	return {"tr": Transform3D(deitado.scaled(Vector3(tam, tam, tam)),
+			Vector3(-POCO_ARCO_LARGO * POCO_HORIZONTE * cos(u), sinal * amplitude * altura, 0.0)),
+		"cor": Color(base * feixe, base * 0.78 * feixe, base * 0.5 * feixe, 0.2 + 0.6 * altura)}
+
+## Transformada conferida inteira (origem e as três colunas da base), nunca um componente avulso
+## contra uma constante: o MultiMesh devolve precisão simples e o espelho é dupla — conferir eixo a
+## eixo contra o valor cru é a armadilha do arredondamento. Os nove números juntos, com tolerância.
+func _tr_errado(escrito: Transform3D, esperado: Transform3D) -> bool:
+	if escrito.origin.distance_to(esperado.origin) > 0.001:
+		return true
+	return escrito.basis.x.distance_to(esperado.basis.x) > 0.0005 \
+		or escrito.basis.y.distance_to(esperado.basis.y) > 0.0005 \
+		or escrito.basis.z.distance_to(esperado.basis.z) > 0.0005
+
+func _cor_errada(escrita: Color, esperada: Color) -> bool:
+	return absf(escrita.r - esperada.r) > 0.002 or absf(escrita.g - esperada.g) > 0.002 \
+		or absf(escrita.b - esperada.b) > 0.002 or absf(escrita.a - esperada.a) > 0.002

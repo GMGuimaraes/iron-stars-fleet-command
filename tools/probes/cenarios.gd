@@ -14,6 +14,17 @@ extends SceneTree
 ##    que fere devagar é uma parede com textura. O puxo, esse, tem de crescer conforme a aproximação
 ##    (é a única assinatura de gravidade conferível em três linhas), e destroço não volta a cair:
 ##    quem já afundou é marca no quadro, não corpo na correnteza.
+## 2b) LENTE (seção 7b): o pedido de «se parecer com aquele do Interstellar» é visual, mas aqui é
+##    cobrado por conta. A dobra empurra as estrelas de fundo para fora do raio de Einstein, então
+##    a asserção que vale é a do céu: existia estrela DENTRO de 2E antes, não existe nenhuma depois,
+##    as que saíram encostaram na casca de fora (o amontoado) e as que estavam fora da banda não
+##    foram tocadas — transformação por transformação, não "alguma coisa mudou". O plano da lente é
+##    cobrado de frente para o olho da ponte também a 210 u de bombordo: imagem lentificada é do
+##    observador, não do mundo.
+##    MEDIDOR, não medida: em headless o `MultiMesh.set_instance_transform` é descartado e a leitura
+##    volta identidade, sem um erro sequer no log. A régua daqui é o espelho em RAM do jogo
+##    (`estrelas_pintadas`). A pintura por amostra — disco, aro de fótons, arcos, e a conferência de
+##    que o espelho bate com o MultiMesh — é cobrada em janela real, em `tools/probes/fotograma.gd`.
 ## 3) ESTRELA: calor de arma ≠ cozimento de casco. São dois raios diferentes, e a sonda confere que
 ##    quem está entre eles só ganha o multiplicador.
 ##
@@ -47,6 +58,20 @@ const ROCHA_Y_LEQUE := 13.0
 const POCO_POS := Vector3(0.0, 0.0, -78.0)
 const POCO_ALCANCE := 46.0
 const POCO_HORIZONTE := 9.0
+const POCO_ANEL_FOTON := 1.08
+const POCO_DISCO_INTERNO := 1.55
+const POCO_DISCO_EXTERNO := 3.80
+const POCO_DISCO_FAIXAS := 3
+const POCO_DISCO_AMOSTRAS := 44
+const POCO_DISCO_INCLINACAO := 0.17
+const POCO_ARCO_ALTO := 1.24
+const POCO_ARCO_BAIXO := 1.06
+const POCO_ARCO_AMOSTRAS := 40
+const POCO_ARCO_LARGO := 3.10
+const POCO_DOPPLER := 0.45
+const POCO_LENTE_EINSTEIN := 0.16
+const POCO_LENTE_FLEXAO_TETO := 2.0
+const POCO_LENTE_BANDA := 3.0
 const ESTRELA_POS := Vector3(0.0, 24.0, -74.0)
 const ESTRELA_CALOR_RAIO := 70.0
 const ESTRELA_CALOR_FATOR := 1.25
@@ -385,6 +410,128 @@ func _initialize() -> void:
 	c.queue_free()
 	await _frames(2)
 
+	# ---- 7b. A lente dobra o céu — e o céu tinha estrelas dentro dela -----------------------
+	# O pedido é visual («que se pareça com aquele do Interstellar»), mas a conta é a mesma de
+	# sempre: uma dobra que não esvazia o miolo do quadro é um círculo pintado. Então a prova não
+	# é "existe um nó redondo": é que existe céu DENTRO do raio de Einstein antes, que depois da
+	# conta não existe mais nenhum, e que o que saiu não sumiu — encostou na borda de fora.
+	game._montar_cenario("POCO")
+	_zerar(game)
+	game.bridge_rig.position = Vector3.ZERO
+	game.capital_velocity = Vector3.ZERO
+	await _frames(1)
+	var olho: Vector3 = game.ponte_camera.global_position
+	# A régua é o espelho em RAM do jogo (`estrelas_pintadas`), não a leitura do MultiMesh: sob o
+	# driver sem janela o `set_instance_transform` é DESCARTADO em silêncio e a leitura devolve
+	# identidade, então uma sonda headless que lê o MultiMesh mede o instrumento morto, não o céu.
+	# Conferido por A/B no mesmo script: headless lê (0,0,0), janela lê o valor escrito. A pintura
+	# por amostra do disco e do arco é verificada em janela real, em `tools/probes/fotograma.gd`.
+	var pintadas: Array = game.estrelas_pintadas
+	var cruas_dentro := 0
+	var cruas_banda := 0
+	var casca_crua := 0
+	for i in range(game.estrelas_base.size()):
+		var sep := _separacao(olho, (game.estrelas_base[i] as Transform3D).origin)
+		if sep < 2.0 * POCO_LENTE_EINSTEIN:
+			cruas_dentro += 1
+		if sep < POCO_LENTE_BANDA * POCO_LENTE_EINSTEIN:
+			cruas_banda += 1
+		if sep >= 2.0 * POCO_LENTE_EINSTEIN and sep < 2.5 * POCO_LENTE_EINSTEIN:
+			casca_crua += 1
+	_assert("o céu cru tem estrelas dentro do raio de Einstein", cruas_dentro > 0,
+		("%d estrelas dentro de 2E antes de qualquer conta — sem isso a asserção de baixo "
+		+ "seria verdadeira por ausência (armadilha nº 1)") % cruas_dentro)
+	var rng_lente: int = game.rng.state
+	var visual_lente: int = game.visual_rng.state
+	var cascos_lente := _cascos_somados(game)
+	game._aplicar_cenario(0.0)
+	var dobradas := 0
+	var dentro_depois := 0
+	var casca_depois := 0
+	var intocadas_fora := 0
+	var intocadas := 0
+	for i in range(game.estrelas_base.size()):
+		var atual: Transform3D = pintadas[i]
+		var base: Transform3D = game.estrelas_base[i]
+		var sep := _separacao(olho, atual.origin)
+		if atual != base:
+			dobradas += 1
+			if sep < 2.0 * POCO_LENTE_EINSTEIN:
+				dentro_depois += 1
+			if sep >= 2.0 * POCO_LENTE_EINSTEIN and sep < 2.5 * POCO_LENTE_EINSTEIN:
+				casca_depois += 1
+		else:
+			intocadas += 1
+			if _separacao(olho, base.origin) < POCO_LENTE_BANDA * POCO_LENTE_EINSTEIN:
+				intocadas_fora += 1
+	_assert("a lente dobrou exatamente as estrelas da banda, nem mais nem menos",
+		int(game.estrelas_dobradas) == dobradas and dobradas == cruas_banda \
+			and intocadas_fora == 0,
+		("%d dobradas contra %d na banda; %d do lado de fora ficaram intocadas (a ponte lê "
+		+ "%d no contador do painel)") % [dobradas, cruas_banda, intocadas_fora,
+			game.estrelas_dobradas])
+	_assert("o miolo fica vazio: nenhuma estrela termina dentro de 2E", dentro_depois == 0,
+		"%d estrelas dentro do raio de Einstein depois da conta, contra %d antes" % [dentro_depois,
+			cruas_dentro])
+	_assert("o céu que saiu não sumiu, encostou na borda de fora", casca_depois > casca_crua,
+		"%d estrelas na casca 2E..2,5E contra %d no céu cru" % [casca_depois, casca_crua])
+	_assert("dobrar o céu não sorteia um dígito nem move um casco",
+		int(game.rng.state) == rng_lente and int(game.visual_rng.state) == visual_lente \
+			and _igual(_cascos_somados(game), cascos_lente, 0.0001),
+		"rng %d e visual %d intactos, cascos %0.1f dos dois lados" % [game.rng.state,
+			game.visual_rng.state, cascos_lente])
+	_assert("a nota do poço anuncia a dobra com o número da conta",
+		String(game._nota_cenario()).contains("céu atrás dele é dobrado")
+			and String(game._nota_cenario()).contains("9 u"),
+		game._nota_cenario())
+	# Geometria pintada: a lente é um nó só, de frente para o olho da ponte. Medir a conta de
+	# instâncias é o que pega o laço que aborta em runtime e deixa metade do arco fora do quadro
+	# (armadilha nº 7 — a mesa holográfica inteira desapareceu assim).
+	_assert("o poço pinta três nós: sombra, disco e arco",
+		is_instance_valid(game.cenario_root) and int(game.cenario_root.get_child_count()) == 3
+			and is_instance_valid(game.poco_disco) and is_instance_valid(game.poco_lente),
+		"%d filhos em Cenario" % game.cenario_root.get_child_count())
+	var disco_mm: MultiMesh = game.poco_disco.multimesh
+	var arco_mm: MultiMesh = game.poco_lente.multimesh
+	_assert("o disco e o arco têm a conta de amostras da tabela",
+		int(disco_mm.instance_count) == POCO_DISCO_FAIXAS * POCO_DISCO_AMOSTRAS
+			and int(arco_mm.instance_count) == POCO_ARCO_AMOSTRAS * 3,
+		"%d amostras de disco e %d de arco" % [disco_mm.instance_count, arco_mm.instance_count])
+	# O que não se mede aqui: a posição e o tom de cada uma das 252 amostras pintadas. Em headless a
+	# escrita por instância não chega ao buffer e a leitura volta identidade — cobrar isto nesta sonda
+	# seria reprovar o céu por causa do instrumento. `tools/probes/fotograma.gd` roda em janela, lê o
+	# MultiMesh de verdade e confere disco, aro de fótons e os dois arcos amostra a amostra.
+	var eixo_lente: Vector3 = (game.poco_lente as Node3D).global_transform.basis.z
+	var para_olho := (olho - POCO_POS).normalized()
+	_assert("o plano da lente encara o olho da ponte",
+		absf(eixo_lente.dot(para_olho)) > 0.9999,
+		"cosseno %0.5f entre a normal do arco e a linha de visada" % eixo_lente.dot(para_olho))
+	# Voar para o lado é o que separa uma lente de um decal: a imagem lentificada é do observador.
+	game.bridge_rig.position = Vector3(210.0, 60.0, -20.0)
+	await _frames(1)
+	var outro_olho: Vector3 = game.ponte_camera.global_position
+	var eixo_de_lado: Vector3 = (game.poco_lente as Node3D).global_transform.basis.z
+	var para_olho_de_lado := (outro_olho - POCO_POS).normalized()
+	_assert("a lente gira com a ponte: 210 u a bombordo ela continua de frente",
+		absf(eixo_de_lado.dot(para_olho_de_lado)) > 0.9999,
+		"cosseno %0.5f no lado, %0.5f de proa" % [eixo_de_lado.dot(para_olho_de_lado),
+			eixo_lente.dot(para_olho)])
+	var dobradas_de_lado := int(game.estrelas_dobradas)
+	_assert("mudar de lado muda quantas estrelas a lente pega", dobradas_de_lado != cruas_banda,
+		"%d estrelas na banda vistas de 210 u a bombordo contra %d de proa" % [dobradas_de_lado,
+			cruas_banda])
+	game.bridge_rig.position = Vector3.ZERO
+	await _frames(1)
+	game._montar_cenario("ABERTO")
+	var voltadas := 0
+	for i in range(game.estrelas_base.size()):
+		if pintadas[i] == game.estrelas_base[i]:
+			voltadas += 1
+	_assert("saiu o poço, volta o céu: estrela por estrela, sem reconstruir nada",
+		voltadas == int(game.estrelas_base.size()) and int(game.estrelas_dobradas) == 0,
+		"%d de %d transformadas no lugar de antes, contador %d" % [voltadas,
+			game.estrelas_base.size(), game.estrelas_dobradas])
+
 	# ---- 8. Estrela: dois raios, duas consequências ------------------------------------------
 	game._montar_cenario("ESTRELA")
 	_zerar(game)
@@ -476,10 +623,10 @@ func _initialize() -> void:
 		int(game.rochas.size()) == 0 and bool(game.poco_ativo) and not bool(game.estrela_ativa),
 		"agora %d rochas, poco=%s" % [game.rochas.size(), game.poco_ativo])
 	await _frames(4)
-	# 1 cilindro de boca + 28 billets do aro = 29 nós. Medir a conta exata é o que pega nó órfão:
-	# `>= 1` aprovaria o cinturão inteiro ainda pendurado junto do poço.
+	# Sombra + disco + arco = três nós. A lente inteira é um MultiMesh, então contar nós pega nó
+	# órfão (`>= 1` aprovaria o cinturão ainda pendurado) sem aprovar duzentos billets soltos.
 	_assert("os nós do cenário antigo saem de cena, não ficam pendurados",
-		is_instance_valid(game.cenario_root) and game.cenario_root.get_child_count() == 29,
+		is_instance_valid(game.cenario_root) and game.cenario_root.get_child_count() == 3,
 		"%d filhos em Cenario com o poço montado" % game.cenario_root.get_child_count())
 	for botao in cenario_botoes:
 		if botao.text.contains("CAMPO ABERTO"):
@@ -559,3 +706,11 @@ func _prova_inercia(game) -> bool:
 	for i in range(200):
 		game._aplicar_cenario(PASSO)
 	return int(game.rng.state) == rng_antes and int(game.visual_rng.state) == visual_antes
+
+## Separação aparente, em radianos, entre a direção de uma estrela e a direção do poço vistas do
+## olho da ponte. É o ângulo da lente, não a distância do mundo: duas estrelas a 200 u e a 340 u do
+## olho podem ter a mesma separação e a conta tem de tratá-las igual.
+func _separacao(olho: Vector3, ponto: Vector3) -> float:
+	var e := (POCO_POS - olho).normalized()
+	var dir := (ponto - olho).normalized()
+	return acos(clampf(dir.dot(e), -1.0, 1.0))
