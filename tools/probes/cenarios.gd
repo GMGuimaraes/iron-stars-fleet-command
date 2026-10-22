@@ -10,6 +10,26 @@ extends SceneTree
 ##    A prova central é esta: um lance absorvido muda o DANO e não muda o SORTEIO. Se bloquear
 ##    também pulasse o `rng.randf()` da retaliação, o cinturão seria um reroll disfarçado e toda a
 ##    cauda da batalha seguinte mudaria por acaso.
+## 1b) CORRENTEZA (seções 3b a 3e): a pedra não é prego no mapa — ela deriva, muda de rumo ao se
+##    chocar com a vizinha e racha em duas quando leva dano demais. As três contas são conferíveis
+##    porque não sorteiam nada: o empuxo é função do `battle_clock` e da fase da pedra, o choque
+##    troca só a componente normal da velocidade, e a fratura é geometria pura (raio × 0,62, eixo
+##    perpendicular ao ângulo de chegada). A correnteza tem espelho reimplementado na sonda, quadro
+##    a quadro, numa pedra SOZINHA longe das quinas — no cinto real as catorze pedras se acoplam e
+##    um espelho exato seria reimplementar o tabuleiro. Do cinto real são cobradas as invariantes:
+##    nenhuma pedra escapa da banda, nenhuma passa do teto de velocidade, nenhuma fica onde a
+##    fórmula do leque a pôs, contato entre pedras DE FATO acontece, e o número de corpos e de
+##    marcas fecha com o do leque.
+##    FIXAÇÃO PELO CONSTRUTOR: rocha de teste nasce de `game._nova_rocha(...)`, nunca de um
+##    dicionário artesanal. A sonda já injetou `{"no": null, "pos": ..., "raio": ...}` e o `main.gd`
+##    pediu a chave `fase` no laço de deriva: a correnteza abortou no primeiro quadro, o cinturão
+##    ficou congelado e TODAS as asserções do cinturão continuaram verdes — medida por ausência,
+##    armadilha nº 1 com a cara da nº 7. O mesmo laço já pintou a marca em espaço errado: somava
+##    `holo_root.position` em cima de `_holo_de(pos)` numa marca que é FILHA da mesa, e como nenhuma
+##    asserção headless lê `marca.position`, o holograma sairia torto com o veredito verde. Hoje a
+##    régua local é cobrada aqui e o corpo é cobrado em janela, em `tools/probes/fotograma.gd`.
+##    E porque a pedra passou a ter integridade, o abalroamento também é conferido por ela: o casco
+##    que bate perde 18,00 e a pedra não come um ponto de integridade — quem fere barreira é a salva.
 ## 2) POÇO: quem cruza o horizonte é perdido, e perdido sem pontos de vida intermediários — um poço
 ##    que fere devagar é uma parede com textura. O puxo, esse, tem de crescer conforme a aproximação
 ##    (é a única assinatura de gravidade conferível em três linhas), e destroço não volta a cair:
@@ -55,6 +75,20 @@ const ROCHA_LEQUE_X := 58.0
 const ROCHA_Z_INICIAL := -24.0
 const ROCHA_Z_PASSO := 4.0
 const ROCHA_Y_LEQUE := 13.0
+## Espelho da correnteza (#125): deriva, empuxo errático, teto, banda e preço da fratura.
+const ROCHA_DERIVA := 2.4
+const ROCHA_ERRATICIDADE := 0.9
+const ROCHA_TAXA_ERRATICA := 0.35
+const ROCHA_VETO_TETO := 4.2
+const ROCHA_BANDA_X := 78.0
+const ROCHA_BANDA_Y := 18.0
+const ROCHA_BANDA_Z_FRENTE := -16.0
+const ROCHA_BANDA_Z_FUNDO := -84.0
+const ROCHA_INTEGRIDADE_POR_RAIO := 6.0
+const ROCHA_FILHA_FRAC := 0.62
+const ROCHA_FILHA_MIN := 1.6
+const ROCHA_GERACAO_MAXIMA := 2
+const ROCHA_LIMITE_CORPOS := 40
 const POCO_POS := Vector3(0.0, 0.0, -78.0)
 const POCO_ALCANCE := 46.0
 const POCO_HORIZONTE := 9.0
@@ -145,6 +179,64 @@ func _posicao_esperada(i: int) -> Dictionary:
 	var z := ROCHA_Z_INICIAL - float(i) * ROCHA_Z_PASSO
 	return {"pos": Vector3(x, y, z), "raio": ROCHA_RAIO_BASE + float(i % 4) * ROCHA_RAIO_DEGRAU}
 
+## A mesma linha de `_montar_cinturao()` para a velocidade de largada: direção no ângulo áureo do
+## índice e módulo escalonado. É o espelho que prova que a correnteza nasce de fórmula, não de
+## sorteio — se o `0.6` ou o `0.9` do código mudarem, a asserção quebra junto.
+func _velocidade_esperada(i: int) -> Vector3:
+	var ang := float(i) * 2.39996
+	return Vector3(cos(ang * 0.6 + 1.1), sin(ang * 0.9) * 0.35, sin(ang * 0.6 + 1.1)) \
+		* ROCHA_DERIVA * (0.55 + 0.15 * float(i % 4))
+
+## A correnteza de `main.gd` reimplementada quadro a quadro: empuxo senoidal no relógio da batalha,
+## teto de velocidade, integração de Euler e quina de banda nas três coordenadas. Ordem das contas
+## é a do código, de propósito — inverter clamp e integração daria um espelho que aprova um bug.
+func _deriva_esperada(pos: Vector3, vel: Vector3, fase: float, relogios: Array,
+		dt: float) -> Dictionary:
+	var p := pos
+	var v := vel
+	var toques := 0
+	var xmax := absf(p.x)
+	var ymax := absf(p.y)
+	var zmin := p.z
+	var zmax := p.z
+	for bruto in relogios:
+		var relogio := float(bruto) * ROCHA_TAXA_ERRATICA + fase
+		var empuxo := Vector3(sin(relogio), sin(relogio * 1.7) * 0.4, cos(relogio * 0.8)) \
+			* ROCHA_ERRATICIDADE
+		v = v + empuxo * dt
+		if v.length() > ROCHA_VETO_TETO:
+			v = v.normalized() * ROCHA_VETO_TETO
+		p = p + v * dt
+		if p.x < -ROCHA_BANDA_X or p.x > ROCHA_BANDA_X:
+			v.x = -v.x
+			p.x = clampf(p.x, -ROCHA_BANDA_X, ROCHA_BANDA_X)
+			toques += 1
+		if p.y < -ROCHA_BANDA_Y or p.y > ROCHA_BANDA_Y:
+			v.y = -v.y
+			p.y = clampf(p.y, -ROCHA_BANDA_Y, ROCHA_BANDA_Y)
+			toques += 1
+		if p.z < ROCHA_BANDA_Z_FUNDO or p.z > ROCHA_BANDA_Z_FRENTE:
+			v.z = -v.z
+			p.z = clampf(p.z, ROCHA_BANDA_Z_FUNDO, ROCHA_BANDA_Z_FRENTE)
+			toques += 1
+		xmax = maxf(xmax, absf(p.x))
+		ymax = maxf(ymax, absf(p.y))
+		zmin = minf(zmin, p.z)
+		zmax = maxf(zmax, p.z)
+	return {"pos": p, "vel": v, "toques": toques, "xmax": xmax, "ymax": ymax,
+		"zmin": zmin, "zmax": zmax}
+
+## invariantes de contato: com o quadro fechado, nenhuma pedra pode estar dentro da soma de raios
+## de outra. É a mesma régua do "sem sobreposição" dos cascos, aplicada ao cinturão.
+func _sem_sobreposicao(game) -> bool:
+	for i in range(game.rochas.size()):
+		for j in range(i + 1, game.rochas.size()):
+			var pa: Vector3 = game.rochas[i]["pos"]
+			var pb: Vector3 = game.rochas[j]["pos"]
+			if pa.distance_to(pb) < float(game.rochas[i]["raio"]) + float(game.rochas[j]["raio"]) - 0.0001:
+				return false
+	return true
+
 func _frames(n: int) -> void:
 	for i in range(n):
 		await process_frame
@@ -230,6 +322,255 @@ func _initialize() -> void:
 		_igual(float(game.rochas[0]["raio"]), ROCHA_RAIO_BASE, 0.0001)
 			and float(game.rochas[3]["raio"]) > float(game.rochas[0]["raio"]),
 		"quatro primeiros raios: %s" % raios)
+	var velocidades_fora := ""
+	for i in range(ROCHA_QTDE):
+		var medida_v: Vector3 = game.rochas[i]["vel"]
+		if medida_v.distance_to(_velocidade_esperada(i)) > 0.0001:
+			velocidades_fora += "%d " % i
+	_assert("a velocidade de cada pedra vem da fórmula do leque, não de sorteio",
+		velocidades_fora == "", "fora do espelho de largada: [%s]" % velocidades_fora)
+
+	# ---- 3b. A pedra SOZINHA segue a integral espelhada do empuxo -----------------------------
+	# O espelho fino mora aqui, numa pedra isolada: no cinto real as catorze se acoplam pelo choque
+	# e um espelho exato seria reimplementar o tabuleiro inteiro. O empuxo não depende da posição,
+	# só do relógio e da fase — então a trajetória é uma conta conferível passo a passo.
+	game._desmontar_cenario()
+	var clock_antes: float = float(game.battle_clock)
+	var p0: Vector3 = _posicao_esperada(0)["pos"]
+	var v0: Vector3 = _velocidade_esperada(0)
+	var relogios: Array = []
+	for s in range(40):
+		relogios.append(clock_antes + float(s + 1) * PASSO)
+	var espelho: Dictionary = _deriva_esperada(p0, v0, 0.0, relogios, PASSO)
+	var pedra: Dictionary = game._nova_rocha(p0, float(_posicao_esperada(0)["raio"]), v0, 0, 0.0)
+	for s in range(40):
+		game.battle_clock = clock_antes + float(s + 1) * PASSO
+		game._derivar_rochas(PASSO)
+	var mp: Vector3 = pedra["pos"]
+	var mv: Vector3 = pedra["vel"]
+	var ep: Vector3 = espelho["pos"]
+	var ev: Vector3 = espelho["vel"]
+	_assert("a deriva é a integral espelhada do empuxo, posição e velocidade conferidas",
+		_igual(mp.x, ep.x, 0.0005) and _igual(mp.y, ep.y, 0.0005) and _igual(mp.z, ep.z, 0.0005)
+			and _igual(mv.x, ev.x, 0.0005) and _igual(mv.y, ev.y, 0.0005)
+			and _igual(mv.z, ev.z, 0.0005),
+		"40 passos de %0.1f s: %s contra %s; quinas tocadas %d, |x|max %0.1f, |y|max %0.1f, z %0.1f..%0.1f"
+			% [PASSO, str(mp), str(ep), int(espelho["toques"]), float(espelho["xmax"]),
+				float(espelho["ymax"]), float(espelho["zmin"]), float(espelho["zmax"])])
+	_assert("a pedra andou de verdade: correnteza pintada não passa aqui",
+		p0.distance_to(mp) > 1.0, "%0.2f u de percurso em 4 s" % p0.distance_to(mp))
+	game.battle_clock = clock_antes
+
+	# ---- 3c. O cinto real: sessenta segundos de mar, sem sorteio e sem fuga ---------------------
+	game._montar_cenario("CINTURAO")
+	var rng_mar: int = game.rng.state
+	var visual_mar: int = game.visual_rng.state
+	var clock_mar: float = float(game.battle_clock)
+	var partida: Array = []
+	for i in range(ROCHA_QTDE):
+		partida.append(game.rochas[i]["pos"])
+	var contatos := 0
+	var passos := 600
+	for s in range(passos):
+		# Contato medido ANTES da resolução: depois, a própria conta já desempilhou as duas e a
+		# asserção viraria "existe pedra" sem nunca ver o choque acontecer.
+		for i in range(game.rochas.size()):
+			for j in range(i + 1, game.rochas.size()):
+				var pa: Vector3 = game.rochas[i]["pos"]
+				var pb: Vector3 = game.rochas[j]["pos"]
+				if pa.distance_to(pb) < float(game.rochas[i]["raio"]) + float(game.rochas[j]["raio"]):
+					contatos += 1
+		game.battle_clock = clock_mar + float(s + 1) * PASSO
+		game._derivar_rochas(PASSO)
+	game.battle_clock = clock_mar
+	var fora_da_banda := 0
+	var acima_do_teto := 0
+	var paradas := 0
+	var corpo_fora := 0
+	var marca_fora := 0
+	var giradas := 0
+	for i in range(game.rochas.size()):
+		var rocha: Dictionary = game.rochas[i]
+		var pos: Vector3 = rocha["pos"]
+		var vel: Vector3 = rocha["vel"]
+		if absf(pos.x) > ROCHA_BANDA_X + 0.001 or absf(pos.y) > ROCHA_BANDA_Y + 0.001 \
+				or pos.z < ROCHA_BANDA_Z_FUNDO - 0.001 or pos.z > ROCHA_BANDA_Z_FRENTE + 0.001:
+			fora_da_banda += 1
+		if vel.length() > ROCHA_VETO_TETO + 0.001:
+			acima_do_teto += 1
+		if (partida[i] as Vector3).distance_to(pos) < 0.5:
+			paradas += 1
+		if _velocidade_esperada(i).normalized().dot(vel.normalized()) > 0.999:
+			giradas += 1
+		var nodo: Node3D = rocha["no"]
+		if not is_instance_valid(nodo) or nodo.global_position.distance_to(pos) > 0.001:
+			corpo_fora += 1
+		var marca: MeshInstance3D = rocha["marca"]
+		if not is_instance_valid(marca):
+			marca_fora += 1
+		elif marca.position.distance_to(game._holo_de(pos)) > 0.001:
+			marca_fora += 1
+	_assert("a deriva não sorteia um dígito em sessenta segundos de mar",
+		int(game.rng.state) == rng_mar and int(game.visual_rng.state) == visual_mar,
+		"rng %d e visual %d intactos sob %d quadros" % [rng_mar, visual_mar, passos])
+	_assert("o cinturão é barreira, não nuvem que dissolve: nenhuma pedra escapou da banda",
+		fora_da_banda == 0, "%d de %d fora de |x| %0.0f, |y| %0.0f, z %0.0f..%0.0f" % [
+			fora_da_banda, game.rochas.size(), ROCHA_BANDA_X, ROCHA_BANDA_Y,
+			ROCHA_BANDA_Z_FUNDO, ROCHA_BANDA_Z_FRENTE])
+	_assert("a correnteza tem teto de velocidade", acima_do_teto == 0,
+		"%d pedras acima de %0.1f u/s" % [acima_do_teto, ROCHA_VETO_TETO])
+	_assert("toda pedra saiu do ponto onde a fórmula do leque a pôs", paradas == 0,
+		"%d de %d ainda na origem" % [paradas, game.rochas.size()])
+	_assert("a correnteza muda o rumo de todas as pedras", giradas == 0,
+		"%d de %d ainda na direção de largada" % [giradas, game.rochas.size()])
+	_assert("o nó pintado na cena acompanha o dicionário, e a marca da mesa também",
+		corpo_fora == 0 and marca_fora == 0,
+		"%d corpos e %d marcas fora do lugar" % [corpo_fora, marca_fora])
+	_assert("pedra com pedra acontece de verdade no cinturão", contatos > 0,
+		"%d quadros com sobreposição pendente em %d" % [contatos, passos])
+	_assert("nenhuma pedra sobrepõe outra quando o quadro fecha", _sem_sobreposicao(game),
+		"todas as pares conferidas depois de %d quadros" % passos)
+	_assert("deriva não cria nem destrói corpo nem marca",
+		game.rochas.size() == ROCHA_QTDE and game.holo_cenario.size() == ROCHA_QTDE,
+		"%d rochas e %d marcas" % [game.rochas.size(), game.holo_cenario.size()])
+
+	# ---- 3d. Choque pedra com pedra: troca só a normal, a tangencial sobrevive ------------------
+	# Lei conferida em tabuleiro de duas pedras, chamada direto em `_peder_rochas`: é o único jeito
+	# de isolar o impulso dos empuxos que a integração do quadro misturaria na mesma conta.
+	game._desmontar_cenario()
+	var irma_a: Dictionary = game._nova_rocha(Vector3(-1.0, 5.0, -40.0), 2.0, Vector3(3.0, 1.0, 0.0), 0, 0.0)
+	var irma_b: Dictionary = game._nova_rocha(Vector3(1.0, 5.0, -40.0), 2.0, Vector3(-3.0, 1.0, 0.0), 0, 0.0)
+	game._peder_rochas()
+	var va_a: Vector3 = irma_a["vel"]
+	var va_b: Vector3 = irma_b["vel"]
+	var sep_a: Vector3 = irma_a["pos"]
+	var sep_b: Vector3 = irma_b["pos"]
+	_assert("o choque desempilha as duas na hora: sobreposição vira separação",
+		sep_a.distance_to(sep_b) >= 4.0 - 0.0001, "a %0.3f u, soma de raios 4,0"
+			% sep_a.distance_to(sep_b))
+	_assert("pedras iguais trocam a componente normal por inteiro",
+		_igual(va_a.x, -3.0, 0.0001) and _igual(va_b.x, 3.0, 0.0001),
+		"normal +3,0 -> %0.3f e -3,0 -> %0.3f" % [va_a.x, va_b.x])
+	_assert("asteroide não tem freio: a tangencial sobrevive intacta",
+		_igual(va_a.y, 1.0, 0.0001) and _igual(va_b.y, 1.0, 0.0001) and _igual(va_a.z, 0.0, 0.0001)
+			and _igual(va_b.z, 0.0, 0.0001),
+		"tangencial %0.3f e %0.3f, as duas no eixo y" % [va_a.y, va_b.y])
+	game._desmontar_cenario()
+	var grande: Dictionary = game._nova_rocha(Vector3(-2.0, 5.0, -40.0), 4.0, Vector3(2.0, 0.0, 0.0), 0, 0.0)
+	var miuda: Dictionary = game._nova_rocha(Vector3(2.0, 5.0, -40.0), 1.0, Vector3.ZERO, 0, 0.0)
+	game._peder_rochas()
+	var vg: Vector3 = grande["vel"]
+	var vm: Vector3 = miuda["vel"]
+	# ma = 16, mb = 1, aproxima = -2 → a grande perde 4/17 = 0,2353 u/s e a miúda leva 64/17 = 3,7647.
+	_assert("pedra grande não sai voando porque uma miúda encostou nela",
+		_igual(vg.x, 30.0 / 17.0, 0.0001) and _igual(vm.x, 64.0 / 17.0, 0.0001)
+			and _igual(vm.x - vg.x, 2.0, 0.0001),
+		"a grande em %0.4f e a miúda em %0.4f: a velocidade de aproximação inverte exata"
+			% [vg.x, vm.x])
+	game._desmontar_cenario()
+	var foge_a: Dictionary = game._nova_rocha(Vector3(-1.0, 5.0, -40.0), 2.0, Vector3(-5.0, 0.0, 0.0), 0, 0.0)
+	var foge_b: Dictionary = game._nova_rocha(Vector3(1.0, 5.0, -40.0), 2.0, Vector3(5.0, 0.0, 0.0), 0, 0.0)
+	game._peder_rochas()
+	var fv_a: Vector3 = foge_a["vel"]
+	var fv_b: Vector3 = foge_b["vel"]
+	var fp_a: Vector3 = foge_a["pos"]
+	var fp_b: Vector3 = foge_b["pos"]
+	_assert("encostadas mas se afastando: só separa, não bomba velocidade do nada",
+		_igual(fv_a.x, -5.0, 0.0001) and _igual(fv_b.x, 5.0, 0.0001)
+			and fp_a.distance_to(fp_b) >= 4.0 - 0.0001,
+		"%0.3f / %0.3f intactos e %0.3f u apartadas" % [fv_a.x, fv_b.x, fp_a.distance_to(fp_b)])
+
+	# ---- 3e. Fratura: o lance cobrado em integridade, e a pedra vira duas ------------------------
+	game._desmontar_cenario()
+	var rng_fratura: int = game.rng.state
+	var visual_fratura: int = game.visual_rng.state
+	var mae: Dictionary = game._nova_rocha(Vector3(0.0, 0.0, -50.0), ROCHA_RAIO_BASE, Vector3.ZERO, 0, 0.0)
+	var integridade_mae := float(mae["integridade"])
+	_assert("a integridade nasce do raio: 6,0 por unidade de pedra",
+		_igual(integridade_mae, ROCHA_RAIO_BASE * ROCHA_INTEGRIDADE_POR_RAIO, 0.0001),
+		"pedra de %0.1f u entra com %0.1f de integridade" % [ROCHA_RAIO_BASE, integridade_mae])
+	var aguentou: bool = game._fraturar_rocha(mae, 5.0, Vector3(0.0, 0.0, -20.0))
+	_assert("metade do preço não parte nada: a pedra continua uma e do mesmo tamanho",
+		not aguentou and game.rochas.size() == 1 and game.holo_cenario.size() == 1
+			and _igual(float(mae["integridade"]), integridade_mae - 5.0, 0.0001)
+			and _igual(float(mae["raio"]), ROCHA_RAIO_BASE, 0.0001),
+		"integridade %0.1f -> %0.1f com %d corpos" % [integridade_mae, float(mae["integridade"]),
+			game.rochas.size()])
+	var rachou: bool = game._fraturar_rocha(mae, 999.0, Vector3(0.0, 0.0, -20.0))
+	_assert("fechado o preço, a pedra racha em duas e a matriz sai do tabuleiro",
+		rachou and game.rochas.size() == 2, "%d corpos no lugar da matriz" % game.rochas.size())
+	if game.rochas.size() == 2:
+		var f1: Dictionary = game.rochas[0]
+		var f2: Dictionary = game.rochas[1]
+		var meio_f: Vector3 = ((f1["pos"] as Vector3) + (f2["pos"] as Vector3)) * 0.5
+		var linha: Vector3 = (f2["pos"] as Vector3) - (f1["pos"] as Vector3)
+		var dir_chegada: Vector3 = (Vector3(0.0, 0.0, -50.0) - Vector3(0.0, 0.0, -20.0)).normalized()
+		var raio_f := ROCHA_RAIO_BASE * ROCHA_FILHA_FRAC
+		_assert("cada filha tem o raio da conta e a integridade que o raio manda",
+			_igual(float(f1["raio"]), raio_f, 0.0001) and _igual(float(f2["raio"]), raio_f, 0.0001)
+				and _igual(float(f1["integridade"]), raio_f * ROCHA_INTEGRIDADE_POR_RAIO, 0.0001)
+				and int(f1["geracao"]) == 1 and int(f2["geracao"]) == 1,
+			"filhas de %0.3f u (%0.1f de integridade, geração 1) contra matriz de %0.1f u"
+				% [raio_f, raio_f * ROCHA_INTEGRIDADE_POR_RAIO, ROCHA_RAIO_BASE])
+		_assert("as filhas nascem simétricas no centro da matriz e apartadas pelo raio dela",
+			_igual(meio_f.x, 0.0, 0.0001) and _igual(meio_f.y, 0.0, 0.0001)
+				and _igual(meio_f.z, -50.0, 0.0001)
+				and _igual(linha.length(), ROCHA_RAIO_BASE, 0.0001),
+			"meio em %s, corda de %0.3f u" % [str(meio_f), linha.length()])
+		_assert("a rachadura abre perpendicular ao tiro: eixo sem componente na direção chegada",
+			absf(linha.normalized().dot(dir_chegada)) < 0.0001,
+			"cosseno %0.6f entre a corda das filhas e a linha do lance"
+				% absf(linha.normalized().dot(dir_chegada)))
+		_assert("cada metade sai empurrada para fora pela conta de separação",
+			_igual(((f2["vel"] as Vector3) - (f1["vel"] as Vector3)).length(), ROCHA_DERIVA, 0.0001)
+				and ((f1["vel"] as Vector3) + (f2["vel"] as Vector3)).length() < 0.0001,
+			"afastamento de %0.3f u/s entre as duas, centro de massa parado"
+				% ((f2["vel"] as Vector3) - (f1["vel"] as Vector3)).length())
+		_assert("rachar pinta corpo e marca juntos: a mesa não fica com pedra fantasma",
+			game.holo_cenario.size() == game.rochas.size()
+				and is_instance_valid(f1["no"]) and is_instance_valid(f2["no"])
+				and is_instance_valid(f1["marca"]) and is_instance_valid(f2["marca"]),
+			"%d corpos e %d marcas na mesa" % [game.rochas.size(), game.holo_cenario.size()])
+	game._desmontar_cenario()
+	var velha: Dictionary = game._nova_rocha(Vector3(0.0, 0.0, -50.0), ROCHA_RAIO_BASE, Vector3.ZERO,
+		ROCHA_GERACAO_MAXIMA, 0.0)
+	var esmiucada: bool = game._fraturar_rocha(velha, 999.0, Vector3(0.0, 0.0, -20.0))
+	_assert("no teto de geração a pedra esmiúça em vez de rachar",
+		esmiucada and game.rochas.is_empty() and game.holo_cenario.is_empty(),
+		"geração %d morreu com %d corpos e %d marcas no tabuleiro" % [ROCHA_GERACAO_MAXIMA,
+			game.rochas.size(), game.holo_cenario.size()])
+	game._desmontar_cenario()
+	var nanica: Dictionary = game._nova_rocha(Vector3(0.0, 0.0, -50.0), 2.4, Vector3.ZERO, 0, 0.0)
+	var virou_po: bool = game._fraturar_rocha(nanica, 999.0, Vector3(0.0, 0.0, -20.0))
+	_assert("filha abaixo do raio mínimo não nasce: 2,4 u esmiúça em vez de parir pó",
+		virou_po and game.rochas.is_empty(),
+		"raio filha seria %0.3f contra o piso de %0.1f u" % [2.4 * ROCHA_FILHA_FRAC, ROCHA_FILHA_MIN])
+	game._desmontar_cenario()
+	var cheia: Array = []
+	for i in range(ROCHA_LIMITE_CORPOS):
+		cheia.append(game._nova_rocha(Vector3(-70.0 + float(i % 8) * 20.0,
+			-15.0 + (float(i) / 8.0) * 7.0, -20.0 - float(i) * 1.4), ROCHA_RAIO_BASE,
+			Vector3.ZERO, 0, float(i)))
+	var no_teto: bool = game._fraturar_rocha(cheia[0], 999.0, Vector3(0.0, 0.0, -20.0))
+	_assert("no teto de corpos a pedra esmiúça: o limite segura a moagem do mapa",
+		no_teto and game.rochas.size() == ROCHA_LIMITE_CORPOS - 1
+			and game.holo_cenario.size() == ROCHA_LIMITE_CORPOS - 1,
+		"%d corpos e %d marcas depois de matar um com %d em jogo" % [game.rochas.size(),
+			game.holo_cenario.size(), ROCHA_LIMITE_CORPOS])
+	game._desmontar_cenario()
+	var no_mesmo: Dictionary = game._nova_rocha(Vector3(0.0, 0.0, -50.0), ROCHA_RAIO_BASE,
+		Vector3.ZERO, 0, 0.0)
+	var coincidiu: bool = game._fraturar_rocha(no_mesmo, 999.0, Vector3(0.0, 0.0, -50.0))
+	var finitas: bool = coincidiu and int(game.rochas.size()) == 2
+	for rocha in game.rochas:
+		finitas = finitas and (rocha["pos"] as Vector3).is_finite()
+	_assert("lance que chega exatamente no centro da pedra não divide por zero", finitas,
+		"%d filhas com posição finita no eixo degenerado" % game.rochas.size())
+	_assert("rachar não sorteia um dígito nem um pixel",
+		int(game.rng.state) == rng_fratura and int(game.visual_rng.state) == visual_fratura,
+		"rng %d e visual %d intactos em toda a família de fratura" % [rng_fratura, visual_fratura])
+	game._desmontar_cenario()
+	game.battle_clock = clock_antes
 
 	# ---- 4. Barreira que vale: o lance morre na pedra ---------------------------------------
 	# Pedra ISOLADA: no cinturão real outras rochas também cruzam este corredor, e a asserção
@@ -238,7 +579,10 @@ func _initialize() -> void:
 	var destino: Vector3 = (game.enemies[0]["node"] as Node3D).position
 	var meio := (origem + destino) * 0.5
 	game._desmontar_cenario()
-	game.rochas.append({"no": null, "pos": meio, "raio": ROCHA_RAIO_BASE})
+	# Fixatura pelo construtor do jogo, não por dicionário artesanal: a pedra do `main.gd` tem
+	# `vel`, `fase`, `id`, `integridade` e `geracao`, e uma cópia incompleta aqui congela a
+	# correnteza no primeiro `_process` sem quebrar nenhuma asserção de lógica.
+	game._nova_rocha(meio, ROCHA_RAIO_BASE, Vector3.ZERO, 0, 0.0)
 	var corte: Dictionary = game._rocha_entre(origem, destino)
 	_assert("rocha no corredor bloqueia o lance", not corte.is_empty(),
 		"ponto de contato a %0.2f u do centro da pedra" % (corte["pos"] as Vector3).distance_to(meio))
@@ -255,7 +599,7 @@ func _initialize() -> void:
 			ROCHA_RAIO_BASE + 0.1, ROCHA_RAIO_BASE])
 	_assert("origem e destino no mesmo ponto não inventam barreira",
 		game._rocha_entre(origem, origem).is_empty(), "trecho de comprimento zero")
-	game.rochas.append({"no": null, "pos": meio, "raio": ROCHA_RAIO_BASE})
+	game._nova_rocha(meio, ROCHA_RAIO_BASE, Vector3.ZERO, 0, 1.0)
 	_assert("a barreira mais próxima vence a mais longe",
 		_mais_perto_vence(game, origem, destino), "dois bloqueios no mesmo corredor")
 
@@ -274,8 +618,8 @@ func _initialize() -> void:
 	_zerar(b)
 	b._montar_cenario("CINTURAO")
 	b._desmontar_cenario()
-	b.rochas.append({"no": null, "pos": ((b.fleet[0]["node"] as Node3D).position
-		+ (b.enemies[0]["node"] as Node3D).position) * 0.5, "raio": 6.0})
+	b._nova_rocha(((b.fleet[0]["node"] as Node3D).position
+		+ (b.enemies[0]["node"] as Node3D).position) * 0.5, 6.0, Vector3.ZERO, 0, 0.0)
 	b.rng.seed = 909090
 	var estado_b: int = b.rng.state
 	var cascos_b := _cascos_somados(b)
@@ -296,6 +640,52 @@ func _initialize() -> void:
 	b.queue_free()
 	await _frames(2)
 
+		# ---- 5b. Cinto real na salva: absorve, racha e continua sem mexer no sorteio ----------------
+	# A barreira agora cobra integridade e pode parir duas pedras no lugar de uma. Fratura é corpo
+	# novo no tabuleiro, mas não é conta de sorteio: a cauda do `rng` tem de sair idêntica à do
+	# controle que nunca viu pedra — senão rachar seria um reroll disfarçado.
+	var m := await _montar_jogo()
+	_alinhar(m)
+	_zerar(m)
+	m._montar_cenario("CINTURAO")
+	m.rng.seed = 909090
+	m._resolve_volley()
+	var depois_m := int(m.rng.state)
+	var feridos_m := cascos_a - _cascos_somados(m)
+	_assert("com o cinturão inteiro no corredor a cauda do sorteio é a do controle",
+		depois_m == int(depois_a), "rng %d -> %d, igual ao tabuleiro sem pedra" % [909090, depois_m])
+	_assert("a barreira real absorve a salva, e o que passa dela continua machucando",
+		feridos_m > 0.001 and _cascos_somados(m) > cascos_depois_a + 0.001,
+		"%.1f de casco ferido com o cinto contra %.1f no campo aberto" % [
+			feridos_m, cascos_a - cascos_depois_a])
+	var geracoes_no_mapa := false
+	var corpos_max: int = int(m.rochas.size())
+	for v in range(60):
+		_zerar(m)
+		m.rng.seed = 909090
+		m._resolve_volley()
+		corpos_max = maxi(corpos_max, int(m.rochas.size()))
+		for rocha in m.rochas:
+			if int(rocha["geracao"]) > 0:
+				geracoes_no_mapa = true
+	_assert("sessenta salvas no cinturão racham pedra de verdade: nasceram filhas",
+		corpos_max > ROCHA_QTDE and geracoes_no_mapa,
+		"tabuleiro chegou a %d corpos contra %d do leque, e há geração > 0 no mapa" % [
+			corpos_max, ROCHA_QTDE])
+	_assert("a fratura respeita o teto de corpos e fecha com a mesa",
+		corpos_max <= ROCHA_LIMITE_CORPOS and m.rochas.size() <= ROCHA_LIMITE_CORPOS
+			and int(m.holo_cenario.size()) == int(m.rochas.size()),
+		"máximo %d corpos, %d no fim e %d marcas na mesa" % [corpos_max, m.rochas.size(),
+			m.holo_cenario.size()])
+	# A conta da salva mora em `salva_resumo` (o `report_label` é do cenário e do alerta de perda, e
+	# era lido aqui no lugar errado: provava o texto do mapa, não a conta da barreira).
+	var conta_salva := String(m.salva_resumo)
+	_assert("a ponte anuncia a conta do cinturão na fatura da salva",
+		conta_salva.contains("cinturao:") and conta_salva.contains(
+			"%d pedras" % int(m.rochas.size())), conta_salva)
+	m.queue_free()
+	await _frames(2)
+
 	# ---- 6. Quem bate na pedra perde casco; a pedra não perde nada --------------------------
 	game._montar_cenario("CINTURAO")
 	_zerar(game)
@@ -307,12 +697,20 @@ func _initialize() -> void:
 	nodo_vitima.position = centro_rocha + Vector3(0.0, 0.0, float(rocha["raio"]) - 1.0)
 	vitima["veloc"] = Vector3(0.0, 0.0, -30.0)
 	var pos_rocha_antes: Vector3 = (rocha["no"] as Node3D).position if rocha["no"] != null else Vector3.INF
+	var integridade_antes := float(rocha["integridade"])
 	game._chocar_com_rochas()
 	_assert("bater no cinturão cobra casco", float(vitima["hp"]) < 100.0,
 		"%s: %0.2f de casco após o choque" % [vitima["name"], float(vitima["hp"])])
 	_assert("a rocha não cede nem afofa", (rocha["no"] as Node3D).position == pos_rocha_antes
 		and (rocha["no"] as Node3D).global_position.distance_to(centro_rocha) < 0.0001,
 		"pedra continua em %s" % str(centro_rocha))
+	# Desde a fratura a pedra tem um número que um abalroamento poderia comer. Não come: só a salva
+	# fere barreira, e sem esta asserção o README continuaria dizendo "a pedra não perde nada" com a
+	# integridade derretendo em silêncio a cada casco que encosta.
+	_assert("o abalroamento não come integridade: quem fere a pedra é a salva, não a quina",
+		_igual(float(rocha["integridade"]), integridade_antes, 0.0001),
+		"integridade %0.1f -> %0.1f depois de um choque a 30 u/s" % [integridade_antes,
+			float(rocha["integridade"])])
 	_assert("o casco fica exatamente encostado na pedra",
 		_igual(nodo_vitima.global_position.distance_to(centro_rocha),
 			HULL_RADIUS + float(rocha["raio"]), 0.001),

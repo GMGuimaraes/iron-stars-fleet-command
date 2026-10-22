@@ -2,7 +2,7 @@ extends SceneTree
 
 ## Fotogramas reais da ponte para ajuste de pintura. Headless usa o renderizador dummy e devolve
 ## tela preta: neblina, exposição, glow e recorte da janela só se medem com PNG de verdade, e
-## estes treze quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
+## estes quatorze quadros são o material de leitura. Não mexe na economia nem no sorteio de combate —
 ## mas os três do meio montam cenário de verdade, e cenário engole e queima: por isso a sonda
 ## devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção.
 ##
@@ -122,6 +122,28 @@ func _initialize() -> void:
 		"%d nós e %d marcas na mesa" % [game.cenario_root.get_child_count(),
 			game.holo_cenario.size()])
 	await _fotograma(game, "08_cinturao")
+	# A correnteza agora roda em `_process`, então um quadro de espera no windowed move pedra de
+	# verdade. É aqui que o bug da marca mora: no headless a contagem fecha e a lógica passa verde
+	# mesmo com o holograma deslocado pelo offset da raiz, porque nada lê `marca.position`.
+	var deriva_fora := 0
+	var marca_fora := 0
+	for i in range(90):
+		await process_frame
+	for rocha in game.rochas:
+		var pos_rocha: Vector3 = rocha["pos"]
+		var nodo_rocha: Node3D = rocha["no"]
+		if not is_instance_valid(nodo_rocha) or nodo_rocha.global_position.distance_to(pos_rocha) > 0.01:
+			deriva_fora += 1
+		var marca_rocha: MeshInstance3D = rocha["marca"]
+		if not is_instance_valid(marca_rocha):
+			marca_fora += 1
+		elif marca_rocha.position.distance_to(game._holo_de(pos_rocha)) > 0.01:
+			marca_fora += 1
+	_assert("depois de noventa quadros voando, corpo e marca continuam colados no dicionário",
+		deriva_fora == 0 and marca_fora == 0 and int(game.rochas.size()) == 14,
+		"%d corpos e %d marcas fora do lugar, %d corpos no mapa" % [deriva_fora, marca_fora,
+			game.rochas.size()])
+	await _fotograma(game, "08b_cinturao_a_deriva")
 
 	game._montar_cenario("POCO")
 	await _frames(3)

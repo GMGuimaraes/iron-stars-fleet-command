@@ -120,6 +120,33 @@ const ROCHA_LEQUE_X := 58.0
 const ROCHA_Z_INICIAL := -24.0
 const ROCHA_Z_PASSO := 4.0
 const ROCHA_Y_LEQUE := 13.0
+## Deriva: o cinturão é correnteza, não parede. Cada pedra nasce com velocidade própria e sofre um
+## empuxo senoidal lento, que a faz errar de rumo; no encontro com outra pedra ou com a borda da
+## banda, o rumo muda de fato. Tudo é conta de índice e relógio, nunca sorteio: a sonda tem de
+## conseguir prever a posição de cada pedra quadro a quadro sem rerrolar a partida, e uma pedra
+## sorteada mudaria a cauda de `rng` de toda a batalha seguinte.
+const ROCHA_DERIVA := 2.4
+const ROCHA_ERRATICIDADE := 0.9
+const ROCHA_TAXA_ERRATICA := 0.35
+## Teto de velocidade: sem ele o empuxo acumulado transformaria o cinturão em cometas e a barreira
+## deixaria de ser lida como obstáculo para virar borrão.
+const ROCHA_VETO_TETO := 4.2
+const ROCHA_GIRO := 0.22
+## Banda do cinturão: o muro onde a pedra bate e volta. É a banda de batalha, não o campo inteiro —
+## pedra que atravessa o mapa inteiro não é mais barreira, é cenário que se dissolve.
+const ROCHA_BANDA_X := 78.0
+const ROCHA_BANDA_Y := 18.0
+const ROCHA_BANDA_Z_FRENTE := -16.0
+const ROCHA_BANDA_Z_FUNDO := -84.0
+## Fratura: o lance que a pedra absorve cobra integridade dela, e integridade zero racha a pedra em
+## duas filhas de raio reduzido. Pedra miúda, geração velha ou tabuleiro cheio esmúça em vez de
+## rachar — sem o teto, uma salva bem colocada faria o cinturão crescer até o laço pedra-a-pedra
+## custar o quadro. É isso que tira o asteroide da categoria "parede infinita".
+const ROCHA_INTEGRIDADE_POR_RAIO := 6.0
+const ROCHA_FILHA_FRAC := 0.62
+const ROCHA_FILHA_MIN := 1.6
+const ROCHA_GERACAO_MAXIMA := 2
+const ROCHA_LIMITE_CORPOS := 40
 ## Poço gravitacional: alcance é onde o puxo começa a ser sentido; horizonte é onde a nave já é
 ## perdida — não há motor do protótipo que saia de lá.
 const POCO_POS := Vector3(0.0, 0.0, -78.0)
@@ -333,10 +360,19 @@ var reserve_mode := false
 ## vazias e os dois pontos de perigo ficam longe de tudo, que é o que faz a inércia do slice ser
 ## conferível: nenhum laço roda, nenhuma distância cai dentro de um raio.
 var cenario_atual := "ABERTO"
-## Cada rocha: {"no": MeshInstance3D, "pos": Vector3, "raio": float}. `pos` é a fonte de verdade
-## e o nó apenas a pinta — a barreira é lida por conta, não por `global_position` de cena, para a
-## sonda poder conferir a mesma grandeza que a jogabilidade usa.
+## Cada rocha: {"no": MeshInstance3D, "marca": MeshInstance3D, "id": int, "pos": Vector3,
+## "vel": Vector3, "fase": float, "raio": float, "integridade": float, "geracao": int}.
+## `pos` é a fonte de verdade e o nó apenas a pinta — a barreira é lida por conta, não por
+## `global_position` de cena, para a sonda poder conferir a mesma grandeza que a jogabilidade usa.
+## `id` não é enfeite de depuração: a janela de abalroamento é chaveada por pedra, e com a pedra
+## andando a chave geométrica (z arredondado) trocaria de nome a cada quadro, o que rearmaria o
+## dano toda vez e transformaria o cinturão num moedor.
 var rochas: Array[Dictionary] = []
+var rocha_proxima_id := 0
+## Materiais do cinturão, criados na primeira pedra e reaproveitados na fratura: sem o cache, cada
+## rachadura compraria material novo e o tabuleiro incharia recurso no meio da batalha.
+var rocha_material: Material
+var rocha_marca_material: Material
 var poco_ativo := false
 var estrela_ativa := false
 ## Nós pintados do cenário, para `_montar_cenario` poder trocar de mapa sem deixar corpo velho
@@ -1552,6 +1588,9 @@ func _desmontar_cenario() -> void:
 			marca.queue_free()
 	holo_cenario.clear()
 	rochas.clear()
+	# O contador volta a zero com o mapa: sem isto a segunda montagem do cinturão da partida acordaria
+	# com ids 15..28 e as janelas de abalroamento antigas continuariam travando dano em pedras novas.
+	rocha_proxima_id = 0
 	poco_ativo = false
 	estrela_ativa = false
 	_desdobrar_ceu()
@@ -1572,19 +1611,131 @@ func _garantir_cenario_root() -> Node3D:
 
 ## O cinturão: pedras em leque entre as duas linhas, em banda determinística. A ordem importa — a
 ## primeira rocha já nasce adiante da linha aliada e a última atrás da hostil, de modo que atravessar
-## o centro é sempre uma escolha, nunca o único caminho.
+## o centro é sempre uma escolha, nunca o único caminho. A velocidade também é de banda: direção no
+## ângulo áureo do índice e módulo escalonado, sem um sorteio, porque a correnteza tem de ser
+## conferível e a partida não pode acordar com um mapa diferente a cada carga.
 func _montar_cinturao() -> void:
-	var raiz := _garantir_cenario_root()
-	var mat := _material(ACO_ESCURO, 0.3, 0.9)
 	for i in range(ROCHA_QTDE):
 		var ang := float(i) * 2.39996
 		var x := cos(ang) * ROCHA_LEQUE_X * (0.35 + 0.13 * float(i % 5))
 		var y := sin(ang * 1.7) * ROCHA_Y_LEQUE
 		var z := ROCHA_Z_INICIAL - float(i) * ROCHA_Z_PASSO
 		var raio := ROCHA_RAIO_BASE + float(i % 4) * ROCHA_RAIO_DEGRAU
-		var bloco := _box(Vector3(x, y, z), Vector3(raio * 1.7, raio * 1.3, raio * 1.5), mat, raiz)
-		bloco.rotation = Vector3(ang * 0.7, ang, ang * 0.31)
-		rochas.append({"no": bloco, "pos": Vector3(x, y, z), "raio": raio})
+		var vel := Vector3(cos(ang * 0.6 + 1.1), sin(ang * 0.9) * 0.35, sin(ang * 0.6 + 1.1)) \
+			* ROCHA_DERIVA * (0.55 + 0.15 * float(i % 4))
+		_nova_rocha(Vector3(x, y, z), raio, vel, 0, ang)
+
+
+## Corpo novo no cinturão: nó pintado na cena e marca na mesa, criados juntos porque as duas contas
+## têm de fechar com `rochas.size()` no mesmo quadro. Os materiais são criados uma vez e
+## reaproveitados — a fratura pode gerar dezenas de pedras numa batalha comprida.
+func _nova_rocha(pos: Vector3, raio: float, vel: Vector3, geracao: int, fase: float) -> Dictionary:
+	var raiz := _garantir_cenario_root()
+	if rocha_material == null:
+		rocha_material = _material(ACO_ESCURO, 0.3, 0.9)
+		rocha_marca_material = _material(Color(0.32, 0.34, 0.38), 0.1, 0.9)
+	var bloco := _box(pos, Vector3(raio * 1.7, raio * 1.3, raio * 1.5), rocha_material, raiz)
+	bloco.rotation = Vector3(fase * 0.7, fase, fase * 0.31)
+	rocha_proxima_id += 1
+	# A marca só nasce se a mesa existir: as sondas montam cenário antes de a UI fechar, e um
+	# `null` aqui é pedra sem holograma, não pedra ausente do tabuleiro.
+	var marca: MeshInstance3D = null
+	if is_instance_valid(holo_root):
+		marca = _cylinder(_holo_de(pos), 0.06, 0.06, 0.14, rocha_marca_material, holo_root,
+			Vector3.ZERO, 8)
+	var rocha := {
+		"no": bloco,
+		"marca": marca,
+		"id": rocha_proxima_id,
+		"pos": pos,
+		"vel": vel,
+		"fase": fase,
+		"raio": raio,
+		"integridade": raio * ROCHA_INTEGRIDADE_POR_RAIO,
+		"geracao": geracao,
+	}
+	rochas.append(rocha)
+	if is_instance_valid(marca):
+		holo_cenario.append(marca)
+	return rocha
+
+
+## A correnteza, quadro a quadro: empuxo errático, integração, quina de banda e o encontro entre
+## pedras. Zero sorteio nos três — `battle_clock` e o índice mandam, e é por isso que a sonda pode
+## recalcular a posição esperada de cada pedra sem espelhar gerador nenhum.
+func _derivar_rochas(delta: float) -> void:
+	if rochas.is_empty():
+		return
+	for rocha in rochas:
+		var fase := float(rocha["fase"])
+		# O empuxo gira no tempo com fase própria por pedra: é o que faz a trajetória errar de rumo
+		# sem virar caminhada reta, e sem precisar de um número sorteado por quadro.
+		var relogio := battle_clock * ROCHA_TAXA_ERRATICA + fase
+		var empuxo := Vector3(sin(relogio), sin(relogio * 1.7) * 0.4, cos(relogio * 0.8)) \
+			* ROCHA_ERRATICIDADE
+		var vel: Vector3 = rocha["vel"] + empuxo * delta
+		if vel.length() > ROCHA_VETO_TETO:
+			vel = vel.normalized() * ROCHA_VETO_TETO
+		var pos: Vector3 = rocha["pos"] + vel * delta
+		# Quina de banda: a pedra bate e volta. Sem isto o cinturão atravessa o mapa e deixa de ser
+		# barreira — correnteza que dissolve não cobra rota nenhuma.
+		if pos.x < -ROCHA_BANDA_X or pos.x > ROCHA_BANDA_X:
+			vel.x = -vel.x
+			pos.x = clampf(pos.x, -ROCHA_BANDA_X, ROCHA_BANDA_X)
+		if pos.y < -ROCHA_BANDA_Y or pos.y > ROCHA_BANDA_Y:
+			vel.y = -vel.y
+			pos.y = clampf(pos.y, -ROCHA_BANDA_Y, ROCHA_BANDA_Y)
+		if pos.z < ROCHA_BANDA_Z_FUNDO or pos.z > ROCHA_BANDA_Z_FRENTE:
+			vel.z = -vel.z
+			pos.z = clampf(pos.z, ROCHA_BANDA_Z_FUNDO, ROCHA_BANDA_Z_FRENTE)
+		rocha["vel"] = vel
+		rocha["pos"] = pos
+	_peder_rochas()
+	for rocha in rochas:
+		var no: MeshInstance3D = rocha["no"]
+		var pos: Vector3 = rocha["pos"]
+		if is_instance_valid(no):
+			no.global_position = pos
+			no.rotation += Vector3(0.0, ROCHA_GIRO * float(rocha["geracao"] + 1), ROCHA_GIRO * 0.5) \
+				* delta
+		var marca: MeshInstance3D = rocha["marca"]
+		# Espaço local da mesa: a marca nasce filha de `holo_root` em `_holo_de(pos)`, então somar aqui
+		# a posição da raia de novo desloca todas as marcas pelo offset do holograma a cada quadro.
+		if is_instance_valid(marca) and is_instance_valid(holo_root):
+			marca.position = _holo_de(pos)
+
+
+## Pedra com pedra: quem se choca muda de rumo. Troca-se só a componente normal da velocidade, que é
+## o termo que um choque realmente carrega; a tangencial fica, porque asteroide não tem freio. A
+## separação posicional vem antes do impulso — sem ela as duas continuam sobrepostas no quadro
+## seguinte e trocam de novo, o que produziria um trem de energia do nada.
+func _peder_rochas() -> void:
+	for i in range(rochas.size()):
+		for j in range(i + 1, rochas.size()):
+			var a: Dictionary = rochas[i]
+			var b: Dictionary = rochas[j]
+			var entre: Vector3 = b["pos"] - a["pos"]
+			var soma := float(a["raio"]) + float(b["raio"])
+			var distancia := entre.length()
+			if distancia >= soma or distancia < 0.0001:
+				continue
+			var normal := entre / distancia
+			var sobra := (soma - distancia) * 0.5
+			a["pos"] = a["pos"] - normal * sobra
+			b["pos"] = b["pos"] + normal * sobra
+			var va: Vector3 = a["vel"]
+			var vb: Vector3 = b["vel"]
+			var aproxima := (vb - va).dot(normal)
+			if aproxima >= 0.0:
+				continue
+			# Troca de componente normal ponderada pela área da seção: pedra grande não sai voando
+			# porque uma miúda encostou nela.
+			var ma := float(a["raio"]) * float(a["raio"])
+			var mb := float(b["raio"]) * float(b["raio"])
+			var novo_a := va + normal * (2.0 * mb / (ma + mb)) * aproxima
+			var novo_b := vb - normal * (2.0 * ma / (ma + mb)) * aproxima
+			a["vel"] = novo_a
+			b["vel"] = novo_b
 
 
 ## Poço: a sombra, o disco de matéria caindo e a dobra do céu atrás dele. O aro luminoso continua
@@ -1750,14 +1901,11 @@ func _montar_estrela() -> void:
 
 ## Marcas na mesa holográfica: o comandante tem de ver a barreira onde vê os cascos. Moram em
 ## `holo_cenario`, nunca em `holo_blips`, porque a conta de um blip por casco vivo é o contrato da
-## mesa e rocha nenhuma é casco.
+## mesa e rocha nenhuma é casco. A marca da pedra nasce com a pedra, em `_nova_rocha`, e anda com
+## ela em `_derivar_rochas` — o que sobra aqui é o que não tem corpo próprio no tabuleiro.
 func _pintar_marcas_cenario() -> void:
 	if not is_instance_valid(holo_root):
 		return
-	var mat_rocha := _material(Color(0.32, 0.34, 0.38), 0.1, 0.9)
-	for rocha in rochas:
-		holo_cenario.append(_cylinder(_holo_de(rocha["pos"]), 0.06, 0.06, 0.14, mat_rocha,
-			holo_root, Vector3.ZERO, 8))
 	if poco_ativo:
 		var mat_poco := _material(Color(0.55, 0.2, 0.06), 0.0, 0.8, Color(0.9, 0.3, 0.06))
 		holo_cenario.append(_cylinder(_holo_de(POCO_POS), 0.5, 0.5, 0.1, mat_poco, holo_root,
@@ -1772,8 +1920,11 @@ func _nota_cenario() -> String:
 	var nota := ""
 	match cenario_atual:
 		"CINTURAO":
-			nota = "CENÁRIO: CINTURÃO // %d rochas entre as linhas. " % rochas.size()
-			nota += "O lance que bate na pedra não chega ao casco: barreira serve de escudo."
+			nota = "CENÁRIO: CINTURÃO // %d rochas à deriva entre as linhas. " % rochas.size()
+			nota += "Cada uma tem integridade de %0.0f por unidade de raio e muda de rumo até %0.1f u/s. " % [
+				ROCHA_INTEGRIDADE_POR_RAIO, ROCHA_VETO_TETO]
+			nota += "O lance que bate na pedra não chega ao casco: barreira serve de escudo. "
+			nota += "Quem a fere o bastante racha em duas, e as filhas entram no tabuleiro."
 		"POCO":
 			nota = "CENÁRIO: POÇO // a %0.0f u o casco começa a cair, a %0.0f u não escapa. " % [
 				POCO_ALCANCE, POCO_HORIZONTE]
@@ -1817,8 +1968,63 @@ func _rocha_entre(origem: Vector3, destino: Vector3) -> Dictionary:
 			continue
 		if t < melhor_t:
 			melhor_t = t
-			melhor = {"pos": ponto, "raio": float(rocha["raio"])}
+			melhor = {"pos": ponto, "raio": float(rocha["raio"]), "pedra": rocha}
 	return melhor
+
+
+## A pedra cobra o lance: o dano que ela absorveu tira integridade dela, e integridade zero racha.
+## Duas filhas nascem no eixo perpendicular à linha do tiro — perpendicular de verdade, construído
+## por produto vetorial com um eixo auxiliar constante, porque uma tangente escolhida na diagonal é
+## o erro que já custou um céu torto nesta casa. Sem sorteio em nenhum caminho: o que decide a
+## fratura é o ângulo de chegada e a geração da pedra, e a sonda confere os dois.
+func _fraturar_rocha(rocha: Dictionary, dano: float, de_pos: Vector3) -> bool:
+	if rocha.is_empty() or dano <= 0.0:
+		return false
+	rocha["integridade"] = float(rocha["integridade"]) - dano
+	if float(rocha["integridade"]) > 0.0:
+		return false
+	var pos: Vector3 = rocha["pos"]
+	var vel: Vector3 = rocha["vel"]
+	var raio := float(rocha["raio"])
+	var geracao := int(rocha["geracao"])
+	var fase := float(rocha["fase"])
+	var raio_filha := raio * ROCHA_FILHA_FRAC
+	if geracao >= ROCHA_GERACAO_MAXIMA or raio_filha < ROCHA_FILHA_MIN \
+			or rochas.size() + 1 > ROCHA_LIMITE_CORPOS:
+		_remover_rocha(rocha)
+		return true
+	var ate := pos - de_pos
+	var dir := Vector3(0.0, 0.0, 1.0) if ate.length_squared() < 0.0001 else ate / ate.length()
+	var aux := Vector3.UP if absf(dir.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+	var u := dir.cross(aux).normalized()
+	# Rodrigues num par ortonormal: `u` e `dir × u` são unitários e perpendiculares entre si, então
+	# girar a fase da pedra nesse plano é rotação de verdade, não deriva de ângulo.
+	var w := dir.cross(u)
+	var angulo := fmod(fase, TAU)
+	var eixo := u * cos(angulo) + w * sin(angulo)
+	var separacao := raio * 0.5
+	_remover_rocha(rocha)
+	# `lado` vem de um Array de Variant, então precisa virar float antes da conta: Vector3 somado a
+	# Variant perde o tipo e o parser não infere mais nada.
+	for lado_bruto in [-1.0, 1.0]:
+		var lado := float(lado_bruto)
+		var filha_pos := pos + eixo * (separacao * lado)
+		var filha_vel := vel + eixo * (ROCHA_DERIVA * 0.5 * lado)
+		_nova_rocha(filha_pos, raio_filha, filha_vel, geracao + 1, fase + lado * 0.7)
+	return true
+
+
+## Pedra fora do tabuleiro: nó, marca e registro saem juntos. Deixar a marca para trás é o caminho
+## pelo qual a mesa passaria a anunciar barreira onde já não tem nenhuma.
+func _remover_rocha(rocha: Dictionary) -> void:
+	var no: MeshInstance3D = rocha["no"]
+	if is_instance_valid(no):
+		no.queue_free()
+	var marca: MeshInstance3D = rocha["marca"]
+	if is_instance_valid(marca):
+		marca.queue_free()
+		holo_cenario.erase(marca)
+	rochas.erase(rocha)
 
 
 ## O perigo age por posição, depois de cada casco ter obedecido à ordem e antes da separação
@@ -1830,6 +2036,9 @@ func _aplicar_cenario(delta: float) -> void:
 	if estrela_ativa:
 		_queimar_na_corona(delta)
 	if not rochas.is_empty():
+		# A correnteza anda antes de cobrar quem encosta: o casco tem de ver a pedra onde ela está
+		# neste quadro, não onde ela estava no anterior.
+		_derivar_rochas(delta)
 		_chocar_com_rochas()
 
 
@@ -1987,9 +2196,11 @@ func _queimar_na_corona(delta: float) -> void:
 				report_label.text = "CORONA // %s perdeu casco na Fornalha." % String(unit["name"])
 
 
-## Rocha é âncora: não cede, não afunda, não fere de volta. O único que perde algo no encontro é o
-## casco que nela bate, e é exatamente esse preço que faz do asteroide uma barreira em vez de um
-## cenário que se atravessa.
+## Rocha é âncora no que diz respeito ao casco: ela não perde pontos de vida no abalroamento e não
+## afunda — o único que perde algo no encontro é o casco que nela bate, e é esse preço que faz do
+## asteroide uma barreira. Da integridade ela só cobra dos lances (`_fraturar_rocha`). O que a deriva
+## mudou é a conta de aproximação: quem fecha é a velocidade relativa, porque pedra que vem contra
+## você a 2,4 u/s já não é o mesmo obstáculo de uma parada.
 func _chocar_com_rochas() -> void:
 	for corpo in _collision_bodies():
 		if bool(corpo["imovel"]):
@@ -2009,10 +2220,13 @@ func _chocar_com_rochas() -> void:
 			# relatório: quem já perdeu a ponte não perde de novo a cada janela de abalroamento.
 			if capital_hp <= 0.0 and corpo["unidade"] == null:
 				continue
-			var aproximacao := -_body_velocity(corpo).dot(normal)
+			var aproximacao := -(_body_velocity(corpo) - (rocha["vel"] as Vector3)).dot(normal)
 			if aproximacao <= RAM_SPEED:
 				continue
-			var chave := "rocha:%d:%d" % [node.get_instance_id(), int(round(float(centro.z) * 10.0))]
+			# A chave é o id da pedra, não a coordenada: com a pedra andando, uma chave geométrica
+			# mudaria de nome todo quadro e rearmaria a janela de 1,5 s sem parar — o cinturão
+			# viraria moedor em vez de parede.
+			var chave := "rocha:%d:%d" % [node.get_instance_id(), int(rocha["id"])]
 			if battle_clock - float(ram_windows.get(chave, -RAM_WINDOW)) < RAM_WINDOW:
 				continue
 			ram_windows[chave] = battle_clock
@@ -2663,6 +2877,7 @@ func _resolve_volley() -> void:
 	var feridos := 0
 	var nos_vaos := 0
 	var nas_pedras := 0
+	var rachadas := 0
 	var impactos := 0
 	for i in range(fleet.size()):
 		var ally: Dictionary = fleet[i]
@@ -2698,6 +2913,10 @@ func _resolve_volley() -> void:
 			_spawn_bolt((ponto if bloqueio.is_empty() else bloqueio["pos"]), BLUE, origem)
 			if not bloqueio.is_empty():
 				nas_pedras += 1
+				# O que a pedra absorveu ela paga em integridade, nunca em sorteio: rachar é conta do
+				# ângulo de chegada, e a cauda de `rng` da batalha tem de sair idêntica.
+				if _fraturar_rocha(bloqueio["pedra"] as Dictionary, por_flecha, origem):
+					rachadas += 1
 				continue
 			var atingido := _casco_em(ponto, enemies)
 			if atingido < 0:
@@ -2768,6 +2987,10 @@ func _resolve_volley() -> void:
 			_spawn_bolt((pontos_hostis[k] if bloqueio.is_empty() else bloqueio["pos"]), RED, origem, false)
 			if not bloqueio.is_empty():
 				hostis_no_vao += 1
+				# A barreira serve dos dois lados, e cobra dos dois lados: a pedra que parou o lance
+				# hostil também racha, pela mesma conta e sem sorteio.
+				if _fraturar_rocha(bloqueio["pedra"] as Dictionary, por_flecha, origem):
+					rachadas += 1
 				continue
 			var absorvente := _casco_em(pontos_hostis[k], fleet)
 			if absorvente < 0:
@@ -2809,6 +3032,10 @@ func _resolve_volley() -> void:
 		engajados.size()]
 	salva_contagem = {"aliados": impactos, "aliados_feriram": feridos, "hostis": impactos_hostis,
 		"hostis_feriram": hostis_feriram, "vaos": nos_vaos + hostis_no_vao, "pedras": nas_pedras}
+	# A pedra é corpo no tabuleiro, então a fatura dela aparece no mesmo relatório que a dos cascos:
+	# sem esta linha o comandante veria o cinturão encolher e rachar sem que a ponte anunciasse nada.
+	if not rochas.is_empty():
+		salva_resumo += " // cinturao: %d pedras, %d rachadas nesta salva" % [rochas.size(), rachadas]
 
 ## Uma presa só vira unidade quando sai de `enemies` e entra em `fleet`: enquanto fica na
 ## lista de hostis ela não recebe ordem nenhuma e o jogador assiste à captura de fora.
