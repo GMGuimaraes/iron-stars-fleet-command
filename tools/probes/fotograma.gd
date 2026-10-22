@@ -215,6 +215,28 @@ func _initialize() -> void:
 		"%d traço(s) a menos de 1,8 u de (%s)" % [bocais, olho])
 	await _fotograma(game, "05f_capitania_atira")
 
+	# 05g — a chapa por fora. Os quadros 05 e 05b julgam o casco a 19 e 29 u pelo visor da ponte, e a
+	# essa distância a junta de 32 px da chapa tem menos de um pixel: nenhuma foto existente dizia se o
+	# metal procedural que vestiu a ponte veste também o lado de fora. O olho é filho do casco, a 3,9 u
+	# dele e picando de cima, porque a 4,5 u atrás do tombadilho o quadro vinha mostrando a ponte inteira
+	# por trás da nave e não a chapa; yaw e pitch saem do próprio desloc em vez de número escrito à mão,
+	# já que o olho tem de encarar o centro do casco em qualquer offset.
+	var casco_foto: Node3D = game.fleet[2]["node"]
+	var camera_exterior := Camera3D.new()
+	camera_exterior.name = "SondaCascoPerto"
+	camera_exterior.fov = 55.0
+	var desloc := Vector3(1.9, 3.2, 1.4)
+	camera_exterior.position = desloc
+	var horizonte := Vector2(desloc.x, desloc.z).length()
+	camera_exterior.rotation = Vector3(
+		-atan2(desloc.y, horizonte), atan2(desloc.x, desloc.z), 0.0)
+	casco_foto.add_child(camera_exterior)
+	await _frames(1)
+	camera_exterior.make_current()
+	await _fotograma(game, "05g_chapa_de_fora")
+	game.ponte_camera.make_current()
+	camera_exterior.queue_free()
+
 	# 06 — painel em acordeão: a dobra é pintura, e sonda de lógica não mede se o grupo fechado
 	# ainda cabe na janela. A camada de UI volta a ficar visível de propósito: os quadros 04 e 05 a
 	# esconderam.

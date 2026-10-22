@@ -363,6 +363,10 @@ const COR_TELA_MORTA := Color(0.012, 0.014, 0.02)
 ## como sistema global: headless não tem alto-falante, e é assim que a sonda consegue ler
 ## `pedidos` e `soaram` sem depender de saída de áudio.
 const PonteSonora := preload("res://audio.gd")
+## Superfícies procedurais (placa de aço, rocha craterada, painel de ponte, planeta em faixas).
+## É geradora de textura, não nó de cena: vista uma vez por família e compartilhada por todos os
+## materiais que a vestem, sem sorteio e sem `add_child`.
+const Superficies := preload("res://superficies.gd")
 var paused := false
 ## Signed: positivo é avante, negativo é ré. O HUD lê em porcentagem com sinal.
 var throttle := 0.0
@@ -513,7 +517,10 @@ var rochas: Array[Dictionary] = []
 var rocha_proxima_id := 0
 ## Materiais do cinturão, criados na primeira pedra e reaproveitados na fratura: sem o cache, cada
 ## rachadura compraria material novo e o tabuleiro incharia recurso no meio da batalha.
-var rocha_material: Material
+var rocha_material: StandardMaterial3D
+## Pele da filha recém-rachada: face limpa, sem o intemperismo da matriz. São duas pedras com
+## cores diferentes no mesmo cinturão porque a fratura é um evento, não uma textura repetida.
+var rocha_filha_material: StandardMaterial3D
 var rocha_marca_material: Material
 var poco_ativo := false
 var estrela_ativa := false
@@ -525,7 +532,7 @@ var estrela_ativa := false
 var planeta_ativa := false
 var astros: Array[Dictionary] = []
 var astro_proximo_id := 0
-var astro_lua_material: Material
+var astro_lua_material: StandardMaterial3D
 var astro_marca_material: Material
 ## Nós pintados do cenário, para `_montar_cenario` poder trocar de mapa sem deixar corpo velho
 ## no tabuleiro (e sem deixar recurso pendurado no encerramento).
@@ -755,12 +762,15 @@ func _build_backdrop() -> void:
 	planet.mesh = sphere
 	planet.position = Vector3(42, 8, -165)
 	var pm := StandardMaterial3D.new()
-	pm.albedo_color = Color(0.09, 0.15, 0.26)
+	pm.albedo_color = Color(0.16, 0.27, 0.44)
 	pm.metallic = 0.05
 	pm.roughness = 0.95
 	pm.emission_enabled = true
 	pm.emission = Color(0.008, 0.022, 0.05)
 	pm.emission_energy_multiplier = 1.0
+	# Faixas de nuvem na variedade 0 — o planeta do fundo e o do cenário `SISTEMA` nunca vestem a
+	# mesma pele, porque duas bolas azuis iguais na mesma partida denunciam a montagem.
+	_vestir(pm, Superficies.planeta(0))
 	planet.material_override = pm
 	add_child(planet)
 	# Aurora no limbo: um disco aditivo um pouco maior que o planeta, visto de frente.
@@ -820,6 +830,12 @@ func _build_bridge() -> void:
 	# ponte virava cenário de neon. LotGH usa o dourado na régua, discreto.
 	var ouro := _material(HUD_OURO.darkened(0.62), 0.6, 0.34, HUD_OURO * 0.2)
 	var tela := _material(Color(0.02, 0.06, 0.09), 0.2, 0.6, COR_TELA_CALMA)
+	# Soalho em losango, anteparo em chapa de casco, console em painel miúdo: a ponte é o único
+	# lugar do jogo em que a câmera chega perto o bastante para ler escala, e escala não se faz
+	# com cor — se faz com junta.
+	_vestir(piso, Superficies.painel(), Vector3(5.0, 6.0, 5.0))
+	_vestir(casco_ponte, Superficies.metal(), Vector3(3.0, 2.0, 6.0))
+	_vestir(trim, Superficies.painel(), Vector3(9.0, 1.0, 5.0))
 	ponte_telas = tela
 	# Costado, soalho e teto: sem eles a câmera flutua no vácuo em vez de estar dentro de um
 	# navio. Tudo fecha no anteparo de vante, onde o visor se abre.
@@ -1172,14 +1188,14 @@ func _build_fleets() -> void:
 		var x := (float(i) - 2.5) * 5.0
 		var z := -38.0 - (i % 2) * 5.0
 		var ship := _make_ship(Vector3(x, visual_rng.randf_range(-2, 2), z), BLUE,
-			1.1 + float(i % 3) * 0.06, "ALIADA %02d" % (i + 1))
+			1.1 + float(i % 3) * 0.06, "ALIADA %02d" % (i + 1), false, i)
 		fleet.append({"node": ship, "order": "LINHA", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "repair_priority": "AUTO", "team": "friendly", "name": "ALIADA %02d" % (i + 1), "squadron": "ALFA" if i < 3 else "BETA", "classe": "CRUZADOR"})
 	for i in range(6):
 		var x := (float(i) - 2.5) * 6.0
 		var z := -82.0 - (i % 2) * 7.0
 		var is_command := i == 0
 		var ship := _make_ship(Vector3(x, visual_rng.randf_range(-3, 3), z), RED,
-			1.55 if is_command else 1.3, "HOSTIL %02d" % (i + 1), is_command)
+			1.55 if is_command else 1.3, "HOSTIL %02d" % (i + 1), is_command, i + 6)
 		enemies.append({"node": ship, "order": "AVANÇAR", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "team": "enemy", "name": "CAPITÂNIA HOSTIL" if is_command else "HOSTIL %02d" % (i + 1), "squadron": "INIMIGO", "role": "COMANDO" if is_command else "LINE"})
 
 ## Casco de linha em leitura Legend of the Galactic Heroes: aço neutro, um só filete de cor por
@@ -1187,7 +1203,7 @@ func _build_fleets() -> void:
 ## mora num filho "Casco": o nó raiz continua sendo a peça de xadrez que a sonda assina, e o
 ## balanço visual acontece no filho, sem mover um centímetro de tabuleiro.
 func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: String,
-		comando := false) -> Node3D:
+		comando := false, superficie := 0) -> Node3D:
 	var ship := Node3D.new()
 	ship.name = ship_name
 	ship.position = pos
@@ -1208,6 +1224,13 @@ func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: Stri
 	var mat_engine := _material(escape.darkened(0.65), 0.6, 0.3, escape)
 	var mat_flare := _glasm(Color(escape, 0.55))
 	var mat_luz := _glasm(Color(escape, 0.75))
+	# A placa de aço entra por deslocamento, não por textura nova: doze cascos lêem a mesma imagem
+	# e cada um descola a junta de painel do vizinho. É sorteio zero com cara de variedade.
+	var chapa := Superficies.metal()
+	var desl := Vector3(float(superficie) * 0.25, float(superficie) * 0.4, 0.0)
+	_vestir(mat_hull, chapa, Vector3(2.0, 2.0, 2.0), desl)
+	_vestir(mat_steel, chapa, Vector3(3.2, 3.2, 1.4), desl)
+	_vestir(mat_gun, chapa, Vector3(4.0, 4.0, 4.0), desl)
 	var plumas: Array[MeshInstance3D] = []
 	# Espinha comprida: é o volume que lê a nave como lâmina mesmo de fora do visor.
 	_box(Vector3(0, 0, 0), Vector3(1.5, 0.66, 5.4), mat_hull, casco)
@@ -1654,6 +1677,20 @@ func _material(color: Color, metal: float = 0.2, rough: float = 0.45, glow: Colo
 		mat.emission_energy_multiplier = 1.4
 	return mat
 
+## Veste uma superfície procedural num material que já existe. A textura é compartilhada e o
+## `albedo_color` continua dono do tom — é por isso que `_tune_ship_look` escurece a placa junto
+## com o aço sem saber que a placa existe. `escala` é o que separa casco de nacele: mesma imagem,
+## painel mais apertado ou mais largo.
+func _vestir(mat: StandardMaterial3D, superficie: Dictionary, escala: Vector3 = Vector3.ONE,
+		deslocamento: Vector3 = Vector3.ZERO) -> void:
+	mat.albedo_texture = superficie["albedo"]
+	if superficie["rugosidade"] != null:
+		mat.roughness_texture = superficie["rugosidade"]
+		mat.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
+	mat.uv1_scale = escala
+	mat.uv1_offset = deslocamento
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+
 func _box(pos: Vector3, size: Vector3, mat: Material, parent: Node = null) -> MeshInstance3D:
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
@@ -1827,8 +1864,12 @@ func _nova_rocha(pos: Vector3, raio: float, vel: Vector3, geracao: int, fase: fl
 	var raiz := _garantir_cenario_root()
 	if rocha_material == null:
 		rocha_material = _material(ACO_ESCURO, 0.3, 0.9)
+		rocha_filha_material = _material(ACO_ESCURO.lightened(0.24), 0.24, 0.84)
 		rocha_marca_material = _material(Color(0.32, 0.34, 0.38), 0.1, 0.9)
-	var bloco := _box(pos, Vector3(raio * 1.7, raio * 1.3, raio * 1.5), rocha_material, raiz)
+		_vestir(rocha_material, Superficies.rocha(0), Vector3(1.0, 1.0, 1.0))
+		_vestir(rocha_filha_material, Superficies.rocha(1), Vector3(0.7, 0.7, 0.7))
+	var bloco := _box(pos, Vector3(raio * 1.7, raio * 1.3, raio * 1.5),
+		rocha_filha_material if geracao > 0 else rocha_material, raiz)
 	bloco.rotation = Vector3(fase * 0.7, fase, fase * 0.31)
 	rocha_proxima_id += 1
 	# A marca só nasce se a mesa existir: as sondas montam cenário antes de a UI fechar, e um
@@ -2119,10 +2160,12 @@ func _montar_sistema() -> void:
 		astro_marca_material = _material(Color(0.3, 0.48, 0.66), 0.0, 0.9,
 			Color(0.12, 0.3, 0.46))
 		astro_lua_material = _material(Color(0.54, 0.55, 0.6), 0.05, 0.9)
+		_vestir(astro_lua_material, Superficies.rocha(0), Vector3(1.0, 1.0, 1.0))
 	# O corpo do planeta É a pintura: uma esfera só serve ao olho e à conta. Pintar a decoração à
 	# parte seria o caminho pelo qual o casco pararia a quinze metros da bola azul que ele vê.
-	_novo_astro(SISTEMA_POS, Vector3.ZERO, SISTEMA_PLANETA_RAIO, -1,
-		_material(Color(0.22, 0.38, 0.56), 0.05, 0.85), 32)
+	var planeta_mat := _material(Color(0.34, 0.56, 0.78), 0.05, 0.85)
+	_vestir(planeta_mat, Superficies.planeta(1))
+	_novo_astro(SISTEMA_POS, Vector3.ZERO, SISTEMA_PLANETA_RAIO, -1, planeta_mat, 32)
 	# O limbo: um disco aditivo maior que o planeta, sempre de frente para a câmera. Sem ele o
 	# corpo lê bola pintada; com ele o bordo curvo aparece.
 	_flare(SISTEMA_POS, SISTEMA_PLANETA_RAIO * 2.35, Color(0.16, 0.42, 0.72, 0.2), raiz)
@@ -3287,6 +3330,7 @@ func _pintar_bateria(ship: Node3D, batalha: bool) -> void:
 		ship.add_child(bateria)
 		var latao := _material(HUD_OURO.darkened(0.52), 0.62, 0.34, HUD_OURO * 0.4)
 		var aco := _material(ACO_ESCURO, 0.5, 0.45)
+		_vestir(aco, Superficies.metal(), Vector3(4.0, 4.0, 4.0))
 		for lado in [-1.0, 1.0]:
 			_box(Vector3(lado * 1.42, 0.58, -1.25), Vector3(0.5, 0.5, 1.7), aco, bateria)
 			for fila in [-0.15, 0.0, 0.15]:
@@ -3440,6 +3484,10 @@ func _pintar_conves(ship: Node3D, avioes: bool) -> void:
 		ship.add_child(conves)
 		var deck := _material(ACO_ESCURO.lightened(0.1), 0.35, 0.66)
 		var ilhota := _material(ACO, 0.3, 0.6)
+		# O convés lê pista porque a laje é painel miúdo, e a ilhota lê chapa de casco porque é
+		# placa larga: mesma imagem, duas escalas. É a diferença que o olho usa no quadro de perto.
+		_vestir(deck, Superficies.painel(), Vector3(7.0, 1.0, 9.0))
+		_vestir(ilhota, Superficies.metal(), Vector3(3.0, 3.0, 3.0))
 		var latao := _material(HUD_OURO.darkened(0.52), 0.62, 0.34, HUD_OURO * 0.4)
 		# Laje de voltagem baixa: 2,9 de boca por 5,6 de comprimento, 0,14 de espessura.
 		_box(Vector3(0, 0.86, -0.3), Vector3(2.9, 0.14, 5.6), deck, conves)
