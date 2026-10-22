@@ -99,6 +99,52 @@ func _initialize() -> void:
 	hostil_perto.position = Vector3(4.5, -0.6, -34.0)
 	await _fotograma(game, "05_casco_perto")
 
+	# 05b, 05c — o encouraçado com bateria e a carga em voo. `tools/probes/misseis.gd` conta
+	# lançamentos, mede o disco e confere a barreira; a pergunta do PNG é de silhueta: os dois blocos
+	# de tubo com seis bocas de latão aparecem lateralmente no casco promovido, e a carga com rastro
+	# é visível no meio da corda? O HUD continua fora do caminho (o quadro 04 o escondeu) porque
+	# estas duas perguntas são de leitura de corpo. Os cascos voltam a 100 antes da salva: o quadro
+	# 02 já feriu metade da linha, e aqui se julga pintura, não a fatura.
+	for lista in [game.fleet, game.enemies]:
+		for corpo in lista:
+			corpo["hp"] = 100.0
+	game.capital_hp = 100.0
+	game.batalha_encerrada = false
+	game._ajustar_encoracados(2)
+	var baterias := 0
+	for ally in game.fleet:
+		if (ally["node"] as Node3D).get_node_or_null("Bateria") != null:
+			baterias += 1
+	_assert("promover dois degraus desenha bateria em exatamente dois cascos",
+		int(game.encoracados) == 2 and baterias == 2,
+		"%d degraus na escada, %d silhuetas de bateria na linha" % [game.encoracados, baterias])
+	var encouracado: Node3D = game.fleet[0]["node"]
+	# A câmera da ponte mora em z 3,0 e o quadro 05 fotografa a 29 u dela: a essa distância os tubos
+	# de 0,13 u da bateria têm quatro pixels e a pergunta "o encouraçado se distingue do cruzador?"
+	# fica sem resposta. Aqui o casco promovido é posto a 19 u do olho, onde a boca de latão passa de
+	# nove pixels — e o vizinho não promovido vai ao lado, a mesma distância, para o quadro comparar
+	# as duas silhuetas na mesma escala em vez de confiar na memória de quem desenhou.
+	encouracado.position = Vector3(-2.6, 0.2, -16.0)
+	(game.fleet[2]["node"] as Node3D).position = Vector3(2.6, 0.2, -16.0)
+	await _fotograma(game, "05b_encoracado_bateria")
+	game.selected_target = 0
+	game._resolve_volley()
+	_assert("há cargas no ar no quadro do voo",
+		int(game.misseis.size()) > 0 and int(game.missil_contagem["lancados"]) > 0,
+		"%d em voo, %d lançados" % [game.misseis.size(), game.missil_contagem["lancados"]])
+	# A espera é por condição, não por contagem de quadros: em janela o `delta` é tempo real, e a
+	# taxa da máquina não pode decidir se o rastro sai fotografado no meio da corda ou grudado na
+	# boca de lançamento. `frac` 0,45 é o miolo do voo — nem na originação, nem já detonado.
+	var quadros_do_voo := 0
+	while _frac_do_voo(game) < 0.45 and int(game.misseis.size()) > 0 and quadros_do_voo < 400:
+		await process_frame
+		quadros_do_voo += 1
+	_assert("o quadro pegou a carga no meio do caminho",
+		int(game.misseis.size()) > 0 and _frac_do_voo(game) >= 0.45,
+		"carga a %0.2f da corda depois de %d quadros reais, %d ainda no ar" % [
+			_frac_do_voo(game), quadros_do_voo, game.misseis.size()])
+	await _fotograma(game, "05c_missil_em_voo")
+
 	# 06 — painel em acordeão: a dobra é pintura, e sonda de lógica não mede se o grupo fechado
 	# ainda cabe na janela. A camada de UI volta a ficar visível de propósito: os quadros 04 e 05 a
 	# esconderam.
@@ -306,6 +352,16 @@ func _fotograma(game, nome: String, mesa_viva := true) -> void:
 	_assert("%s tem mesa holográfica %s" % [nome, "viva" if mesa_viva else "apagada de propósito"],
 		game.holo_blips.size() > 0 and (game.holo_root as Node3D).visible == mesa_viva,
 		"%d blips, visível=%s" % [game.holo_blips.size(), (game.holo_root as Node3D).visible])
+
+## Fração da corda em que a primeira carga em voo está agora — o relógio do próprio jogo, lido do
+## mesmo jeito que `_atualizar_misseis` lê. É a régua do quadro 05c: com `frac` no miolo o rastro
+## está desenhado sobre a mesa; com 0 a foto é boca de lançamento, com 1 é detonação.
+func _frac_do_voo(game) -> float:
+	if int(game.misseis.size()) == 0:
+		return 0.0
+	var missil: Dictionary = game.misseis[0]
+	return clampf((float(game.battle_clock) - float(missil["nascido"]))
+		/ maxf(float(missil["tau"]), 0.001), 0.0, 1.0)
 
 func _tabular(game) -> void:
 	for i in range(game.fleet.size()):

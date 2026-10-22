@@ -80,6 +80,32 @@ const FOGO_NOME := ["CONCENTRADO", "SETOR", "DISPERSO"]
 ## Alcance letal além do raio do casco: um impacto a até HULL_RADIUS + FOGO_LETAL do centro do
 ## casco é absorvido por ele. Abaixo disso a salva dispersa teria vãos de verdade.
 const FOGO_LETAL := 3.2
+## ---- Classes de casco e bateria de mísseis ----
+## A classe é um modificador lido na hora, não um estado que se soma: promover um casco à linha de
+## batalha não lhe dá casco novo nem repara motor — troca o que ele carrega (duas cargas de bateria
+## por salva) pelo canhão que a bateria come (0,6 das armas) e pela marcha que o peso custa (0,6 da
+## linha). Por isso a escada é reversível dígito a dígito: descer um degrau devolve exatamente o
+## quadro de antes, sem que ninguém precise guardar um "antes".
+const CLASSES := {
+	"CRUZADOR": {"nome": "cruzador", "armas": 1.0, "velocidade": 1.0, "missoes": 0},
+	"BATALHA": {"nome": "encouraçado", "armas": 0.6, "velocidade": 0.6, "missoes": 2},
+}
+## Teto da escada: quatro dos seis cascos do cadastro. Converter a linha inteira deixaria a
+## esquadra sem escolta e sem reserva, e uma frota de casco lento que não alcança o inimigo não é
+## frota de batalha — é alvo.
+const ENCORACADOS_TETO := 4
+## Voo do míssil em velocidade constante, não em tempo fixo: 18 u/s é mais rápido que qualquer
+## casco da linha (o passo de marcha é 8 u/s) e mais lento que o abalroamento, então o lance chega
+## antes de quem o lançou. A posição é fechada em `tempo`, nunca somada por quadro, que é o que faz
+## 600 quadros de 0,1 s e 60 de 1,0 s detonarem no mesmo ponto do tabuleiro.
+const MISSIL_VELOCIDADE := 18.0
+## Disco de detonação: encostar com o centro do casco no ponto é dano cheio, a borda é zero. Com
+## raio 6,0 e casco 2,4, um centro a 4,2 u do ponto paga exatamente metade — número que a sonda
+## resolve na mão. Abaixo de HULL_RADIUS o fator satura em 1,0: dois cascos colados no ponto levam
+## o mesmo golpe cheio, e é isto que faz a bateria valer o peso no fogo concentrado.
+const MISSIL_RAIO := 6.0
+## Uma carga de bateria custa 2,2 salvas de canhão do mesmo navio — o preço do canhão comido.
+const MISSIL_FATOR := 2.2
 ## Abalroamento: abaixo desta velocidade de aproximação os cascos apenas se empurram.
 const RAM_SPEED := 3.0
 const RAM_DAMAGE := 1.9
@@ -387,6 +413,21 @@ var recon_contacts := 0
 var recon_total := 0
 var reserve_mode := false
 
+## Degrau da escada de encouraçados: quantos cascos do começo do cadastro a ponte vestiu de linha
+## de batalha. Zero é o estado de toda partida e o chão da prova de inércia: com ele em zero a
+## bateria não roda, nenhum corpo nasce, nenhum sorteio acontece e o multiplicador de canhão é
+## exatamente 1,0.
+var encoracados := 0
+## Mísseis em voo: {"id", "no", "origem", "destino", "tau", "nascido", "dano"}. `origem` fica
+## guardada porque a barreira é relida na chegada, com o tabuleiro de agora, e não no lançamento,
+## com o de três segundos atrás — é isto que faz a deriva do cinturão valer para a bateria.
+var misseis: Array[Dictionary] = []
+var missil_proximo_id := 1
+## A conta da bateria, cumulativa desde a primeira salva e nunca zerada por volley: a sonda lê
+## números, não string de relatório, e a monotonia dos contadores é asserção.
+var missil_contagem: Dictionary = {"lancados": 0, "detonados": 0, "bloqueados": 0,
+	"rachadas": 0, "cascos": 0, "dano": 0.0}
+
 ## ---- Cenário em jogo ----
 ## `cenario_atual` é o nome escolhido no painel; com `"ABERTO"` as três coleções abaixo ficam
 ## vazias e os dois pontos de perigo ficam longe de tudo, que é o que faz a inércia do slice ser
@@ -548,6 +589,7 @@ func _process(delta: float) -> void:
 		_update_capital_ship(delta)
 	_update_fleet(delta)
 	_update_probes(delta)
+	_atualizar_misseis()
 	_update_tripulacao()
 	if fire_clock >= 1.6:
 		fire_clock = 0.0
@@ -1050,7 +1092,7 @@ func _build_fleets() -> void:
 		var z := -38.0 - (i % 2) * 5.0
 		var ship := _make_ship(Vector3(x, visual_rng.randf_range(-2, 2), z), BLUE,
 			1.1 + float(i % 3) * 0.06, "ALIADA %02d" % (i + 1))
-		fleet.append({"node": ship, "order": "LINHA", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "repair_priority": "AUTO", "team": "friendly", "name": "ALIADA %02d" % (i + 1), "squadron": "ALFA" if i < 3 else "BETA"})
+		fleet.append({"node": ship, "order": "LINHA", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "repair_priority": "AUTO", "team": "friendly", "name": "ALIADA %02d" % (i + 1), "squadron": "ALFA" if i < 3 else "BETA", "classe": "CRUZADOR"})
 	for i in range(6):
 		var x := (float(i) - 2.5) * 6.0
 		var z := -82.0 - (i % 2) * 7.0
@@ -1428,6 +1470,12 @@ func _build_ui() -> void:
 	_add_button(grupo_manobra, "MOVER PARA POSIÇÃO", func(): _give_order("MOVER"))
 	_add_button(grupo_manobra, "DISPERSAR TROPAS", func(): _give_order("DISPERSAR"))
 	_add_button(grupo_manobra, "AGRUPAR TROPAS", func(): _give_order("AGRUPAR"))
+	# Grupo ARMAMENTO: a escada de encouraçados. É degrau de ponte e não ordem de casco porque a
+	# classe troca o que o navio carrega, não para onde ele vai — e sobe e desce pelo mesmo
+	# caminho, do índice 0 ao fim do cadastro, sem somar estado nenhum.
+	var grupo_armamento := _add_grupo(col, "ARMAMENTO")
+	_add_button(grupo_armamento, "ENCURRAÇADOS +1 — bateria de mísseis", func(): _ajustar_encoracados(1))
+	_add_button(grupo_armamento, "ENCURRAÇADOS −1 — casco devolvido à linha", func(): _ajustar_encoracados(-1))
 	var grupo_reparo := _add_grupo(col, "REPAROS")
 	_add_button(grupo_reparo, "PRIORIDADE MOTORES", func(): _set_repair_priority("MOTORES"))
 	_add_button(grupo_reparo, "PRIORIDADE ARMAS", func(): _set_repair_priority("ARMAS"))
@@ -2556,7 +2604,8 @@ func _update_fleet(delta: float) -> void:
 		var ship: Node3D = ally["node"]
 		if ally["hp"] <= 0.0 or not is_instance_valid(ship):
 			continue
-		var mobility: float = 0.25 + float(ally["engines"]) / 100.0 * 0.75
+		var mobility: float = (0.25 + float(ally["engines"]) / 100.0 * 0.75) \
+			* _fator_classe(ally, "velocidade")
 		var partida := ship.position
 		# MOVER, DISPERSAR e AGRUPAR compartilham o mesmo timão: todos escrevem `destination` e
 		# nenhum teleporta. A diferença entre eles é só a geometria do posto, não a execução.
@@ -2572,11 +2621,14 @@ func _update_fleet(delta: float) -> void:
 			if protected_unit_index >= 0 and protected_unit_index < fleet.size():
 				protect_position = (fleet[protected_unit_index]["node"] as Node3D).position
 			var escort_destination := protect_position + Vector3((float(i) - 2.5) * FORMATION_STEP, 0, 8.0 if protected_unit_index >= 0 else -12.0)
-			ship.position = ship.position.lerp(escort_destination, minf(1.0, delta * 0.35))
+			ship.position = ship.position.lerp(escort_destination, minf(1.0, delta * 0.35 * mobility))
 		elif ally["order"] == "RESERVA":
-			ship.position.z = move_toward(ship.position.z, -48.0, delta * 0.8)
+			# Os dois ramos fixos escalam pela mesma marcha: se a reserva e o reconhecimento
+			# ignorassem a classe, um encouraçado fugiria do inimigo à velocidade de um cruzador e
+			# o preço da bateria só seria pago na linha de manobra.
+			ship.position.z = move_toward(ship.position.z, -48.0, delta * 0.8 * mobility)
 		elif ally["order"] == "RECONHECER":
-			ship.position.x = move_toward(ship.position.x, (float(i) - 2.5) * 9.0, delta * 1.8)
+			ship.position.x = move_toward(ship.position.x, (float(i) - 2.5) * 9.0, delta * 1.8 * mobility)
 		elif ally["order"] == "ABORDAR" and selected_target < enemies.size() and enemies[selected_target]["hp"] > 0.0:
 			var target: Node3D = enemies[selected_target]["node"]
 			ship.position = ship.position.move_toward(target.position + Vector3((float(i) - 2.5) * 2.0, 0, 8.0), delta * 2.2 * mobility)
@@ -3020,6 +3072,234 @@ func _casco_em(ponto: Vector3, lista: Array[Dictionary]) -> int:
 	return melhor
 
 
+## ---- Bateria de mísseis ----
+
+## Unidade sem `classe` no cadastro joga exatamente como a linha: a presa incorporada antes da
+## escada, e qualquer dicionário que a sonda montar na mão, tem de acordar em cruzador.
+func _classe_de(unit: Dictionary) -> String:
+	var classe := String(unit.get("classe", "CRUZADOR"))
+	return classe if CLASSES.has(classe) else "CRUZADOR"
+
+
+func _fator_classe(unit: Dictionary, campo: String) -> float:
+	return float(CLASSES[_classe_de(unit)][campo])
+
+
+func _missoes_por_salva(unit: Dictionary) -> int:
+	return int(CLASSES[_classe_de(unit)]["missoes"])
+
+
+## Fogo de canhão de um casco, já com o preço da bateria cobrado. Mora em função nomeada porque a
+## fórmula inline de `_resolve_volley` não é conferível: a sonda precisa medir que o encouraçado
+## paga 0,6 do cruzador sem ter de deduzir isso de casco atingido, onde o disco, o calor e a ordem
+## também mexem. Multiplicar por 1,0 é exatamente não multiplicar, e é por isso que a linha pura
+## fecha a salva com os mesmos dígitos de antes da escada existir.
+func _dano_de_canhao(unit: Dictionary) -> float:
+	return 2.5 * float(unit["weapons"]) / 100.0 * maxf(0.25, float(unit["crew"]) / 100.0) \
+		* _fator_classe(unit, "armas")
+
+
+## Degrau da escada de encouraçados, no mesmo molde do disco de fogo: um clique, um degrau, piso em
+## linha pura e teto em quatro cascos. Recusar não move nada e escreve por que recusou.
+func _ajustar_encoracados(passo: int) -> void:
+	var anterior := encoracados
+	encoracados = clampi(encoracados + passo, 0, ENCORACADOS_TETO)
+	if encoracados == anterior:
+		report_label.text = "ARMAMENTO %d // a ponte não tem outro degrau de bateria abaixo (ou acima) dele." % encoracados
+		_update_hud()
+		return
+	_aplicar_classes()
+	var batalha: Dictionary = CLASSES["BATALHA"]
+	report_label.text = "ARMAMENTO: %d ENCURRAÇADO(S) // %d carga(s) de bateria por salva a %0.0f u/s; " % [
+		encoracados, int(batalha["missoes"]), MISSIL_VELOCIDADE]
+	report_label.text += "canhão a %d%%, marcha a %d%%, disco de detonação de %0.1f u." % [
+		int(float(batalha["armas"]) * 100.0), int(float(batalha["velocidade"]) * 100.0), MISSIL_RAIO]
+	_update_hud()
+
+
+## Promover e rebaixar andam pelo mesmo caminho, do índice 0 ao fim do cadastro: nada aqui acumula,
+## cada casco relê a própria classe pela posição. É isto que faz descer um degrau devolver o quadro
+## de antes sem precisar de um "antes" guardado em lugar nenhum.
+func _aplicar_classes() -> void:
+	for i in range(fleet.size()):
+		var unit: Dictionary = fleet[i]
+		unit["classe"] = "BATALHA" if i < encoracados else "CRUZADOR"
+		_pintar_bateria(unit["node"] as Node3D, i < encoracados)
+		fleet[i] = unit
+
+
+## O volume que denuncia o encouraçado: dois blocos de tubo na lateral, em latão. A escala do nó
+## raiz fica intencionalmente intocada — o raio de colisão é `HULL_RADIUS`, um número de cadastro
+## e não de pintura, e escalar o corpo sem escalar a conta faria dois cascos encostarem visualmente
+## sem nunca abalroar.
+func _pintar_bateria(ship: Node3D, batalha: bool) -> void:
+	if not is_instance_valid(ship):
+		return
+	var existente := ship.get_node_or_null("Bateria")
+	if batalha:
+		if existente != null:
+			return
+		var bateria := Node3D.new()
+		bateria.name = "Bateria"
+		ship.add_child(bateria)
+		var latao := _material(HUD_OURO.darkened(0.52), 0.62, 0.34, HUD_OURO * 0.4)
+		var aco := _material(ACO_ESCURO, 0.5, 0.45)
+		for lado in [-1.0, 1.0]:
+			_box(Vector3(lado * 1.42, 0.58, -1.25), Vector3(0.5, 0.5, 1.7), aco, bateria)
+			for fila in [-0.15, 0.0, 0.15]:
+				_box(Vector3(lado * 1.42 + fila, 0.58, -2.25), Vector3(0.13, 0.13, 0.5), latao, bateria)
+	elif existente != null:
+		# `remove_child` antes do `queue_free`: sem isto o nome continua ocupado até o fim do quadro
+		# e um +1 no mesmo frame acharia que a bateria já está no lugar — o casco subiria de classe
+		# invisível, com a conta da jogabilidade feita e a silhueta não.
+		ship.remove_child(existente)
+		existente.queue_free()
+
+
+## A bateria não sorteia: nem `rng`, nem `visual_rng`. O lance existe porque um casco tem classe e
+## aponta para onde a ponte mandou — é isto que permite assinar o `rng.state` idêntico entre uma
+## partida com quatro encouraçados atirando e uma de linha pura.
+func _lancar_missil(origem: Vector3, destino: Vector3, dano: float) -> void:
+	var vetor := destino - origem
+	var distancia := vetor.length()
+	if distancia < 0.001:
+		return
+	var no := Node3D.new()
+	add_child(no)
+	no.global_position = origem
+	var corpo := MeshInstance3D.new()
+	var cilindro := CylinderMesh.new()
+	cilindro.bottom_radius = 0.17
+	cilindro.top_radius = 0.17
+	cilindro.height = 1.25
+	cilindro.radial_segments = 6
+	cilindro.rings = 1
+	corpo.mesh = cilindro
+	corpo.material_override = _material(ACO_ESCURO.lightened(0.18), 0.5, 0.42, HUD_OURO * 0.35)
+	corpo.rotation.x = -PI / 2
+	no.add_child(corpo)
+	var proa := MeshInstance3D.new()
+	var cone := CylinderMesh.new()
+	cone.bottom_radius = 0.17
+	cone.top_radius = 0.01
+	cone.height = 0.6
+	cone.radial_segments = 6
+	cone.rings = 1
+	proa.mesh = cone
+	proa.material_override = _material(HUD_OURO.darkened(0.4), 0.6, 0.3, HUD_OURO * 0.5)
+	proa.rotation.x = -PI / 2
+	proa.position = Vector3(0, 0.92, 0)
+	no.add_child(proa)
+	var boca := MeshInstance3D.new()
+	var esfera := SphereMesh.new()
+	esfera.radius = 0.22
+	esfera.height = 0.44
+	esfera.radial_segments = 6
+	esfera.rings = 3
+	boca.mesh = esfera
+	boca.material_override = _glasm(Color(ESCOAMENTO_ALIADO, 0.65))
+	boca.position = Vector3(0, -0.68, 0)
+	no.add_child(boca)
+	no.look_at(destino, Vector3.UP)
+	var m := {"id": missil_proximo_id, "no": no, "origem": origem, "destino": destino,
+		"tau": distancia / MISSIL_VELOCIDADE, "nascido": battle_clock, "dano": dano}
+	missil_proximo_id += 1
+	misseis.append(m)
+	missil_contagem["lancados"] = int(missil_contagem["lancados"]) + 1
+	audio.efeito("LASER")
+
+
+## Integração por forma fechada, nunca por passo somado: o voo lê `battle_clock`, o mesmo relógio
+## das luas, então não há estado acumulado para acumular erro — 40 quadros de 0,1 s e 4 de 1,0 s
+## entregam o míssil no MESMO ponto e a detonação no mesmo quadro. Percorrer o vetor atrás devolve
+## a lista para a ordem de cadastro, e `remove_at` não desloca índice que ainda falta ler.
+func _atualizar_misseis() -> void:
+	for i in range(misseis.size() - 1, -1, -1):
+		var m: Dictionary = misseis[i]
+		var frac := clampf((battle_clock - float(m["nascido"])) / float(m["tau"]), 0.0, 1.0)
+		var no: Node3D = m["no"]
+		var origem: Vector3 = m["origem"]
+		no.global_position = origem.lerp(m["destino"], frac)
+		if frac >= 1.0:
+			_detonar_missil(m)
+			if is_instance_valid(no):
+				no.queue_free()
+			misseis.remove_at(i)
+
+
+## Chegada: a barreira é relida agora, na corda do lançamento, e é ela que decide o ponto da
+## detonação. Uma pedra que entrou no corredor durante o voo para o lance; uma que saiu deixa o
+## disco cair no casco. Com o teto de deriva a 4,2 u/s e três segundos de travessia, uma rocha anda
+## até doze unidades enquanto o míssil caminha — é por isso que a bateria não pode confiar no
+## tabuleiro de quando foi disparada.
+func _detonar_missil(m: Dictionary) -> void:
+	var origem: Vector3 = m["origem"]
+	var destino: Vector3 = m["destino"]
+	var dano := float(m["dano"])
+	var bloqueio := _barreira_entre(origem, destino)
+	if not bloqueio.is_empty():
+		missil_contagem["bloqueados"] = int(missil_contagem["bloqueados"]) + 1
+		var pedra: Dictionary = bloqueio["pedra"]
+		# A carga paga a pedra inteira, não o fator de disco: o ponto de contato é a superfície do
+		# corpo, e detonação em rocha não tem segundo vizinho para dividir o golpe.
+		if not pedra.is_empty() and _fraturar_rocha(pedra, dano, origem):
+			missil_contagem["rachadas"] = int(missil_contagem["rachadas"]) + 1
+		_flash_explosao(bloqueio["pos"])
+		return
+	missil_contagem["detonados"] = int(missil_contagem["detonados"]) + 1
+	_flash_explosao(destino)
+	for i in range(enemies.size()):
+		var enemy: Dictionary = enemies[i]
+		if float(enemy["hp"]) <= 0.0 or String(enemy["order"]) == "CAPTURADO":
+			continue
+		var distancia: float = (enemy["node"] as Node3D).global_position.distance_to(destino)
+		if distancia > MISSIL_RAIO:
+			continue
+		var fator := clampf(1.0 - (distancia - HULL_RADIUS) / (MISSIL_RAIO - HULL_RADIUS), 0.0, 1.0)
+		if fator <= 0.0:
+			continue
+		var cobro := dano * fator
+		enemy["hp"] = maxf(0.0, float(enemy["hp"]) - cobro)
+		missil_contagem["cascos"] = int(missil_contagem["cascos"]) + 1
+		missil_contagem["dano"] = float(missil_contagem["dano"]) + cobro
+		if float(enemy["hp"]) <= 0.0:
+			_mark_wreck(enemy["node"] as Node3D)
+			report_label.text = "DETONAÇÃO // %s destruído pela bateria." % String(enemy["name"])
+		enemies[i] = enemy
+	# O disco fecha a batalha no quadro em que ele estoura, não na próxima salva: sem isto a ponte
+	# veria o último casco virar destroço e continuaria dando ordem a uma esquadra vencedora.
+	if not batalha_encerrada:
+		var vivos := 0
+		for enemy in enemies:
+			if float(enemy["hp"]) > 0.0 and String(enemy["order"]) != "CAPTURADO":
+				vivos += 1
+		if vivos == 0 and not enemies.is_empty():
+			report_label.text = "VITÓRIA TÁTICA // a bateria encerrou o combate."
+			_encerra_batalha()
+
+
+## Clarão de detonação: corpo que cresce e se fecha, sem sorteio e sem tocar o tabuleiro. Mora fora
+## de `misseis` e não ganha marca na mesa — um traço de canhão também não tem, e a conta de um blip
+## por casco vivo da holografia não pode ler efeito.
+func _flash_explosao(ponto: Vector3) -> void:
+	var flash := MeshInstance3D.new()
+	var esfera := SphereMesh.new()
+	esfera.radius = MISSIL_RAIO * 0.3
+	esfera.height = MISSIL_RAIO * 0.6
+	esfera.radial_segments = 8
+	esfera.rings = 4
+	flash.mesh = esfera
+	flash.material_override = _glasm(Color(HUD_OURO, 0.32))
+	add_child(flash)
+	flash.global_position = ponto
+	flash.scale = Vector3.ONE * 0.25
+	var tween := create_tween()
+	tween.tween_property(flash, "scale", Vector3.ONE, 0.16)
+	tween.tween_property(flash, "scale", Vector3.ONE * 0.1, 0.22)
+	tween.tween_callback(flash.queue_free)
+
+
+
 ## Hostil que encosta na capitânia da ponte: é a ameaça que fecha a batalha, então a linha aliada
 ## o põe acima de qualquer outro contato na escada de iniciativa.
 func _hostil_da_ponte() -> int:
@@ -3163,7 +3443,7 @@ func _resolve_volley() -> void:
 		if alvo_index < 0:
 			continue
 		engajados[alvo_index] = int(engajados.get(alvo_index, 0)) + 1
-		var damage := 2.5 * float(ally["weapons"]) / 100.0 * maxf(0.25, float(ally["crew"]) / 100.0)
+		var damage := _dano_de_canhao(ally)
 		if ordem == "ATACAR":
 			damage *= 1.8
 		if ordem == "RESERVA":
@@ -3178,7 +3458,8 @@ func _resolve_volley() -> void:
 		# A salva inteira tem sempre FLECHAS_POR_SALVA lances por navio, em qualquer densidade: o que
 		# o disco muda é para onde o dano vai, nunca quantos sorteios a salva consome. Trocar o laço
 		# por "só atirar o que acerta" faria da densidade de fogo um reroll disfarçado.
-		for ponto in _pontos_de_impacto(origem, destino, i, fogo_densidade):
+		var pontos := _pontos_de_impacto(origem, destino, i, fogo_densidade)
+		for ponto in pontos:
 			impactos += 1
 			var bloqueio := _barreira_entre(origem, ponto)
 			# Barreira no corredor: o lance existe, vai até ela e não fere ninguém. Absorver dano não
@@ -3212,6 +3493,14 @@ func _resolve_volley() -> void:
 				report_label.text = "ALVO DESTRUÍDO // %s neutralizado." % enemies[atingido]["name"]
 			elif float(enemies[atingido]["engines"]) <= 0.0:
 				enemies[atingido]["order"] = "RECUAR"
+		# Bateria: o encouraçado repete os primeiros pontos do próprio disco como cargas de
+		# detonação. O disco é o mesmo da salva, então CONCENTRAR fecha também o leque de mísseis e
+		# DISPERSAR o espalha — uma alavanca de ponte, dois canais de dano, nenhum sorteio novo.
+		# Quem ficou sem armas não atira de canhão nem de bateria: o laço acima já saiu pela porta
+		# do `weapons <= 0`, e a bateria é alimentada pelo mesmo fogo de direção.
+		var cargas := _missoes_por_salva(ally)
+		for k in range(mini(cargas, pontos.size())):
+			_lancar_missil(origem, pontos[k], damage * MISSIL_FATOR)
 	_desenhar_setor_de_fogo()
 	# Boarding parties progress in real time after reaching a sufficiently damaged ship.
 	for target_index in range(enemies.size()):
@@ -3318,6 +3607,12 @@ func _resolve_volley() -> void:
 	if planeta_ativa:
 		# O mesmo motivo da linha das pedras: se o mapa come lances, a ponte tem de dizer quantos.
 		salva_resumo += " // sistema: %d lances parados em planeta ou lua" % nos_astros
+	# A linha da bateria só existe depois do primeiro lance: com a escada em zero o resumo fecha
+	# com os mesmos caracteres de sempre, que é o que as sondas de salva, tática e IA assinam.
+	if int(missil_contagem["lancados"]) > 0:
+		salva_resumo += " // bateria: %d lançados, %d detonados, %d bloqueados, %d em voo, %0.1f de dano" % [
+			int(missil_contagem["lancados"]), int(missil_contagem["detonados"]),
+			int(missil_contagem["bloqueados"]), misseis.size(), float(missil_contagem["dano"])]
 
 ## Uma presa só vira unidade quando sai de `enemies` e entra em `fleet`: enquanto fica na
 ## lista de hostis ela não recebe ordem nenhuma e o jogador assiste à captura de fora.
@@ -3334,6 +3629,7 @@ func _integrate_captured_ships() -> void:
 		prize["order"] = "LINHA"
 		prize["squadron"] = "PRESA"
 		prize["repair_priority"] = "AUTO"
+		prize["classe"] = "CRUZADOR"
 		prize["name"] = "PRESA %02d" % (fleet.size() + 1)
 		fleet.append(prize)
 		_mark_as_prize(prize["node"] as Node3D)
@@ -3692,7 +3988,7 @@ func _update_hud() -> void:
 				living += 1
 				if item["engines"] < 70.0 or item["weapons"] < 70.0 or item["crew"] < 60.0:
 					damaged += 1
-		command_label.text = "FROTA: %d/%d NAVES | SELEÇÃO: %s\nFORMAÇÃO: %s | FOGO: %s (%.1f u) | DANIFICADAS: %d\nRECONHECIMENTO: %d%% // %d sonda(s) • %d/%d contato(s) confirmado(s)\nESTADO: %s // TEMPO REAL // ÚLTIMA SALVA: %s\n%s" % [living, fleet.size(), selection_scope, formation, FOGO_NOME[fogo_densidade], FOGO_RAIO[fogo_densidade], damaged, int(recon_progress), probes.size(), recon_contacts, recon_total, "PAUSADO" if paused else ("PONTE PERDIDA" if ponte_condenada else "EM COMBATE"), salva_resumo, tactical_note]
+		command_label.text = "FROTA: %d/%d NAVES | ARMAMENTO: %d/%d ENCURRAÇADO(S) | SELEÇÃO: %s\nFORMAÇÃO: %s | FOGO: %s (%.1f u) | DANIFICADAS: %d\nRECONHECIMENTO: %d%% // %d sonda(s) • %d/%d contato(s) confirmado(s)\nESTADO: %s // TEMPO REAL // ÚLTIMA SALVA: %s\n%s" % [living, fleet.size(), encoracados, ENCORACADOS_TETO, selection_scope, formation, FOGO_NOME[fogo_densidade], FOGO_RAIO[fogo_densidade], damaged, int(recon_progress), probes.size(), recon_contacts, recon_total, "PAUSADO" if paused else ("PONTE PERDIDA" if ponte_condenada else "EM COMBATE"), salva_resumo, tactical_note]
 	if is_instance_valid(target_selector):
 		for i in range(enemies.size()):
 			# O casco só aparece para a ponte quando uma sonda encostou naquele hull: a

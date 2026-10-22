@@ -115,8 +115,8 @@ const ESTRELA_CALOR_FATOR := 1.25
 const ESTRELA_CORONA_RAIO := 30.0
 const ESTRELA_QUEIMA := 6.0
 const PASSO := 0.1
-const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "REPAROS", "RECONHECIMENTO",
-	"CENÁRIO", "TRILHA"]
+const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "ARMAMENTO", "REPAROS",
+	"RECONHECIMENTO", "CENÁRIO", "TRILHA"]
 const NOMES_CENARIO := ["ABERTO", "CINTURAO", "POCO", "ESTRELA", "SISTEMA"]
 
 var breaks := 0
@@ -1001,7 +1001,7 @@ func _initialize() -> void:
 
 	# ---- 10. O painel entrega o cenário --------------------------------------------------------
 	var corpos: Dictionary = game.group_bodies
-	_assert("oito grupos no painel", corpos.size() == 8 and game.group_heads.size() == 8,
+	_assert("nove grupos no painel", corpos.size() == 9 and game.group_heads.size() == 9,
 		"%d cabeçalhos / %d corpos" % [game.group_heads.size(), corpos.size()])
 	var cenario_botoes := _botoes(game, "CENÁRIO")
 	var rotulos := ""
@@ -1012,7 +1012,7 @@ func _initialize() -> void:
 	var total := 0
 	for nome in NOMES_GRUPOS:
 		total += _botoes(game, nome).size()
-	_assert("trinta e um comandos agrupados", total == 31, "%d botões em 8 grupos" % total)
+	_assert("trinta e três comandos agrupados", total == 33, "%d botões em 9 grupos" % total)
 	for botao in cenario_botoes:
 		if botao.text.contains("CINTURÃO"):
 			botao.pressed.emit()
