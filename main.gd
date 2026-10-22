@@ -1690,7 +1690,15 @@ func _derivar_rochas(delta: float) -> void:
 			pos.z = clampf(pos.z, ROCHA_BANDA_Z_FUNDO, ROCHA_BANDA_Z_FRENTE)
 		rocha["vel"] = vel
 		rocha["pos"] = pos
-	_peder_rochas()
+	# O teto é conta de fechar de quadro, não de integração. O corte lá em cima vale para o empuxo;
+	# aqui ele vale para o impulso elástico, que pode jogar uma pedra miúda acima do que a correnteza
+	# permite — e 4,2 u/s é o número que a ponte anuncia no painel, não uma média. Só se percorre o
+	# cinturão quando o quadro de fato teve contato: em mar aberto a conta não roda.
+	if _peder_rochas():
+		for rocha_certa in rochas:
+			var vel_certa: Vector3 = rocha_certa["vel"]
+			if vel_certa.length() > ROCHA_VETO_TETO:
+				rocha_certa["vel"] = vel_certa.normalized() * ROCHA_VETO_TETO
 	for rocha in rochas:
 		var no: MeshInstance3D = rocha["no"]
 		var pos: Vector3 = rocha["pos"]
@@ -1709,7 +1717,12 @@ func _derivar_rochas(delta: float) -> void:
 ## o termo que um choque realmente carrega; a tangencial fica, porque asteroide não tem freio. A
 ## separação posicional vem antes do impulso — sem ela as duas continuam sobrepostas no quadro
 ## seguinte e trocam de novo, o que produziria um trem de energia do nada.
-func _peder_rochas() -> void:
+##
+## O retorno diz se alguma pedra encostou em outra neste quadro. Não é enfeite: é como o laço de
+## deriva sabe quando o teto de velocidade precisa ser cobrado de novo, sem percorrer o cinturão
+## inteiro em cada quadro de mar aberto.
+func _peder_rochas() -> bool:
+	var mudou := false
 	for i in range(rochas.size()):
 		for j in range(i + 1, rochas.size()):
 			var a: Dictionary = rochas[i]
@@ -1723,6 +1736,7 @@ func _peder_rochas() -> void:
 			var sobra := (soma - distancia) * 0.5
 			a["pos"] = a["pos"] - normal * sobra
 			b["pos"] = b["pos"] + normal * sobra
+			mudou = true
 			var va: Vector3 = a["vel"]
 			var vb: Vector3 = b["vel"]
 			var aproxima := (vb - va).dot(normal)
@@ -1736,6 +1750,7 @@ func _peder_rochas() -> void:
 			var novo_b := vb - normal * (2.0 * ma / (ma + mb)) * aproxima
 			a["vel"] = novo_a
 			b["vel"] = novo_b
+	return mudou
 
 
 ## Poço: a sombra, o disco de matéria caindo e a dobra do céu atrás dele. O aro luminoso continua
