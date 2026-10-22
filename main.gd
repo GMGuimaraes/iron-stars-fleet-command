@@ -194,6 +194,14 @@ const ESTRELA_CALOR_RAIO := 70.0
 const ESTRELA_CALOR_FATOR := 1.25
 const ESTRELA_CORONA_RAIO := 30.0
 const ESTRELA_QUEIMA_POR_SEGUNDO := 6.0
+## Vento solar: um empurrão para fora, posicional, com a mesma régua de peso do poço. Alcance maior
+## que o do calor porque o vento não cozinha, só desvia.
+const ESTRELA_VENTO_ALCANCE := 96.0
+const ESTRELA_VENTO_ACEL := 3.0
+## Radiação: não fere casco e não move número de combate — ela cega a varredura da sonda dentro
+## deste raio, multiplicando o raio de scan que já existia.
+const ESTRELA_RADIAO_RAIO := 120.0
+const ESTRELA_RADIAO_VARREDURA := 0.5
 
 ## ---- Tripulação de ponte ----
 ## Seis corpos na ponte: quatro operadores sentados nos consoles de bordo e dois oficiais de pé nas
@@ -1948,8 +1956,12 @@ func _nota_cenario() -> String:
 		"ESTRELA":
 			nota = "CENÁRIO: ESTRELA // arma a %0.0f u do disco bate %0.0f%% mais quente; " % [
 				ESTRELA_CALOR_RAIO, (ESTRELA_CALOR_FATOR - 1.0) * 100.0]
-			nota += "a %0.0f u o casco cozinha a %0.0f pontos por segundo." % [
+			nota += "a %0.0f u o casco cozinha a %0.0f pontos por segundo. " % [
 				ESTRELA_CORONA_RAIO, ESTRELA_QUEIMA_POR_SEGUNDO]
+			nota += "O vento empurra para fora até %0.0f u e a radiação cega a sonda: " % [
+				ESTRELA_VENTO_ALCANCE]
+			nota += "varredura a %0.0f%% do alcance dentro de %0.0f u." % [
+				ESTRELA_RADIAO_VARREDURA * 100.0, ESTRELA_RADIAO_RAIO]
 		_:
 			nota = "CENÁRIO: CAMPO ABERTO // nenhuma barreira, nenhum poço, nenhuma estrela."
 	return nota
@@ -1963,6 +1975,18 @@ func _fator_calor(de_pos: Vector3) -> float:
 	if de_pos.distance_to(ESTRELA_POS) > ESTRELA_CALOR_RAIO:
 		return 1.0
 	return ESTRELA_CALOR_FATOR
+
+
+## Radiação: a tempestade de partículas do disco cega a varredura da sonda. É um multiplicador sobre
+## o raio que a sonda já tinha, não uma conta nova — assim não existe fórmula paralela de
+## reconhecimento. Não fere casco, não move ouro de combate, não sorteia nada: com a estrela apagada
+## devolve 1,0 e o campo aberto continua conferível dígito a dígito.
+func _fator_radiacao(de_pos: Vector3) -> float:
+	if not estrela_ativa:
+		return 1.0
+	if de_pos.distance_to(ESTRELA_POS) > ESTRELA_RADIAO_RAIO:
+		return 1.0
+	return ESTRELA_RADIAO_VARREDURA
 
 
 ## Barreira é geometria de segmento, não projétil que voa: a salva resolve-se em um quadro e a
@@ -2049,6 +2073,7 @@ func _aplicar_cenario(delta: float) -> void:
 		_puxar_para_o_poco(delta)
 		_lentificar_quadro()
 	if estrela_ativa:
+		_empurrar_no_vento(delta)
 		_queimar_na_corona(delta)
 	if not rochas.is_empty():
 		# A correnteza anda antes de cobrar quem encosta: o casco tem de ver a pedra onde ela está
@@ -2071,6 +2096,32 @@ func _puxar_para_o_poco(delta: float) -> void:
 			continue
 		var peso := 1.0 - distancia / POCO_ALCANCE
 		node.global_position += vetor / distancia * POCO_PUXO * peso * delta
+
+
+## O vento da estrela: empurra para fora, com o mesmo peso linear do poço (`1 - d/alcance`), só que
+## no sentido inverso. Posicional e sem sorteio, exatamente como o poço — por isso roda dentro de
+## `_aplicar_cenario` sem empurrar a cauda de `rng`. A ordem do quadro é o que faz dele uma conta de
+## locomoção e não de teleporte: o casco obedece à ordem primeiro, o vento desvia depois, e a
+## próxima correção de rumo já compensa o que o vento levou. Destroço não é empurrado (`imovel`):
+## baixado tem de continuar onde caiu, porque o painel anuncia os caídos pela posição deles. A
+## capitânia entra na conta — é o casco que o jogador sente derrapar. Sonda fica de fora: ela tem
+## velocidade própria, e a estrela a alcança pela radiação, não pelo vento.
+func _empurrar_no_vento(delta: float) -> void:
+	for corpo in _collision_bodies():
+		if bool(corpo["imovel"]):
+			continue
+		var node: Node3D = corpo["node"]
+		var vetor := node.global_position - ESTRELA_POS
+		var distancia := vetor.length()
+		if distancia > ESTRELA_VENTO_ALCANCE:
+			continue
+		if distancia < 0.0001:
+			# No centro exato do disco não existe direção "para fora": sem esta guarda o vetor
+			# normalizado é conta sobre zero. A régua curta é a mesma da lente, que já se protege
+			# de um olho colado no poço.
+			continue
+		var peso := 1.0 - distancia / ESTRELA_VENTO_ALCANCE
+		node.global_position += vetor / distancia * ESTRELA_VENTO_ACEL * peso * delta
 
 
 ## A lente, quadro a quadro: o arco gira para encarar a ponte e o céu de fundo é dobrado em volta
@@ -2580,13 +2631,16 @@ func _update_probes(delta: float) -> void:
 	_recompute_recon()
 
 func _scan_with_probe(node: Node3D) -> void:
+	# O raio é o da sonda multiplicado pela radiação do ponto onde ela está: perto demais do disco
+	# a varredura enxerga a metade. Nenhum número de combate muda, nenhum sorteio é consumido.
+	var raio := PROBE_SCAN_RADIUS * _fator_radiacao(node.global_position)
 	for i in range(enemies.size()):
 		var foe: Dictionary = enemies[i]
 		if float(foe["hp"]) <= 0.0 or String(foe["order"]) == "CAPTURADO" or bool(foe.get("seen", false)):
 			continue
 		if not is_instance_valid(foe["node"]):
 			continue
-		if (foe["node"] as Node3D).global_position.distance_to(node.global_position) <= PROBE_SCAN_RADIUS:
+		if (foe["node"] as Node3D).global_position.distance_to(node.global_position) <= raio:
 			foe["seen"] = true
 			enemies[i] = foe
 
