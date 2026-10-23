@@ -367,6 +367,10 @@ const PonteSonora := preload("res://audio.gd")
 ## É geradora de textura, não nó de cena: vista uma vez por família e compartilhada por todos os
 ## materiais que a vestem, sem sorteio e sem `add_child`.
 const Superficies := preload("res://superficies.gd")
+## Geometria procedural do cinturão: o geoide irregular de cada pedra. É geradora de malha, não nó
+## de cena — três silhuetas montadas uma vez e compartilhadas pelas catorze pedras, sem sorteio.
+## A malha é inscrita na esfera de colisão, então a pedra nunca promete volume onde o tiro passa.
+const Geometria := preload("res://geometria.gd")
 var paused := false
 ## Signed: positivo é avante, negativo é ré. O HUD lê em porcentagem com sinal.
 var throttle := 0.0
@@ -1923,6 +1927,19 @@ func _box(pos: Vector3, size: Vector3, mat: Material, parent: Node = null) -> Me
 		parent.add_child(mesh_instance)
 	return mesh_instance
 
+## Pedra do cinturão: a malha unitária da variante, escalada pelo raio de cadastro. Um nó por pedra
+## como antes — a conta de `tools/probes/cinturao.gd` é 14 corpos e 14 marcas, e o geoide não move
+## nenhuma das duas. O `scale` uniforme é o que faz o vértice mais externo cair exatamente sobre a
+## esfera que `_barreira_entre` usa: ver `geometria.gd`.
+func _geoide(pos: Vector3, raio: float, mat: Material, parent: Node, variante: int) -> MeshInstance3D:
+	var bloco := MeshInstance3D.new()
+	bloco.mesh = Geometria.geoide(variante)
+	bloco.position = pos
+	bloco.scale = Vector3.ONE * raio
+	bloco.material_override = mat
+	parent.add_child(bloco)
+	return bloco
+
 ## Prisma com os dois raios: é com ele que a proa afila e o bocal de motor fecha em disco.
 ## Em `_cylinder` o eixo local é +Y, então `rot = Vector3(-PI/2, 0, 0)` aponta o topo para -Z.
 func _cylinder(pos: Vector3, r_base: float, r_top: float, height: float, mat: Material,
@@ -2087,8 +2104,11 @@ func _nova_rocha(pos: Vector3, raio: float, vel: Vector3, geracao: int, fase: fl
 		rocha_marca_material = _material(Color(0.32, 0.34, 0.38), 0.1, 0.9)
 		_vestir(rocha_material, Superficies.rocha(0), Vector3(1.0, 1.0, 1.0))
 		_vestir(rocha_filha_material, Superficies.rocha(1), Vector3(0.7, 0.7, 0.7))
-	var bloco := _box(pos, Vector3(raio * 1.7, raio * 1.3, raio * 1.5),
-		rocha_filha_material if geracao > 0 else rocha_material, raiz)
+	# A variante sai do índice da pedra, não do sorteio: duas montadas da mesma semente refazem o
+	# mesmo cinturão pedra a pedra, e RECOMEÇAR não troca a silhueta de nenhuma delas.
+	var bloco := _geoide(pos, raio,
+		rocha_filha_material if geracao > 0 else rocha_material, raiz,
+		rocha_proxima_id % Geometria.VARIANTES)
 	bloco.rotation = Vector3(fase * 0.7, fase, fase * 0.31)
 	rocha_proxima_id += 1
 	# A marca só nasce se a mesa existir: as sondas montam cenário antes de a UI fechar, e um
