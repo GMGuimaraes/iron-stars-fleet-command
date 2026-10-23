@@ -284,16 +284,29 @@ const SISTEMA_FASE_AUREA := 2.39996
 
 ## ---- Tripulação de ponte ----
 ## Seis corpos na ponte: quatro operadores sentados nos consoles de bordo e dois oficiais de pé nas
-## asas do visor, com holograma de leitura na mão. Tripulante não é unidade — não entra em `fleet`
-## nem em `enemies`, não tem casco, não é puxado por poço nem chocado por rocha, e a conta da mesa
-## continua um blip por casco vivo. A pose sai do `battle_clock` com fase por índice: zero sorteio,
-## e é por isso que a pausa tática congela a tripulação junto com a batalha.
+## asas do visor, com holograma de leitura na mão. Não são caixas: cada corpo é o rigged de
+## `assets/tripulante.glb`, e `tripulante_rig.gd` dobra os ossos dele sobre a bancada e sobre o pad.
+## Tripulante não é unidade — não entra em `fleet` nem em `enemies`, não tem casco, não é puxado por
+## poço nem chocado por rocha, e a conta da mesa continua um blip por casco vivo. A pose sai do
+## `battle_clock` com fase por índice: zero sorteio, e é por isso que a pausa tática congela a
+## tripulação junto com a batalha.
 const TRIPULANTES_SENTADOS := 4
 const TRIPULANTES_EM_PE := 2
+## Respiração do tronco, em metros. É a coluna que sobe, nunca o corpo inteiro: o pé do oficial
+## plantado no soalho tem de continuar plantado enquanto ele respira.
 const BOB_TRONCO := 0.035
+## Batida do dedo no teclado, em radianos de dobra a mais no cotovelo. Com 0,24 m de antebraço,
+## 0,21 rad move a mão 5 cm — o mesmo `TAP_MAO` que a bancada media na caixa de antes.
+const TAP_ALFA := 0.21
 const TAP_MAO := 0.05
+## Varredura de quem está de pé nas asas: o oficial olha o visor de um bordo ao outro, e o pescoço
+## é o único osso que se mexe para isso. O meio-ciclo de `0.35` rad/s são nove segundos de um lado
+## ao outro — devagar, porque ele vigia o campo, não uma tela de teste.
+const VARREDURA_CABECA := 0.14
 const FASE_POR_POSTO := 0.7
 const ALARME_CASCO := 60.0
+## Casco ferido debruça o operador sobre o teclado. Negativo no eixo X da coluna: o corpo olha para
+## -z, e é para -z que a bancada está.
 const INCLINACAO_ALARME := 0.13
 const COR_TELA_CALMA := Color(0.03, 0.22, 0.34)
 const COR_TELA_ALARME := Color(0.5, 0.07, 0.05)
@@ -394,6 +407,10 @@ const Superficies := preload("res://superficies.gd")
 ## de cena — três silhuetas montadas uma vez e compartilhadas pelas catorze pedras, sem sorteio.
 ## A malha é inscrita na esfera de colisão, então a pedra nunca promete volume onde o tiro passa.
 const Geometria := preload("res://geometria.gd")
+## Rig da tripulação: dobra o corpo rigged do GLB na bancada e no pad de leitura. É conta de
+## geometria sobre o cadastro do gerador, não nó de cena e não sorteio — e a pose mora aqui porque
+## `battle_clock` é o único relógio que a ponte tem.
+const RigTripulante := preload("res://tripulante_rig.gd")
 var paused := false
 ## Signed: positivo é avante, negativo é ré. O HUD lê em porcentagem com sinal.
 var throttle := 0.0
@@ -582,9 +599,9 @@ var estrelas_pintadas: Array[Transform3D] = []
 ## Quantas estrelas o céu emprestou para a lente no último quadro. Medido pela sonda: zero em
 ## campo aberto, e o teto da conta quando o poço está montado e a proa apontada para ele.
 var estrelas_dobradas := 0
-## Tripulação pintada na ponte: cada posto guarda o nó e as peças que se mexem, mais a posição
-## crua delas. Sem a base guardada, a animação acumularia um empurrão por quadro e o operador
-## desceria pelo soalho em dois minutos de batalha.
+## Tripulação pintada na ponte: cada posto guarda o esqueleto que se anima, os índices dos ossos e
+## as poses-base de cada braço. Sem a base guardada, a animação acumularia um empurrão por quadro e
+## o operador desceria pelo soalho em dois minutos de batalha.
 var tripulacao: Array[Dictionary] = []
 ## Material único das quatro telas de console: o alarme tinge uma vez, no flanco do estado, e não
 ## por quadro — escrever `emission` a cada frame é a ponte piscando para a GPU.
@@ -1058,14 +1075,17 @@ func _build_ponte_intima(mats: Dictionary) -> void:
 
 
 ## Postos da tripulação: quatro operadores sentados nos consoles de bordo (x ±3,5, de frente para a
-## própria bancada) e dois oficiais de pé nas asas do visor com holograma de leitura na mão. Os
+## própria bancada) e dois oficiais de pé nas asas do visor com holograma de leitura na mão. Não são
+## caixas: cada corpo é o rigged de `assets/tripulante.glb`, gerado por `tools/synth_humanoid.py`, e
+## `tripulante_rig.gd` dobra os ossos dele sobre a bancada e sobre o pad. O que continua caixa é
+## móvel — a cadeira, a pastilha, o cone e o anel de leitura — porque móvel não tem esqueleto. O
+## importer não espelha o z (medido na sonda `humanoide`), então o corpo importado olha para −z
+## exatamente como olhava o de caixa: quem gira o posto é o `gira` da âncora, não a malha. Os
 ## sentados ficam a 3,5 do eixo da mesa e os de pé a 6,6 — nenhum corpo dentro do disco de 3,05,
 ## porque tripulante cobrindo blip é a ponte escondendo o tabuleiro. Nada aqui sorteia: a fase vem
 ## do índice do posto, e é por isso que a pausa congela a ponte inteira junto com a batalha.
 func _build_tripulacao() -> void:
-	var uniforme := _material(Color(0.13, 0.16, 0.23), 0.3, 0.62)
 	var filete := _material(HUD_OURO.darkened(0.58), 0.4, 0.5)
-	var pele := _material(Color(0.44, 0.33, 0.28), 0.0, 0.78)
 	var assento := _material(Color(0.055, 0.07, 0.1), 0.4, 0.6)
 	var brilho := _glasm(Color(0.22, 0.66, 0.9, 0.5))
 	var postos: Array[Dictionary] = [
@@ -1085,20 +1105,29 @@ func _build_tripulacao() -> void:
 		corpo.rotation.y = float(posto["gira"])
 		bridge_rig.add_child(corpo)
 		var em_pe := bool(posto["em_pe"])
-		var tronco: MeshInstance3D
-		var mao: MeshInstance3D = null
+		if not em_pe:
+			# A almofagem para onde a bacia começa. Sentada, a bacia do cadastro desce com o
+			# quadril para 0,56..0,72 (medido na cadeia de `tripulante_rig`), e o assento de topo
+			# 0,56 é exatamente a linha em que ela encosta — mais alto seria gente afundada no
+			# estofado, mais baixo seria gente sentada no ar.
+			_box(Vector3(0, 0.28, 0.05), Vector3(0.16, 0.56, 0.16), assento, corpo)
+			_box(Vector3(0, 0.51, 0.05), Vector3(0.52, 0.1, 0.52), assento, corpo)
+			_box(Vector3(0, 1.0, 0.3), Vector3(0.5, 0.74, 0.1), assento, corpo)
+		var boneco := RigTripulante.CENA.instantiate()
+		corpo.add_child(boneco)
+		var esqueleto := RigTripulante.achar_esqueleto(boneco)
+		var rig := RigTripulante.preparar(esqueleto, em_pe)
 		var anel: MeshInstance3D = null
+		var pad: Node3D = null
 		if em_pe:
-			_box(Vector3(0, 0.42, 0), Vector3(0.4, 0.84, 0.26), uniforme, corpo)
-			tronco = _box(Vector3(0, 1.18, 0), Vector3(0.44, 0.7, 0.28), uniforme, corpo)
-			_box(Vector3(0, 0.3, 0), Vector3(0.46, 0.06, 0.3), filete, tronco)
-			_cabeca(tronco, pele, 0.5)
-			_fardamento(tronco, uniforme, filete, assento, 0.5, 0.31)
-			for lado in [-1.0, 1.0]:
-				_box(Vector3(lado * 0.26, -0.06, -0.22), Vector3(0.11, 0.11, 0.5), uniforme, tronco)
-			# O holograma de leitura: pastilha na mão e o volume de luz subindo dela.
-			_cylinder(Vector3(0, -0.12, -0.44), 0.16, 0.16, 0.04, filete, tronco, Vector3.ZERO, 12)
-			var cone := _cylinder(Vector3(0, 0.12, -0.44), 0.05, 0.15, 0.42, brilho, tronco,
+			# O pad nasce sob as duas mãos (1,13 no espaço do corpo) e a luz dele sobe até a altura
+			# dos olhos. O invólucro respira com a coluna: se o peito do oficial sobe 3,5 cm, a
+			# pastilha que está na mão dele sobe junto — senão ele passa a segurar o ar.
+			pad = Node3D.new()
+			pad.position = Vector3(0.0, RigTripulante.PAD_ALTURA, 0.0)
+			corpo.add_child(pad)
+			_cylinder(Vector3(0, -0.04, -0.4), 0.16, 0.16, 0.04, filete, pad, Vector3.ZERO, 12)
+			var cone := _cylinder(Vector3(0, 0.14, -0.4), 0.05, 0.15, 0.42, brilho, pad,
 				Vector3.ZERO, 12)
 			cone.rotation.x = PI
 			anel = MeshInstance3D.new()
@@ -1106,61 +1135,21 @@ func _build_tripulacao() -> void:
 			toro.inner_radius = 0.09
 			toro.outer_radius = 0.12
 			anel.mesh = toro
-			anel.position = Vector3(0, 0.2, -0.44)
+			anel.position = Vector3(0, 0.26, -0.4)
 			anel.material_override = brilho
-			tronco.add_child(anel)
-		else:
-			_box(Vector3(0, 0.28, 0.05), Vector3(0.16, 0.56, 0.16), assento, corpo)
-			_box(Vector3(0, 0.6, 0.05), Vector3(0.52, 0.1, 0.52), assento, corpo)
-			_box(Vector3(0, 1.0, 0.3), Vector3(0.5, 0.74, 0.1), assento, corpo)
-			tronco = _box(Vector3(0, 1.06, -0.02), Vector3(0.44, 0.62, 0.28), uniforme, corpo)
-			_box(Vector3(0, 0.26, -0.02), Vector3(0.46, 0.06, 0.3), filete, tronco)
-			_cabeca(tronco, pele, 0.46)
-			_fardamento(tronco, uniforme, filete, assento, 0.46, 0.27)
-			for lado in [-1.0, 1.0]:
-				var braco := _box(Vector3(lado * 0.26, -0.04, -0.24), Vector3(0.11, 0.11, 0.52),
-					uniforme, tronco)
-				braco.rotation.x = 0.16
-			mao = _box(Vector3(0.26, -0.12, -0.5), Vector3(0.1, 0.08, 0.14), pele, tronco)
-		tripulacao.append({"no": corpo, "tronco": tronco, "mao": mao, "anel": anel,
-			"em_pe": em_pe, "base_tronco": float(tronco.position.y),
-			"base_mao": float(mao.position.z) if mao != null else 0.0,
+			pad.add_child(anel)
+		tripulacao.append({"no": corpo, "boneco": boneco, "esqueleto": esqueleto,
+			"ossos": rig["ossos"], "braco_e": rig["braco_e"], "braco_d": rig["braco_d"],
+			"base_coluna": float(rig["base_coluna"]), "base_mao_e": rig["base_mao_e"],
+			"base_mao_d": rig["base_mao_d"], "pad": pad, "anel": anel, "em_pe": em_pe,
 			"fase": float(i) * FASE_POR_POSTO})
 
 
-## Cabeça do tripulante: esfera filha do tronco, porque o bob do corpo tem de levar a cabeça junto
-## — cabeça solta no nó raiz seria um crânio flutuando enquanto o operador respira.
-func _cabeca(pai: Node3D, pele: Material, altura: float) -> MeshInstance3D:
-	var cabeca := MeshInstance3D.new()
-	var esfera := SphereMesh.new()
-	esfera.radius = 0.15
-	esfera.height = 0.3
-	esfera.radial_segments = 10
-	esfera.rings = 6
-	cabeca.mesh = esfera
-	cabeca.position = Vector3(0, altura, -0.02)
-	cabeca.material_override = pele
-	pai.add_child(cabeca)
-	return cabeca
-
-
-## Farda do oficial: quepe de três peças e as patilhas de ombro em ouro. Sem elas o posto é uma
-## cabeça esférica boiando sobre a bancada — e foi exatamente isso que o fotograma mostrou na
-## ruína, onde as duas luzes apagadas deixaram só os seis ovos claros flutuando no escuro. A
-## viseira olha para o −z local, o mesmo lado para onde os braços alcançam o console: o corpo não
-## gira por peça, quem gira é o nó do posto.
-func _fardamento(pai: MeshInstance3D, uniforme: Material, filete: Material, escuro: Material,
-		altura: float, topo: float) -> void:
-	_box(Vector3(0, altura + 0.085, 0), Vector3(0.32, 0.06, 0.32), filete, pai)
-	_cylinder(Vector3(0, altura + 0.16, 0), 0.16, 0.15, 0.09, uniforme, pai, Vector3.ZERO, 12)
-	_box(Vector3(0, altura + 0.115, -0.19), Vector3(0.26, 0.03, 0.15), escuro, pai)
-	for lado in [-1.0, 1.0]:
-		_box(Vector3(lado * 0.24, topo, -0.02), Vector3(0.1, 0.05, 0.26), filete, pai)
-
-
 ## A pose da ponte. Tudo sai de `battle_clock`, que congela na pausa tática: o quadro para, a
-## tripulação para. O alarme é lido no casco da capitânia e escrito UMA vez no material compartilhado
-## das quatro telas — escrever `emission` por quadro seria a ponte piscando para a GPU.
+## tripulação para. Cada valor é absoluto — repouso mais seno, escrito sobre a pose de cadastro —
+## porque um empurrão por quadro faria o operador descer pelo soalho em dois minutos de combate. O
+## alarme é lido no casco da capitânia e escrito UMA vez no material compartilhado das quatro telas
+## — escrever `emission` por quadro seria a ponte piscando para a GPU.
 func _update_tripulacao() -> void:
 	# Sem energia a pose congela onde a morte pegou cada operador: os corpos ficam nos consoles,
 	# a leitura do alarme deixa de escrever nas telas (é a tela MORTA que tem de permanecer no
@@ -1173,15 +1162,39 @@ func _update_tripulacao() -> void:
 		if is_instance_valid(ponte_telas) and ponte_telas.emission_enabled:
 			ponte_telas.emission = COR_TELA_ALARME if alerta else COR_TELA_CALMA
 	for posto in tripulacao:
-		var tronco: MeshInstance3D = posto["tronco"]
-		if not is_instance_valid(tronco):
+		var esqueleto: Skeleton3D = posto["esqueleto"]
+		if not is_instance_valid(esqueleto):
 			continue
 		var fase: float = float(posto["fase"])
-		tronco.position.y = float(posto["base_tronco"]) + sin(battle_clock * 1.7 + fase) * BOB_TRONCO
-		tronco.rotation.x = INCLINACAO_ALARME if (alerta and not bool(posto["em_pe"])) else 0.0
-		var mao: MeshInstance3D = posto["mao"]
-		if is_instance_valid(mao):
-			mao.position.z = float(posto["base_mao"]) + sin(battle_clock * 3.1 + fase) * TAP_MAO
+		var em_pe := bool(posto["em_pe"])
+		var ossos: Dictionary = posto["ossos"]
+		var respira := sin(battle_clock * 1.7 + fase) * BOB_TRONCO
+		var coluna := int(ossos["coluna"])
+		# É a coluna que sobe, nunca o nó do corpo: o pé do oficial continua plantado no deck
+		# enquanto ele respira, e o que tomba no alarme é o tronco sobre o teclado, não a pessoa.
+		esqueleto.set_bone_pose_position(coluna,
+			esqueleto.get_bone_rest(coluna).origin + Vector3(0.0, respira, 0.0))
+		esqueleto.set_bone_pose_rotation(coluna, Quaternion(Vector3(1.0, 0.0, 0.0),
+			-INCLINACAO_ALARME if (alerta and not em_pe) else 0.0))
+		if not em_pe:
+			# Os dois antebraços teclam fora de fase um do outro — as duas mãos no mesmo tempo
+			# seriam um metrônomo, não um operador. A torção é em torno do eixo do dobradiço que a
+			# solução de dois paus já escolheu, então a mão bate no teclado sem sair dele.
+			var batida := sin(battle_clock * 3.1 + fase) * TAP_ALFA
+			esqueleto.set_bone_pose_rotation(int(ossos["antbraco_e"]),
+				RigTripulante.torcer((posto["braco_e"] as Array)[1], batida))
+			esqueleto.set_bone_pose_rotation(int(ossos["antbraco_d"]),
+				RigTripulante.torcer((posto["braco_d"] as Array)[1], -batida))
+		else:
+			# De pé nas asas, o oficial varre o visor de um bordo ao outro com o pescoço: é o único
+			# osso que se mexe para vigiar, porque quem se move no campo é o inimigo, não ele.
+			esqueleto.set_bone_pose_rotation(int(ossos["cabeca"]),
+				Quaternion(Vector3(0.0, 1.0, 0.0),
+					sin(battle_clock * 0.35 + fase) * VARREDURA_CABECA))
+		esqueleto.force_update_all_bone_transforms()
+		var pad: Node3D = posto["pad"]
+		if is_instance_valid(pad):
+			pad.position.y = RigTripulante.PAD_ALTURA + respira
 		var anel: MeshInstance3D = posto["anel"]
 		if is_instance_valid(anel):
 			anel.rotation.y = battle_clock * 0.8 + fase

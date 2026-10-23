@@ -2,7 +2,7 @@ extends SceneTree
 
 ## Fotogramas reais da ponte para ajuste de pintura. Headless usa o renderizador dummy e devolve
 ## tela preta: neblina, exposição, glow e recorte da janela só se medem com PNG de verdade, e
-## estes vinte e seis quadros são o material de leitura. Não mexe na economia nem no sorteio de
+## estes vinte e sete quadros são o material de leitura. Não mexe na economia nem no sorteio de
 ## combate — mas os quadros do meio montam cenário de verdade, e cenário engole e queima: por isso a
 ## sonda devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção. Os três
 ## quadros da trinca (11b, 11c, 11d) são a exceção declarada: eles congelam o `process` do jogo,
@@ -703,6 +703,68 @@ func _initialize() -> void:
 		int(game.tripulacao.size()) == 6 and bool(game.ponte_em_alarme),
 		"%d corpos, alarme=%s" % [game.tripulacao.size(), game.ponte_em_alarme])
 	await _fotograma(game, "11_tripulacao_alarme")
+
+	# 11e — o retrato do corpo rigged. O quadro 11 é o ponto de vista do comandante e o parapeito come
+	# a borda do quadro: ele diz que a ponte ficou vermelha, não se o corpo tem osso. Aqui a lente
+	# temporária entra no jogo (não na ponte, para o gabarito de filhos do rig não se mover), a camada
+	# de UI sai de cena como no quadro 04, e as duas voltam no fim.
+	# O alvo é o oficial de pé, não o operador sentado, e isso foi medido antes de ser escolhido: em
+	# quatro lentes internas a bancada ficou entre a lente e quem tecla nela — a régua projetada dava
+	# 407 px de corpo e o PNG devolvia mobília, porque altura projetada não vê oclusão. O oficial de
+	# pé tem os 1,732 m livres, olha para o visor e segura o pad aceso.
+	var camadas_ui: Array[Node] = []
+	for filho in game.get_children():
+		if filho is CanvasLayer and filho.visible:
+			camadas_ui.append(filho)
+			filho.visible = false
+	# O relógio da batalha é cravado porque a pose vem dele: sem cravar, o retrato mudaria de fase a
+	# cada corrida da sonda e o quadro deixaria de ser comparável. O valor volta no fim para os
+	# quadros de míssil não nascerem atrasados.
+	var relogio := float(game.battle_clock)
+	game.battle_clock = 0.9
+	game._update_tripulacao()
+	var camera_corpo := Camera3D.new()
+	camera_corpo.name = "SondaTripulacaoPerto"
+	camera_corpo.fov = 50.0
+	game.add_child(camera_corpo)
+	await _frames(1)
+	# Lida do próprio nó, não de uma coordenada digitada: com o casco adernado o posto não está onde
+	# o cadastro o pôs. A lente vem de dentro e um pouco de ré, a 0,6 do convés — o único quadrante
+	# da ponte que pega o oficial de corpo inteiro sem a asa dourada do visor atravessando o quepe.
+	var posto: Dictionary = game.tripulacao[5]
+	var ancorado: Vector3 = (posto["no"] as Node3D).global_position
+	camera_corpo.position = ancorado + Vector3(-2.2, 0.6, 0.4)
+	camera_corpo.look_at(ancorado + Vector3(0.0, 0.85, 0.0), Vector3.UP)
+	camera_corpo.make_current()
+	await _frames(1)
+	# A guarda do retrato vazio não é «o corpo está adiante» — isso aprovaria um corpo a 179° do
+	# centro da mira, e aprovou. São os dois ossos lidos por `unproject_position`: cabeça e pé têm de
+	# cair dentro da tela, e a distância entre eles tem de ser metade do quadro para cima. Um corpo
+	# que encolhe abaixo disso voltou a ser ponto, não pessoa, e o quadro deixaria de provar o #145.
+	var esq: Skeleton3D = posto["esqueleto"]
+	var osso_cabeca := int((posto["ossos"] as Dictionary)["cabeca"])
+	var osso_pe := int((posto["ossos"] as Dictionary)["pe_e"])
+	var topo: Vector3 = (esq.global_transform * esq.get_bone_global_pose(osso_cabeca)).origin
+	topo.y += 0.16
+	var sola: Vector3 = (esq.global_transform * esq.get_bone_global_pose(osso_pe)).origin
+	var px_topo := camera_corpo.unproject_position(topo)
+	var px_sola := camera_corpo.unproject_position(sola)
+	var tela := get_root().get_visible_rect().size
+	var altura_px := absf(px_topo.y - px_sola.y)
+	var dentro := px_topo.x > 0.0 and px_sola.x > 0.0 and px_topo.x < float(tela.x) \
+		and px_sola.x < float(tela.x) and px_topo.y > 0.0 and px_sola.y > 0.0 \
+		and px_topo.y < float(tela.y) and px_sola.y < float(tela.y)
+	_assert("o retrato fotografa o oficial de corpo inteiro, da viseira à sola, e ele é gente no quadro",
+		dentro and altura_px >= 0.45 * float(tela.y),
+		"%d px de corpo em %d px de tela (%.2f), topo (%d,%d) sola (%d,%d)" % [int(altura_px),
+			int(tela.y), altura_px / float(tela.y), int(px_topo.x), int(px_topo.y),
+			int(px_sola.x), int(px_sola.y)])
+	await _fotograma(game, "11e_oficial_retrato")
+	game.ponte_camera.make_current()
+	camera_corpo.queue_free()
+	game.battle_clock = relogio
+	for camada in camadas_ui:
+		camada.visible = true
 
 	# 11b, 11c, 11d — o visor trincado fotografado contra ele mesmo. `tools/probes/vidro.gd` fecha
 	# degrau, cache, RNG inerte e o sinal do `uv1_offset` por aritmética; a pergunta do PNG é a única
