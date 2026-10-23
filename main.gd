@@ -837,12 +837,31 @@ func _build_bridge() -> void:
 	_vestir(casco_ponte, Superficies.metal(), Vector3(3.0, 2.0, 6.0))
 	_vestir(trim, Superficies.painel(), Vector3(9.0, 1.0, 5.0))
 	ponte_telas = tela
-	# Costado, soalho e teto: sem eles a câmera flutua no vácuo em vez de estar dentro de um
-	# navio. Tudo fecha no anteparo de vante, onde o visor se abre.
+	# O vidro quase não existe: só o brilho do canto, para a moldura segurar o quadro sem
+	# esconder a batalha. Nasce antes do costado porque as travessas de bordo também o usam.
+	# Metal 0,85 era espelho: a 8 cm da lâmpada âmbar, as duas janelas de bordo viravam duas
+	# colunas brancas no quadro e o visor de vante perdia a batalha para o próprio caixilho.
+	var vidro := StandardMaterial3D.new()
+	vidro.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	vidro.albedo_color = Color(0.3, 0.55, 0.8, 0.05)
+	vidro.metallic = 0.15
+	vidro.roughness = 0.35
+	vidro.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# Soalho e teto: sem eles a câmera flutua no vácuo em vez de estar dentro de um navio.
 	_box(Vector3(0, -2.1, 2.2), Vector3(15, 0.5, 20), piso, bridge_rig)
 	_box(Vector3(0, 5.4, 2.2), Vector3(15, 0.4, 20), casco_ponte, bridge_rig)
+	# Costado em três panos de cada bordo, com uma janela de travessa nos dois vãos: ponte sem
+	# janela é muralha, e a muralha nega o próprio navio que o visor de vante anuncia. Os vãos
+	# caem em z -5,0..-3,6 e -1,4..0,0, onde nenhum console, corpo ou tubulação encosta — o
+	# filete de ouro passa a 3,4, acima da verga de 2,94, e continua corrido.
 	for lado in [-1.0, 1.0]:
-		_box(Vector3(lado * 7.4, 1.6, 2.2), Vector3(0.5, 8, 20), casco_ponte, bridge_rig)
+		for pano in [[-6.4, 2.8], [-2.5, 2.2], [6.1, 12.2]]:
+			_box(Vector3(lado * 7.4, 1.6, float(pano[0])), Vector3(0.5, 8.0, float(pano[1])),
+				casco_ponte, bridge_rig)
+		for janela in [-4.3, -0.7]:
+			_box(Vector3(lado * 7.35, 1.6, janela), Vector3(0.06, 2.6, 1.3), vidro, bridge_rig)
+			_box(Vector3(lado * 7.15, 2.94, janela), Vector3(0.4, 0.12, 1.5), ouro, bridge_rig)
+			_box(Vector3(lado * 7.15, 0.26, janela), Vector3(0.4, 0.12, 1.5), ouro, bridge_rig)
 		_box(Vector3(lado * 7.1, 3.4, 2.2), Vector3(0.14, 0.1, 19.4), ouro, bridge_rig)
 	# Anteparo de vante com o visor escancarado: verga, peitoril e montantes, moldura em ouro.
 	_box(Vector3(0, 4.65, -7.6), Vector3(15, 1.7, 0.55), casco_ponte, bridge_rig)
@@ -853,25 +872,27 @@ func _build_bridge() -> void:
 	_box(Vector3(0, -1.05, -7.75), Vector3(13.4, 0.13, 0.2), ouro, bridge_rig)
 	for lado in [-1.0, 1.0]:
 		_box(Vector3(lado * 2.3, 1.3, -7.7), Vector3(0.11, 4.7, 0.16), trim, bridge_rig)
-	# O vidro quase não existe: só o brilho do canto, para a moldura segurar o quadro sem
-	# esconder a batalha.
-	var vidro := StandardMaterial3D.new()
-	vidro.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	vidro.albedo_color = Color(0.3, 0.55, 0.8, 0.05)
-	vidro.metallic = 0.85
-	vidro.roughness = 0.08
-	vidro.cull_mode = BaseMaterial3D.CULL_DISABLED
 	_box(Vector3(0, 1.3, -7.85), Vector3(13.2, 4.6, 0.05), vidro, bridge_rig)
 	# Postos de trabalho em duas linhas de cada bordo: o console inclinado e a tela de leitura.
+	# A bancada não flutua: ela pousa num pedestal pelo lado de fora, e o vão livre por dentro é o
+	# espaço de joelho do operador. Sem pedestal era uma laje no ar — e laje no ar denuncia o
+	# cenário antes de qualquer textura.
+	# Tecla é UMA material para as vinte: cada tecla com o próprio material seria vinte acesas
+	# depois do reactor morto, porque o apagão escreve uma vez por material, não por nó.
+	var tecla := _material(BLUE, 0.2, 0.3, BLUE * 0.4)
 	for lado in [-1.0, 1.0]:
 		for profundidade in [-0.8, -3.6]:
 			var console := _box(Vector3(lado * 4.4, -0.85, profundidade), Vector3(3.4, 0.3, 2.1),
 				trim, bridge_rig)
 			console.rotation.x = -0.14
 			_box(Vector3(lado * 4.4, -0.62, profundidade), Vector3(2.7, 0.04, 1.4), tela, bridge_rig)
-			for tecla in range(5):
-				_box(Vector3(lado * 4.4 + (float(tecla) - 2.0) * 0.44 * lado, -0.58, profundidade - 0.45),
-					Vector3(0.16, 0.03, 0.5), _material(BLUE, 0.2, 0.3, BLUE * 0.4), bridge_rig)
+			_box(Vector3(lado * 4.85, -1.42, profundidade), Vector3(1.9, 0.8, 1.4), casco_ponte,
+				bridge_rig)
+			_box(Vector3(lado * 3.88, -1.3, profundidade), Vector3(0.06, 0.35, 1.1), tela, bridge_rig)
+			_box(Vector3(lado * 4.4, -1.82, profundidade), Vector3(2.8, 0.05, 2.4), trim, bridge_rig)
+			for tecla_idx in range(5):
+				_box(Vector3(lado * 4.4 + (float(tecla_idx) - 2.0) * 0.44 * lado, -0.58,
+					profundidade - 0.45), Vector3(0.16, 0.03, 0.5), tecla, bridge_rig)
 	# trilho de comando abaixo do visor, onde a ponte apoia o olhar. A régua passa abaixo da
 	# linha de vista da mesa: a 8 unidades de largura e y -1.1 ela fatiava a holografia ao meio
 	# e escondia a segunda fila de blips, que é justamente a do inimigo.
@@ -879,7 +900,8 @@ func _build_bridge() -> void:
 	# Os materiais do deck ficam guardados no próprio rig: a ruína apaga a ponte escrevendo uma
 	# vez em cada um deles, e precisa dos nós depois de `_build_bridge` ter voltado.
 	bridge_rig.set_meta("mat", {"piso": piso, "casco": casco_ponte, "trim": trim, "ouro": ouro,
-		"tela": tela, "vidro": vidro})
+		"tela": tela, "vidro": vidro, "tecla": tecla})
+	_build_ponte_intima(bridge_rig.get_meta("mat"))
 	_build_holo_table()
 	# Luz de trabalho: âmbar sobre os postos, fria sob a holografia. Sem sombra — o
 	# Compatibility não shadowa, e ligar shadow aqui só imprimisse aviso por luz.
@@ -914,6 +936,74 @@ func _build_bridge() -> void:
 	# O retrato da ponte montada é a última coisa que `_build_bridge` faz: ele lê os nós como eles
 	# acordaram, e é para esse estado que o RECOMEÇAR volta.
 	_gravar_base_da_ponte()
+
+## Estrutura íntima da ponte: o que separa uma sala dentro de um navio de um caixote com tela.
+## Longarina no soalho, cavername no costado, bandeja de cabos, teto rebaixado sobre a mesa e as
+## asas de vante que fecham o ombro do visor. Nada aqui cria material fora da meta: os sete do deck
+## já estão guardados no rig — e `_build_holo_table` ainda acrescenta o do aro —, porque a ruína
+## apaga a ponte escrevendo uma vez em cada um deles, e um material fora dessa lista acordaria aceso
+## depois do reactor morto. Nada aqui sorteia — posições e giros são constantes e a semente de
+## combate não gasta um bit com mobília.
+func _build_ponte_intima(mats: Dictionary) -> void:
+	var piso: Material = mats["piso"]
+	var casco: Material = mats["casco"]
+	var trim: Material = mats["trim"]
+	var tela: Material = mats["tela"]
+	# Plinto da mesa: o disco de 3,05 flutuava 0,26 acima do soalho e as quatro colunetas subiam
+	# do convés para o nada. O plinto fecha o vão até a face de -1,59 e nasce do próprio deck; o
+	# raio de 2,98 fica folgado dos 3,28 do corpo sentado mais próximo, porque mesa que come
+	# tripulante é a ponte escondendo o tabuleiro.
+	_cylinder(Vector3(0, -1.72, -2.6), 2.92, 2.98, 0.26, piso, bridge_rig, Vector3.ZERO, 24)
+	# Longarinas: duas linhas de vante para trás, interrompidas pelo plinto. É a régua de
+	# profundidade que o olho lê como «estou dentro de um corpo comprido» — e é a única que o
+	# Compatibility desenha de graça.
+	for lado in [-1.0, 1.0]:
+		_box(Vector3(lado * 1.15, -1.82, -6.35), Vector3(0.28, 0.05, 1.7), trim, bridge_rig)
+		_box(Vector3(lado * 1.15, -1.82, 2.9), Vector3(0.28, 0.05, 5.4), trim, bridge_rig)
+	# Meia-lua de convés: o canto vivo entre soalho e parede é o detalhe que denuncia uma caixa.
+	# O borda baixo faz a virada e ainda serve de bancada para os armários de avaria.
+	for lado in [-1.0, 1.0]:
+		_box(Vector3(lado * 6.5, -1.78, -0.5), Vector3(0.9, 0.12, 13.0), trim, bridge_rig)
+	# Cavernames: três anéis transversais, cada um com viga no teto e duas almas no costado. Caem
+	# nos panos fechados do bordo, nunca nos vãos das janelas.
+	for quilha in [-6.6, -2.6, 2.0]:
+		_box(Vector3(0, 5.0, quilha), Vector3(14.2, 0.4, 0.4), casco, bridge_rig)
+		for lado in [-1.0, 1.0]:
+			_box(Vector3(lado * 6.95, 1.6, quilha), Vector3(0.35, 7.2, 0.4), casco, bridge_rig)
+	# Bandeja de cabos correndo o bordo e a prumada que desce dela para o anteparo de vante.
+	# Tubulação que não chega a lugar nenhum é o erro clássico de cenário; estas duas desembocam.
+	for lado in [-1.0, 1.0]:
+		_box(Vector3(lado * 6.55, -1.35, 2.2), Vector3(0.45, 0.28, 13.0), trim, bridge_rig)
+		_box(Vector3(lado * 6.55, 0.05, -6.6), Vector3(0.3, 4.8, 0.3), trim, bridge_rig)
+	# Asas de vante: o costado não morre em linha reta no anteparo, embique para dentro e forme o
+	# ombro do visor. Parapeito de 1,4 — chapa cheia até o teto comeria a banda lateral do campo,
+	# que é justamente por onde o inimigo de flanco entra.
+	for lado in [-1.0, 1.0]:
+		var asa := _box(Vector3(lado * 5.875, -0.25, -6.525), Vector3(3.3, 3.3, 0.4), casco,
+			bridge_rig)
+		asa.rotation.y = -lado * 0.68
+		var capa := _box(Vector3(lado * 5.875, 1.44, -6.525), Vector3(3.4, 0.12, 0.5), trim,
+			bridge_rig)
+		capa.rotation.y = -lado * 0.68
+		var ombro := _box(Vector3(lado * 5.73, 0.72, -6.35), Vector3(2.2, 0.5, 0.06), tela,
+			bridge_rig)
+		ombro.rotation.y = -lado * 0.68
+	# Teto rebaixado sobre a mesa, com duas frestas de luz. Do quadro parado quase não se vê: a
+	# 78° e três graus de arfagem a câmara olha para o deck e para o visor. É o teto que aparece
+	# quando a capitânia aderna na própria morte, e sem ele o adernamento fotografa um quarto sem
+	# coberta. A coberta para em z -0,6, antes da lâmpada de trabalho (y 4,2): aço metalizado
+	# espelhado embaixo de uma luz é o único jeito de a ponte inteira estourar em branco.
+	_box(Vector3(0, 4.55, -3.85), Vector3(7.6, 0.1, 6.5), casco, bridge_rig)
+	for fresta in [-5.4, -2.2]:
+		_box(Vector3(0, 4.44, fresta), Vector3(7.4, 0.08, 0.16), tela, bridge_rig)
+	# Armários de avaria de popa com o painel de estado voltado para dentro: é o fundo que fecha a
+	# sala quando a câmera aderna para vante. As duas frestas do teto e estes dois painéis são
+	# `tela`, o mesmo material das bancadas — por isso acendem de vermelho no alarme e morrem no
+	# apagão.
+	for lado in [-1.0, 1.0]:
+		_box(Vector3(lado * 6.4, -0.15, 3.6), Vector3(0.75, 3.3, 2.6), trim, bridge_rig)
+		_box(Vector3(lado * 5.99, 0.6, 3.6), Vector3(0.06, 1.1, 1.9), tela, bridge_rig)
+
 
 ## Postos da tripulação: quatro operadores sentados nos consoles de bordo (x ±3,5, de frente para a
 ## própria bancada) e dois oficiais de pé nas asas do visor com holograma de leitura na mão. Os
@@ -951,6 +1041,7 @@ func _build_tripulacao() -> void:
 			tronco = _box(Vector3(0, 1.18, 0), Vector3(0.44, 0.7, 0.28), uniforme, corpo)
 			_box(Vector3(0, 0.3, 0), Vector3(0.46, 0.06, 0.3), filete, tronco)
 			_cabeca(tronco, pele, 0.5)
+			_fardamento(tronco, uniforme, filete, assento, 0.5, 0.31)
 			for lado in [-1.0, 1.0]:
 				_box(Vector3(lado * 0.26, -0.06, -0.22), Vector3(0.11, 0.11, 0.5), uniforme, tronco)
 			# O holograma de leitura: pastilha na mão e o volume de luz subindo dela.
@@ -973,6 +1064,7 @@ func _build_tripulacao() -> void:
 			tronco = _box(Vector3(0, 1.06, -0.02), Vector3(0.44, 0.62, 0.28), uniforme, corpo)
 			_box(Vector3(0, 0.26, -0.02), Vector3(0.46, 0.06, 0.3), filete, tronco)
 			_cabeca(tronco, pele, 0.46)
+			_fardamento(tronco, uniforme, filete, assento, 0.46, 0.27)
 			for lado in [-1.0, 1.0]:
 				var braco := _box(Vector3(lado * 0.26, -0.04, -0.24), Vector3(0.11, 0.11, 0.52),
 					uniforme, tronco)
@@ -998,6 +1090,20 @@ func _cabeca(pai: Node3D, pele: Material, altura: float) -> MeshInstance3D:
 	cabeca.material_override = pele
 	pai.add_child(cabeca)
 	return cabeca
+
+
+## Farda do oficial: quepe de três peças e as patilhas de ombro em ouro. Sem elas o posto é uma
+## cabeça esférica boiando sobre a bancada — e foi exatamente isso que o fotograma mostrou na
+## ruína, onde as duas luzes apagadas deixaram só os seis ovos claros flutuando no escuro. A
+## viseira olha para o −z local, o mesmo lado para onde os braços alcançam o console: o corpo não
+## gira por peça, quem gira é o nó do posto.
+func _fardamento(pai: MeshInstance3D, uniforme: Material, filete: Material, escuro: Material,
+		altura: float, topo: float) -> void:
+	_box(Vector3(0, altura + 0.085, 0), Vector3(0.32, 0.06, 0.32), filete, pai)
+	_cylinder(Vector3(0, altura + 0.16, 0), 0.16, 0.15, 0.09, uniforme, pai, Vector3.ZERO, 12)
+	_box(Vector3(0, altura + 0.115, -0.19), Vector3(0.26, 0.03, 0.15), escuro, pai)
+	for lado in [-1.0, 1.0]:
+		_box(Vector3(lado * 0.24, topo, -0.02), Vector3(0.1, 0.05, 0.26), filete, pai)
 
 
 ## A pose da ponte. Tudo sai de `battle_clock`, que congela na pausa tática: o quadro para, a
@@ -1044,8 +1150,13 @@ func _build_holo_table() -> void:
 	toro.outer_radius = 3.1
 	aro.mesh = toro
 	aro.position = Vector3(0, -1.44, -2.6)
-	aro.material_override = _material(HUD_OURO.darkened(0.5), 0.8, 0.3, HUD_OURO * 0.6)
+	var mat_aro := _material(HUD_OURO.darkened(0.5), 0.8, 0.3, HUD_OURO * 0.6)
+	aro.material_override = mat_aro
 	bridge_rig.add_child(aro)
+	# O aro é moldura de metal da mesa, não imagem projetada: ele não some com o projetor, então
+	# tem de apagar com o deck. O apagão escreve uma vez por material guardado no meta — um anel
+	# fora dessa lista continuaria dourado e aceso numa ponte morta.
+	(bridge_rig.get_meta("mat") as Dictionary)["aro"] = mat_aro
 	holo_anel = Node3D.new()
 	holo_anel.position = Vector3(0, -1.4, -2.6)
 	bridge_rig.add_child(holo_anel)
@@ -1485,7 +1596,7 @@ func _acender_ruina() -> void:
 		ponte_telas.emission = COR_TELA_MORTA
 		ponte_telas.emission_energy_multiplier = 0.0
 	var mats: Dictionary = bridge_rig.get_meta("mat")
-	for chave in ["piso", "casco", "trim", "ouro"]:
+	for chave in ["piso", "casco", "trim", "ouro", "tecla", "aro"]:
 		var mat: StandardMaterial3D = mats[chave]
 		mat.albedo_color = mat.albedo_color.darkened(CORTE_RUINA)
 		mat.emission_energy_multiplier = 0.0

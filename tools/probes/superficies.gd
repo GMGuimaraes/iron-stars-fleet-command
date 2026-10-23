@@ -51,7 +51,16 @@ const AMOSTRA := 8
 ## doze cascos + CanvasLayer + PonteSonora = 22. O 23 que `tools/probes/recomecar.gd` lê é esta
 ## mesma árvore com o `cenario_root` do cenário montado, que é filho único e entra um por cenário.
 const FILHOS_DO_JOGO := 22
-const FILHOS_DA_PONTE := 64
+## Ponte montada SEM cenário: 125 filhos, inventariados um a um por posição nesta rodada. O gabarito
+## é a medida, não uma soma esperada, e ela fecha com a partição por construtor: 72 do `_build_bridge`
+## (soalho e teto, 20 de costado — três panos, duas janelas com verga e peitoril e o filete corrido
+## de cada bordo —, 9 do anteparo de vante, 40 dos quatro postos com cinco teclas por bancada, mais
+## o trilho), 33 de `_build_ponte_intima` (plinto, longarinas, meia-lua, três cavernames, bandejas e
+## prumadas, asas de vante, coberta com duas frestas, armários com painel), 11 filhos diretos da mesa
+## holográfica, 6 corpos da tripulação, duas luzes e a câmera. Eram 64 antes da ponte íntima e 128
+## antes de a coberta encolher: o teto sobre a mesa perdeu uma fresta e as duas sanefas, que
+## espelhavam aço metalizado debaixo da lâmpada e estouravam a ponte inteira em branco.
+const FILHOS_DA_PONTE := 125
 ## Semente cravada das duas réguas de cauda. `rng` é `randomize()` na origem (main.gd) de propósito
 ## — cada partida acorda com sorteio diferente —, então o estado do gerador NÃO é comparável entre
 ## montadas; o que se compara aqui é a cauda a partir desta semente, lida três vezes.
@@ -418,7 +427,7 @@ func _rodar() -> void:
 		% mat_dep.emission_energy_multiplier)
 
 	# ── 9. Nada novo na árvore ──────────────────────────────────────────────────────────────
-	# O gabarito é o de uma montagem nova sem cenário: 22 filhos no jogo, 64 na ponte, medido em três
+	# O gabarito é o de uma montagem nova sem cenário: 22 filhos no jogo, 125 na ponte, medido em três
 	# montadas seguidas nesta rodada. Ele entra cravado porque o cache de texturas é do PROCESSO, não
 	# da instância — não existe "um jogo sem textura" dentro desta sonda para comparar. Se a camada
 	# visual tivesse criado um nó, esta asserção e a do recomeço quebram juntas.

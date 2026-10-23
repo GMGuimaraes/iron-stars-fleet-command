@@ -176,14 +176,14 @@ func _initialize() -> void:
 		tela.emission == COR_TELA_MORTA, "[%0.3f %0.3f %0.3f]" % [tela.emission.r,
 			tela.emission.g, tela.emission.b])
 	var escurecidos := 0
-	for chave in ["piso", "casco", "trim", "ouro"]:
+	for chave in ["piso", "casco", "trim", "ouro", "tecla", "aro"]:
 		var mat: StandardMaterial3D = mats[chave]
 		var antes: Color = cores_antes[chave]
 		if mat.albedo_color.is_equal_approx(antes.darkened(CORTE_RUINA)) \
 				and _igual(mat.emission_energy_multiplier, 0.0, 0.0):
 			escurecidos += 1
-	_assert("deck apagado: soalho, casco, friso e ouro escurecidos num único traço",
-		escurecidos == 4, "%d de 4 materiais em `darkened(%.1f)` sem emissão" % [escurecidos,
+	_assert("deck apagado: soalho, casco, friso, ouro, tecla e aro escurecidos num único traço",
+		escurecidos == 6, "%d de 6 materiais em `darkened(%.1f)` sem emissão" % [escurecidos,
 			CORTE_RUINA])
 	var escuras := 0
 	for nos in [game.holo_root, game.holo_anel, game.holo_capitania, game.holo_setor]:
