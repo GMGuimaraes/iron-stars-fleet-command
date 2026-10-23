@@ -71,6 +71,20 @@ func _assert(label: String, condition: bool, detail: String) -> void:
 func _igual(a: float, b: float, tol: float) -> bool:
 	return absf(a - b) <= tol
 
+## Bilhetes de um "Casco", descendo pelos quatro módulos de setor: desde a fatia dos módulos o
+## corpo mudou de pai, não de cota, e a contagem tem de enxergar o nível de dentro.
+func _bilhetes(casco: Node3D) -> Array:
+	var out: Array = []
+	var pilha: Array[Node] = [casco]
+	while not pilha.is_empty():
+		var no: Node = pilha.pop_back()
+		for filho in no.get_children():
+			if filho is MeshInstance3D:
+				out.append(filho)
+			else:
+				pilha.append(filho)
+	return out
+
 func _frames(n: int) -> void:
 	for i in range(n):
 		await process_frame
@@ -277,8 +291,10 @@ func _secao_escada() -> void:
 	_assert("a bateria são dois blocos e seis tubos", corpo_bateria.get_child_count() == 8,
 		"%d corpos na bateria" % corpo_bateria.get_child_count())
 	var casco: Node3D = (game.fleet[0]["node"] as Node3D).get_node("Casco")
-	_assert("o filho Casco continua com os vinte billetes de linha", casco.get_child_count() == 20,
-		"%d billetes" % casco.get_child_count())
+	# Desde a fatia dos módulos o bilhete mudou de pai, não de cota: os vinte corpos moram dentro
+	# de `CASCO`/`MOTORES`/`ARMAS`/`TRIPULACAO`, então a contagem desce um nível.
+	_assert("o filho Casco continua com os vinte billetes de linha", _bilhetes(casco).size() == 20,
+		"%d billetes em %d módulos" % [_bilhetes(casco).size(), casco.get_child_count()])
 	var escala := (game.fleet[0]["node"] as Node3D).scale
 	_assert("promover não escala o corpo", _igual(escala.x, 1.1, FOLGA) and _igual(escala.y, 1.1, FOLGA),
 		"escala %s (raio de colisão é HULL_RADIUS, número de cadastro)" % str(escala))

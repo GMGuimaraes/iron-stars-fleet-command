@@ -79,6 +79,20 @@ func _assert(label: String, condition: bool, detail: String) -> void:
 func _igual(a: float, b: float, tol: float) -> bool:
 	return absf(a - b) <= tol
 
+## Bilhetes de um "Casco", descendo pelos quatro módulos de setor: desde a fatia dos módulos o
+## corpo mudou de pai, não de cota, e a contagem tem de enxergar o nível de dentro.
+func _bilhetes(casco: Node3D) -> Array:
+	var out: Array = []
+	var pilha: Array[Node] = [casco]
+	while not pilha.is_empty():
+		var no: Node = pilha.pop_back()
+		for filho in no.get_children():
+			if filho is MeshInstance3D:
+				out.append(filho)
+			else:
+				pilha.append(filho)
+	return out
+
 func _frames(n: int) -> void:
 	for i in range(n):
 		await process_frame
@@ -351,11 +365,13 @@ func _secao_escada() -> void:
 	_assert("promover não escala o corpo", (game.fleet[5]["node"] as Node3D).scale == escala_cauda,
 		"escala %s antes e depois do convés (raio de colisão é HULL_RADIUS, número de cadastro)"
 			% str(escala_cauda))
-	# A casarola de casco não muda: o convés é nó irmão, não costura na silhueta de linha.
-	var billetes_conv := (game.fleet[5]["node"] as Node3D).get_node("Casco").get_child_count()
-	var billetes_cruz := (game.fleet[2]["node"] as Node3D).get_node("Casco").get_child_count()
+	# A casarola de casco não muda: o convés é nó irmão, não costura na silhueta de linha. A
+	# contagem desce pelos quatro módulos de setor — o bilhete mudou de pai, não de cota.
+	var billetes_conv := _bilhetes((game.fleet[5]["node"] as Node3D).get_node("Casco")).size()
+	var billetes_cruz := _bilhetes((game.fleet[2]["node"] as Node3D).get_node("Casco")).size()
 	_assert("e o casco promovido conserva os mesmos billetes do cruzador do meio",
-		billetes_conv == billetes_cruz, "%d billetes nos dois" % billetes_conv)
+		billetes_conv == billetes_cruz and billetes_conv == 20,
+		"%d billetes nos dois" % billetes_conv)
 	# O preço da classe medido na função nomeada, em dois cascos de cadastro igual.
 	game.fleet[2]["weapons"] = 100.0
 	game.fleet[2]["crew"] = 100.0

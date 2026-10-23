@@ -303,14 +303,14 @@ func _rodar() -> void:
 	for grupo in [jogo.fleet, jogo.enemies]:
 		for unidade in grupo:
 			var mats: Dictionary = (unidade["node"] as Node3D).get_meta("mat")
-			for chave in ["hull", "steel", "gun"]:
+			for chave in ["hull", "steel", "gun", "trip"]:
 				var mat: StandardMaterial3D = mats[chave]
 				if mat.albedo_texture != null:
 					chapa_no_ar += 1
 					identidades.append(mat.albedo_texture.get_instance_id())
 			deslocos.append(str((mats["hull"] as StandardMaterial3D).uv1_offset))
-	_assert("os doze cascos vestem chapa em hull, steel e gun", chapa_no_ar == 36,
-		"%d materiais texturizados de 36" % chapa_no_ar)
+	_assert("os doze cascos vestem chapa em hull, steel, gun e trip", chapa_no_ar == 48,
+		"%d materiais texturizados de 48" % chapa_no_ar)
 	var so_uma := true
 	for id in identidades:
 		if id != identidades[0]:

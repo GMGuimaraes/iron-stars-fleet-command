@@ -1450,6 +1450,25 @@ func _build_fleets() -> void:
 			1 if is_command else (i + 6) % 4)
 		enemies.append({"node": ship, "order": "AVANÇAR", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "team": "enemy", "name": "CAPITÂNIA HOSTIL" if is_command else "HOSTIL %02d" % (i + 1), "squadron": "INIMIGO", "role": "COMANDO" if is_command else "LINE"})
 
+## Os quatro setores do casco, na mesma ordem e com o mesmo nome do seletor de subsistema do painel
+## (`TRIPULAÇÃO` do seletor vira `TRIPULACAO` no nó, porque nome de nó não leva cedilha). O pedido
+## foi «naves feitas em módulos para fazer sentido o ataque setorizado»: a conta de dano já era por
+## subsistema, o que faltava era o lugar na tela a que o nome aponta. Cada bilhete mudou de pai,
+## nenhum mudou de cota — os nós de módulo nascem com transform identidade, então a silhueta medida
+## pelas sondas é byte a byte a mesma.
+##
+## A lei que torna o módulo uma leitura honesta, medida em `tools/probes/modulos.gd`: **nenhum
+## material escrito por `_tune_ship_look` mora em dois módulos**. `hull`, `trim` e `luz` são do
+## casco; `engine` e `flare` são dos motores; `gun` é das armas; `trip` é da tripulação. `steel`
+## (popa, dorso, nacele) é chapa e atravessa dois módulos justamente porque nenhum setor o escreve.
+const SETORES: Array[String] = ["CASCO", "MOTORES", "ARMAS", "TRIPULACAO"]
+
+## O rótulo do painel para cada setor: nome de nó não leva cedilha, o português do comandante leva.
+## O seletor de subsistema é montado a partir de `SETORES`, então a ordem do painel e a ordem dos
+## módulos do casco são a mesma lista — e não podem descosturar sem quebrar sonda.
+const SETOR_PAINEL := {"CASCO": "CASCO", "MOTORES": "MOTORES", "ARMAS": "ARMAS",
+	"TRIPULACAO": "TRIPULAÇÃO"}
+
 ## Quatro gramáticas de casco, todas com os MESMOS vinte bilhetes: o que muda é a costura, nunca a
 ## contagem. É assim que a linha deixa de ser o mesmo navio dozenado e a sonda de bateria continua
 ## conferindo vinte corpos no filho "Casco" de qualquer casco da esquadra — promoted e puro.
@@ -1461,7 +1480,8 @@ func _build_fleets() -> void:
 ## navio-bandeira de apoio, casco baixo e pançudo com as torres adernas nas espáduas.
 ##
 ## As três regras que toda gramática obedece, medidas em `tools/probes/graficos.gd`:
-## (1) vinte bilhetes no filho "Casco" — nem um a mais, nem um a menos;
+## (1) vinte bilhetes no filho "Casco" — nem um a mais, nem um a menos; repartidos entre os quatro
+##     módulos nomeados, que são nós de identidade e não de geometria (ver `SETORES`);
 ## (2) meia-boca de metal até 2,5 u, porque a faixa fecha a 5,0 de passo e casco mais largo que
 ##     isso abalroa o vizinho no desenho antes de abalroar na conta;
 ## (3) a escala do nó raiz é o que a mesa lê, então a gramática muda forma dentro do mesmo
@@ -1528,7 +1548,9 @@ const GRAMATICAS: Array[Dictionary] = [
 ## Casco de linha em leitura Legend of the Galactic Heroes: aço neutro, um só filete de cor por
 ## nação, e o brilho guardado para motor e torre — nunca para o casco inteiro. Toda a geometria
 ## mora num filho "Casco": o nó raiz continua sendo a peça de xadrez que a sonda assina, e o
-## balanço visual acontece no filho, sem mover um centímetro de tabuleiro.
+## balanço visual acontece no filho, sem mover um centímetro de tabuleiro. Dentro do "Casco" os
+## vinte bilhetes se repartem entre os quatro módulos de `SETORES` — é o que dá endereço ao ataque
+## por subsistema, e não muda cota, nem contagem, nem a escala que a mesa lê.
 func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: String,
 		comando := false, superficie := 0, gramatica := 0) -> Node3D:
 	var ship := Node3D.new()
@@ -1540,6 +1562,15 @@ func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: Stri
 	var casco := Node3D.new()
 	casco.name = "Casco"
 	ship.add_child(casco)
+	## Quatro nós de setor dentro do Casco, todos com transform identidade: eles dão nome ao que o
+	## ataque por subsistema cobra e não movem um bilhete do lugar. A geometria continua filha — o
+	## que mudou foi o pai, nunca a cota.
+	var modulos: Dictionary = {}
+	for setor in SETORES:
+		var no_modulo := Node3D.new()
+		no_modulo.name = setor
+		casco.add_child(no_modulo)
+		modulos[setor] = no_modulo
 	var escape := ESCOAMENTO_HOSTIL if color == RED else ESCOAMENTO_ALIADO
 	# Metal abaixo de 0.5 de propósito: no Compatibility a superfície metálica só brilha com
 	# reflexão, e o nosso ambient é um céu quase preto. A 0.72 o casco não recebia o sol e a
@@ -1548,6 +1579,7 @@ func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: Stri
 	var mat_steel := _material(ACO_ESCURO, 0.42, 0.5)
 	var mat_trim := _material(color.darkened(0.35), 0.5, 0.3, color * 0.7)
 	var mat_gun := _material(ACO_ESCURO.lightened(0.12), 0.8, 0.3, color * 0.4)
+	var mat_trip := _material(ACO, 0.28, 0.62, color * 0.9)
 	var mat_engine := _material(escape.darkened(0.65), 0.6, 0.3, escape)
 	var mat_flare := _glasm(Color(escape, 0.55))
 	var mat_luz := _glasm(Color(escape, 0.75))
@@ -1558,6 +1590,7 @@ func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: Stri
 	_vestir(mat_hull, chapa, Vector3(2.0, 2.0, 2.0), desl)
 	_vestir(mat_steel, chapa, Vector3(3.2, 3.2, 1.4), desl)
 	_vestir(mat_gun, chapa, Vector3(4.0, 4.0, 4.0), desl)
+	_vestir(mat_trip, chapa, Vector3(2.0, 2.0, 2.0), desl)
 	var plumas: Array[MeshInstance3D] = []
 	var g: Dictionary = GRAMATICAS[clampi(gramatica, 0, GRAMATICAS.size() - 1)]
 	ship.set_meta("gramatica", String(g["nome"]))
@@ -1583,28 +1616,33 @@ func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: Stri
 	var torres_y: float = g["torres_y"]
 	var luz: Vector3 = g["luz"]
 	var luz_tamanho: float = g["luz_tamanho"]
+	var m_casco: Node3D = modulos["CASCO"]
+	var m_motor: Node3D = modulos["MOTORES"]
+	var m_armas: Node3D = modulos["ARMAS"]
+	var m_trip: Node3D = modulos["TRIPULACAO"]
 	# Espinha comprida: é o volume que lê a nave como lâmina mesmo de fora do visor.
-	_box(espinha_pos, espinha, mat_hull, casco)
+	_box(espinha_pos, espinha, mat_hull, m_casco)
 	# Proa em cone: sem caixa no nariz, a silhueta afila. Na gramática pesada o mesmo cone vira
 	# marreta — raio grande, topo aberto e comprimento curto.
-	_cylinder(proa_pos, proa.x, proa.y, proa.z, mat_hull, casco, Vector3(-PI / 2, 0, 0), 8)
-	_box(popa_pos, popa, mat_steel, casco)
-	_box(dorso_pos, dorso, mat_steel, casco)
+	_cylinder(proa_pos, proa.x, proa.y, proa.z, mat_hull, m_casco, Vector3(-PI / 2, 0, 0), 8)
+	_box(popa_pos, popa, mat_steel, m_casco)
+	_box(dorso_pos, dorso, mat_steel, m_casco)
 	# Torre de comando: na capitânia ela sobe e leva o mastro dourado, a silhueta que se
 	# aprende a procurar no meio da linha. O mastro nasce do teto da torre da própria gramática,
-	# senão o ouro ficaria flutuando acima de um casco que mudou de altura.
-	_box(torre_pos, torre, mat_hull, casco)
+	# senão o ouro ficaria flutuando acima de um casco que mudou de altura. É o módulo
+	# `TRIPULACAO`: a tripulação mora na torre, não no filete da asa.
+	_box(torre_pos, torre, mat_trip, m_trip)
 	if comando:
 		_box(Vector3(0, torre_pos.y + torre.y / 2.0 + 0.35, torre_pos.z), Vector3(0.16, 0.75, 0.16),
-			_material(HUD_OURO.darkened(0.3), 0.6, 0.28, HUD_OURO * 0.5), casco)
+			_material(HUD_OURO.darkened(0.3), 0.6, 0.28, HUD_OURO * 0.5), m_trip)
 	for lado in [-1.0, 1.0]:
 		# Asa varrida para trás: o ângulo é o que separa cruzador de tijolo. A largura é a
 		# conta: a linha fecha a 5 unidades de passo, então casco com envergadura acima de
 		# ~4 unidades faz a frota se sobrepor e o tabuleiro vira uma mancha só.
-		var asa_no := _box(Vector3(lado * asa_pos.x, asa_pos.y, asa_pos.z), asa, mat_hull, casco)
+		var asa_no := _box(Vector3(lado * asa_pos.x, asa_pos.y, asa_pos.z), asa, mat_hull, m_casco)
 		asa_no.rotation = Vector3(rolagem, lado * varredura, 0.0)
 		var filete := _box(Vector3(lado * (asa_pos.x + 0.04), asa_pos.y + 0.11, asa_pos.z),
-			Vector3(asa.x - 0.08, 0.06, 0.34), mat_trim, casco)
+			Vector3(asa.x - 0.08, 0.06, 0.34), mat_trim, m_casco)
 		filete.rotation = asa_no.rotation
 		# Nacele gêmea, bocal fechado e pluma por trás do bocal. O bocal e a pluma saem do fim
 		# da nacele, não de cota escrita à mão: casco de nacele curta não pode ter luz a meio do
@@ -1612,21 +1650,23 @@ func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: Stri
 		var fim := nacele_pos.z + nacele.z / 2.0
 		var boca := Vector3(lado * nacele_pos.x, nacele_pos.y, 0.0)
 		_cylinder(Vector3(boca.x, boca.y, nacele_pos.z), nacele.x, nacele.y, nacele.z,
-			mat_steel, casco, Vector3(-PI / 2, 0, 0), 8)
+			mat_steel, m_motor, Vector3(-PI / 2, 0, 0), 8)
 		_cylinder(Vector3(boca.x, boca.y, fim + 0.15), nacele.y, nacele.y * 0.85, 0.4,
-			mat_engine, casco, Vector3(-PI / 2, 0, 0), 8)
-		plumas.append(_quad(Vector3(boca.x, boca.y, fim + 0.7), 0.8, mat_flare, casco))
+			mat_engine, m_motor, Vector3(-PI / 2, 0, 0), 8)
+		plumas.append(_quad(Vector3(boca.x, boca.y, fim + 0.7), 0.8, mat_flare, m_motor))
 	# Torres por toda a dorsal: é a parte que acende com o `weapons` e apaga com ele. A
 	# distribuição é da gramática — à proa na escolta ligeira, adernas nas espáduas do
 	# navio-bandeira, em fila sobre a quilha do cruzador de linha.
 	for k in range(4):
 		_box(Vector3(float(torres_x[k]), torres_y, float(torres_z[k])), torre_tamanho,
-			mat_gun, casco)
+			mat_gun, m_armas)
 	# Luz de proa: o mesmo billete da pluma, com material próprio para a presa reacender azul.
-	_quad(luz, luz_tamanho, mat_luz, casco)
+	_quad(luz, luz_tamanho, mat_luz, m_casco)
 	ship.set_meta("casco", casco)
+	ship.set_meta("modulos", modulos)
 	ship.set_meta("mat", {"hull": mat_hull, "steel": mat_steel, "trim": mat_trim,
-		"gun": mat_gun, "engine": mat_engine, "flare": mat_flare, "luz": mat_luz})
+		"gun": mat_gun, "trip": mat_trip, "engine": mat_engine, "flare": mat_flare,
+		"luz": mat_luz})
 	ship.set_meta("escape", escape)
 	ship.set_meta("plumas", plumas)
 	# O hostil encara a linha aliada: -Z é a proa de quem ataca, então a frota de fora gira
@@ -1635,9 +1675,11 @@ func _make_ship(pos: Vector3, color: Color, scale_factor: float, ship_name: Stri
 		ship.rotation.y = PI
 	return ship
 
-## A leitura de dano é feita de material, não de geometria: o aço escurece e acende brasa com o
-## casco, a pluma emagrece com o motor, a torre apaga com a arma e o filete com a tripulação.
-## Roda só em casco vivo, mexe só em nós e recursos que já existem. Nenhum sorteio.
+## A leitura de dano é feita de material, não de geometria, e cada material pertence a um módulo
+## só: o aço escurece e acende brasa com o casco (`CASCO`), a pluma emagrece e o bocal apaga com o
+## motor (`MOTORES`), a torre de canhão apaga com a arma (`ARMAS`) e a torre de comando acende com
+## a tripulação (`TRIPULACAO`). Roda só em casco vivo, mexe só em nós e recursos que já existem.
+## Nenhum sorteio.
 func _tune_ship_look(unit: Dictionary) -> void:
 	var ship: Node3D = unit["node"]
 	if not is_instance_valid(ship):
@@ -1656,16 +1698,21 @@ func _tune_ship_look(unit: Dictionary) -> void:
 	# partir de 0 nesse ponto daria 0,0000 em 55% e 0,026 em 54% — invisível da ponte.
 	mat_hull.emission_energy_multiplier = 0.0 if hull > 0.55 else 0.35 + (0.55 - hull) * 2.0
 	var mat_engine: StandardMaterial3D = mats["engine"]
-	mat_engine.emission_energy_multiplier = 0.2 + engines * engines * 2.8
+	mat_engine.emission_energy_multiplier = engines * engines * 3.0
 	var mat_flare: StandardMaterial3D = mats["flare"]
-	mat_flare.albedo_color = Color(ship.get_meta("escape"), 0.08 + engines * 0.5)
+	mat_flare.albedo_color = Color(ship.get_meta("escape"), engines * 0.58)
 	for pluma in ship.get_meta("plumas"):
 		var q: MeshInstance3D = pluma
 		q.scale = Vector3(0.45 + engines * 1.05, 1.0, 0.45 + engines * 1.05)
 	var mat_gun: StandardMaterial3D = mats["gun"]
-	mat_gun.emission_energy_multiplier = 0.15 + weapons * 1.6
-	var mat_trim: StandardMaterial3D = mats["trim"]
-	mat_trim.emission_energy_multiplier = 0.1 + crew * 0.9
+	mat_gun.emission_energy_multiplier = weapons * 1.75
+	# Setor morto tem de ler morto. Os três pisos de brilho que existiam aqui (bocal 0,2, torre
+	# 0,15, filete 0,1) sobreviviam ao `MOTORES`/`ARMAS`/`TRIPULAÇÃO` a zero e pintavam empuxo,
+	# canhão e gente onde a conta já não tinha nenhum dos três. O topo de cada rampa é o MESMO
+	# número de antes — 3,0, 1,75, 1,0 e o alfa 0,58 — então casco, motor, arma e tripulação a
+	# 100% continuam o quadro que as sondas já assinaram: só o fundo ficou honesto.
+	var mat_trip: StandardMaterial3D = mats["trip"]
+	mat_trip.emission_energy_multiplier = crew
 	# Balanço de deriva no filho "Casco": a peça de xadrez não se move, quem ondula é a
 	# silhueta. `position` da raiz continua sendo a assinatura que as sondas conferem.
 	var casco: Node3D = ship.get_meta("casco")
@@ -1884,8 +1931,8 @@ func _build_ui() -> void:
 	subsystem_title.text = "SUBSISTEMA DO ALVO"
 	col.add_child(subsystem_title)
 	subsystem_selector = OptionButton.new()
-	for subsystem in ["CASCO", "MOTORES", "ARMAS", "TRIPULAÇÃO"]:
-		subsystem_selector.add_item(subsystem)
+	for setor in SETORES:
+		subsystem_selector.add_item(SETOR_PAINEL[setor])
 	col.add_child(subsystem_selector)
 	var protect_title := Label.new()
 	protect_title.text = "UNIDADE A PROTEGER / ESCOLTAR"
@@ -4463,8 +4510,9 @@ func _integrate_captured_ships() -> void:
 		report_label.text = "INCORPORAÇÃO // %d presa(s) sob comando da frota; reparo automático em curso." % gained
 
 ## A incorporação é visual antes de ser burocrática: o filete vira azul, o escapamento esfria, a
-## meia-volta aponta a proa para a própria linha e a marca dourada entra no filho "Casco", junto
-## do resto do navio. Nenhum número muda aqui — só material e rotação do nó raiz.
+## meia-volta aponta a proa para a própria linha e a marca dourada entra no módulo `TRIPULACAO`,
+## junto da torre que agora serve a aliança. Nenhum número muda aqui — só material e rotação do nó
+## raiz.
 func _mark_as_prize(ship: Node3D) -> void:
 	var mats: Dictionary = ship.get_meta("mat")
 	var mat_trim: StandardMaterial3D = mats["trim"]
@@ -4472,14 +4520,17 @@ func _mark_as_prize(ship: Node3D) -> void:
 	mat_trim.emission = BLUE * 0.7
 	var mat_gun: StandardMaterial3D = mats["gun"]
 	mat_gun.emission = BLUE * 0.4
+	var mat_trip: StandardMaterial3D = mats["trip"]
+	mat_trip.emission = BLUE * 0.9
 	var mat_engine: StandardMaterial3D = mats["engine"]
 	mat_engine.emission = ESCOAMENTO_ALIADO
 	(mats["luz"] as StandardMaterial3D).albedo_color = Color(BLUE, 0.75)
 	# O material da pluma é reescrito todo quadro a partir desta chave: trocá-la é trocar a cor
 	# do escapamento sem encostar em nenhum dos dois nós.
 	ship.set_meta("escape", ESCOAMENTO_ALIADO)
+	var torre_trip: Node3D = (ship.get_meta("modulos") as Dictionary)["TRIPULACAO"]
 	_box(Vector3(0, float(_gramatica_de(ship)["marca_y"]), 0.0), Vector3(0.55, 0.4, 0.55),
-		_material(GOLD, 0.3, 0.25, GOLD * 0.8), ship.get_meta("casco"))
+		_material(GOLD, 0.3, 0.25, GOLD * 0.8), torre_trip)
 	ship.rotation.y = 0.0
 
 ## A marca dourada e o mastro da capitânia precisam da altura do convés da gramática do casco, e

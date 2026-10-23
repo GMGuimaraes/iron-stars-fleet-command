@@ -2,7 +2,7 @@ extends SceneTree
 
 ## Fotogramas reais da ponte para ajuste de pintura. Headless usa o renderizador dummy e devolve
 ## tela preta: neblina, exposição, glow e recorte da janela só se medem com PNG de verdade, e
-## estes vinte e cinco quadros são o material de leitura. Não mexe na economia nem no sorteio de
+## estes vinte e seis quadros são o material de leitura. Não mexe na economia nem no sorteio de
 ## combate — mas os quadros do meio montam cenário de verdade, e cenário engole e queima: por isso a
 ## sonda devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção. Os três
 ## quadros da trinca (11b, 11c, 11d) são a exceção declarada: eles congelam o `process` do jogo,
@@ -75,6 +75,18 @@ const RAIO_JANELA_MIN := 24.0
 const FACA_ACESA := 0.25
 ## Distância aceita entre o epicentro previsto pela projeção e o centro medido no fotograma.
 const TOL_EPICENTRO := 90.0
+## Espelhos das rampas de `_tune_ship_look` para o quadro 05i. Se o topo de uma rampa mudar em
+## `main.gd` e o número aqui não mudar junto, a asserção quebra — é de propósito: o quadro fotografa
+## exatamente a conta que a salva cobra, e não uma impressão de brilho.
+const TOPO_ENGINE := 3.0
+const TOPO_FLARE := 0.58
+const TOPO_GUN := 1.75
+const TOPO_TRIP := 1.0
+const PLUMA_MORTA := 0.45
+const PLUMA_CHEIA := 1.5
+## Casco do quadro de setor ferido: abaixo dos 55% da brasa e acima de zero, para o aço escurecer
+## sem virar destroço (destroço tem contrato próprio, fotografado nos quadros 03 e 12/13).
+const CASCO_FERIDO := 20.0
 
 var breaks := 0
 var notes: Array[String] = []
@@ -382,6 +394,158 @@ func _initialize() -> void:
 		camera_faixa.queue_free()
 	for k in range(quarteto.size()):
 		(game.fleet[quarteto[k]]["node"] as Node3D).position = guarda[k]
+
+	# 05i — o ataque por setor fotografado setor por setor. `tools/probes/modulos.gd` prova por
+	# número que cada subsistema tem gaveta dentro do casco e que é a gaveta que manda na tinta; a
+	# pergunta do PNG é se o olho separa as quatro no mesmo quadro, sem HUD e sem legenda. Cinco
+	# cascos da proa saem da linha para água funda: o primeiro inteiro, o segundo com o `CASCO` a
+	# 20%, o terceiro sem `MOTORES`, o quarto sem `ARMAS`, o quinto sem `TRIPULAÇÃO`. A baixa entra
+	# pelo número que a salva cobra, nunca pelo material escrito a mão — se a foto mentisse por
+	# tinta, ela mentiria exatamente da forma que o pedido do comandante quer evitar.
+	var cinco_setor: Array[int] = [0, 1, 2, 3, 4]
+	var guarda_ficha: Array = []
+	var guarda_posto: Array[Vector3] = []
+	var caixas_setor: Array = []
+	var boca_setor_max := 0.0
+	for i in cinco_setor:
+		var un_guarda: Dictionary = game.fleet[i]
+		guarda_ficha.append([un_guarda["hp"], un_guarda["engines"], un_guarda["weapons"],
+			un_guarda["crew"]])
+		var corpo_guarda: Node3D = un_guarda["node"]
+		guarda_posto.append(corpo_guarda.position)
+		var caixa_s: Array = _caixa_do_casco(corpo_guarda)
+		caixas_setor.append(caixa_s)
+		if caixa_s.size() == 2:
+			boca_setor_max = maxf(boca_setor_max,
+				((caixa_s[1] - caixa_s[0]) / 2.0).x * corpo_guarda.scale.x)
+	var passo_setor := 2.0 * boca_setor_max + 2.4
+	var minimo_setor := Vector3(INF, INF, INF)
+	var maximo_setor := Vector3(-INF, -INF, -INF)
+	var medidos_setor := 0
+	for k in range(cinco_setor.size()):
+		var un_k: Dictionary = game.fleet[cinco_setor[k]]
+		un_k["hp"] = CASCO_FERIDO if k == 1 else 100.0
+		un_k["engines"] = 0.0 if k == 2 else 100.0
+		un_k["weapons"] = 0.0 if k == 3 else 100.0
+		un_k["crew"] = 0.0 if k == 4 else 100.0
+		game._tune_ship_look(un_k)
+		var corpo_k: Node3D = un_k["node"]
+		corpo_k.position = Vector3((float(k) - 2.0) * passo_setor, 0.0, -140.0)
+		if caixas_setor[k].size() == 2:
+			var escala_k: Vector3 = corpo_k.scale
+			minimo_setor = minimo_setor.min(corpo_k.position + caixas_setor[k][0] * escala_k)
+			maximo_setor = maximo_setor.max(corpo_k.position + caixas_setor[k][1] * escala_k)
+			medidos_setor += 1
+	var centro_setor := (minimo_setor + maximo_setor) / 2.0
+	var meia_setor: Vector3 = (maximo_setor - minimo_setor) / 2.0
+	var olhar_setor := Vector3(0.0, 0.30, -1.0).normalized()
+	var distancia_setor := 0.0
+	if medidos_setor == cinco_setor.size():
+		distancia_setor = _distancia_de_enquadramento(-meia_setor, meia_setor, olhar_setor, 46.0) * 1.05
+	_assert("a faixa dos cinco setores tem caixa, passo e moldura medidos",
+		medidos_setor == cinco_setor.size() and passo_setor > 4.0 and distancia_setor > 1.0,
+		"passo %0.2f u, olho a %0.2f u de (%s), meia-caixa %s" % [passo_setor, distancia_setor,
+			centro_setor, _caixa_texto([minimo_setor, maximo_setor])])
+	# A leitura de tinta: para cada um dos cinco, só o material do setor baixado pode estar no piso.
+	# `pluma` entra na régua porque é a única parte do quadro que muda de tamanho, não de brilho.
+	var tinta_ok := true
+	var tinta_lida: Array[String] = []
+	for k in range(cinco_setor.size()):
+		var corpo_t: Node3D = game.fleet[cinco_setor[k]]["node"]
+		var mats_t: Dictionary = corpo_t.get_meta("mat")
+		var eng_lido := float((mats_t["engine"] as StandardMaterial3D).emission_energy_multiplier)
+		var flare_lido := float((mats_t["flare"] as StandardMaterial3D).albedo_color.a)
+		var gun_lido := float((mats_t["gun"] as StandardMaterial3D).emission_energy_multiplier)
+		var trip_lido := float((mats_t["trip"] as StandardMaterial3D).emission_energy_multiplier)
+		var plumas_t: Array = corpo_t.get_meta("plumas")
+		var pluma_lida := 0.0
+		if plumas_t.size() > 0:
+			pluma_lida = float((plumas_t[0] as MeshInstance3D).scale.x)
+		var eng_querido := 0.0 if k == 2 else TOPO_ENGINE
+		var flare_querido := 0.0 if k == 2 else TOPO_FLARE
+		var gun_querido := 0.0 if k == 3 else TOPO_GUN
+		var trip_querido := 0.0 if k == 4 else TOPO_TRIP
+		var pluma_querida := PLUMA_MORTA if k == 2 else PLUMA_CHEIA
+		var morna := (absf(eng_lido - eng_querido) < 0.005
+			and absf(flare_lido - flare_querido) < 0.005
+			and absf(gun_lido - gun_querido) < 0.005
+			and absf(trip_lido - trip_querido) < 0.005
+			and absf(pluma_lida - pluma_querida) < 0.005)
+		if not morna:
+			tinta_ok = false
+		tinta_lida.append("casco%d[%0.2f/%0.2f/%0.2f/%0.2f/%0.2f]" % [k, eng_lido, flare_lido,
+			gun_lido, trip_lido, pluma_lida])
+	_assert("só a tinta do setor baixado cai ao piso, e as outras três ficam no topo da rampa",
+		tinta_ok, "%s (topos %0.1f/%0.2f/%0.1f/%0.1f, pluma %0.2f→%0.2f)" % [", ".join(tinta_lida),
+			TOPO_ENGINE, TOPO_FLARE, TOPO_GUN, TOPO_TRIP, PLUMA_MORTA, PLUMA_CHEIA])
+	# O aço é do CASCO e de mais ninguém: os outros três setores mortos escurecem a própria gaveta,
+	# nunca a chapa. A régua é luminância, porque `ACO`/`CARVAO` são tinta de `main.gd` e o que a
+	# ponte lê é «o casco a 20% está mais preto que o casco inteiro».
+	var aco0 := (game.fleet[0]["node"] as Node3D).get_meta("mat") as Dictionary
+	var aco1 := (game.fleet[1]["node"] as Node3D).get_meta("mat") as Dictionary
+	var c0: Color = (aco0["hull"] as StandardMaterial3D).albedo_color
+	var c1: Color = (aco1["hull"] as StandardMaterial3D).albedo_color
+	var visivel_ok := true
+	var visivel_lido: Array[String] = []
+	for k in range(2, cinco_setor.size()):
+		var ck: Color = ((game.fleet[cinco_setor[k]]["node"] as Node3D).get_meta("mat")
+			as Dictionary)["hull"].albedo_color
+		if absf(ck.get_luminance() - c0.get_luminance()) > 0.001:
+			visivel_ok = false
+		visivel_lido.append("casco%d %0.3f" % [k, ck.get_luminance()])
+	_assert("o aço escurece só com o CASCO baixado — motor, arma e tripulação mortos não encostam na chapa",
+		c1.get_luminance() < c0.get_luminance() - 0.05 and visivel_ok,
+		"inteiro %0.3f, ferido %0.3f, setores mortos %s" % [c0.get_luminance(), c1.get_luminance(),
+			", ".join(visivel_lido)])
+	# E a árvore por trás da foto: cada um dos cinco cascos abre nas quatro gavetas com os bilhetes
+	# da lei, conferidos aqui (na moldura que o comando vê) e não só na sonda de lógica.
+	var particoes := {}
+	var cinco_lidos: Array[String] = []
+	for k in cinco_setor:
+		var corpo_p: Node3D = game.fleet[k]["node"]
+		var leitura: Array[String] = []
+		for gaveta in ["CASCO", "MOTORES", "ARMAS", "TRIPULACAO"]:
+			var no_g: Node3D = (corpo_p.get_meta("modulos") as Dictionary)[gaveta]
+			leitura.append("%d" % _bilhetes(no_g).size())
+		var chave := "/".join(leitura)
+		particoes[chave] = int(particoes.get(chave, 0)) + 1
+		cinco_lidos.append(chave)
+	_assert("os cinco cascos fotografados particionam 9/6/4/1 na árvore",
+		int(particoes.get("9/6/4/1", 0)) == cinco_setor.size(), "%s" % ", ".join(cinco_lidos))
+	if distancia_setor > 1.0:
+		var camera_setor := Camera3D.new()
+		camera_setor.name = "SondaCincoSetores"
+		camera_setor.fov = 46.0
+		var desloc_setor: Vector3 = olhar_setor * distancia_setor
+		camera_setor.position = centro_setor + desloc_setor
+		var horiz_setor := Vector2(desloc_setor.x, desloc_setor.z).length()
+		camera_setor.rotation = Vector3(-atan2(desloc_setor.y, horiz_setor),
+			atan2(desloc_setor.x, desloc_setor.z), 0.0)
+		game.add_child(camera_setor)
+		await _frames(1)
+		camera_setor.make_current()
+		await _fotograma(game, "05i_cinco_setores")
+		game.ponte_camera.make_current()
+		camera_setor.queue_free()
+	# Devolução: a faixa volta com a ficha e o posto exatos de antes, e a tinta é reescrita pelo
+	# mesmo `_tune_ship_look` de sempre — os quadros seguintes continuam vendo a esquadra que
+	# encontraram, e `06` em diante não herda setor morto nenhum.
+	var devolvido_ok := true
+	var devolvido_lido: Array[String] = []
+	for k in range(cinco_setor.size()):
+		var un_d: Dictionary = game.fleet[cinco_setor[k]]
+		un_d["hp"] = guarda_ficha[k][0]
+		un_d["engines"] = guarda_ficha[k][1]
+		un_d["weapons"] = guarda_ficha[k][2]
+		un_d["crew"] = guarda_ficha[k][3]
+		(un_d["node"] as Node3D).position = guarda_posto[k]
+		game._tune_ship_look(un_d)
+		var ficha_d := [un_d["hp"], un_d["engines"], un_d["weapons"], un_d["crew"]]
+		if str(ficha_d) != str(guarda_ficha[k]) or not (un_d["node"] as Node3D).position.is_equal_approx(guarda_posto[k]):
+			devolvido_ok = false
+		devolvido_lido.append(str(ficha_d))
+	_assert("a faixa devolve ficha e posto exatos de antes de o próximo quadro fotografar",
+		devolvido_ok, "%s" % ", ".join(devolvido_lido))
 
 	# 06 — painel em acordeão: a dobra é pintura, e sonda de lógica não mede se o grupo fechado
 	# ainda cabe na janela. A camada de UI volta a ficar visível de propósito: os quadros 04 e 05 a
@@ -817,10 +981,26 @@ func _frac_da_ida(game) -> float:
 	return clampf((float(game.battle_clock) - float(caca["nascido"]))
 		/ maxf(float(caca["tau"]), 0.001), 0.0, 1.0)
 
+## Bilhetes de um "Casco", descendo pelos quatro módulos de setor (mesmo andador de
+## `tools/probes/graficos.gd`): o corpo mudou de pai, não de cota.
+func _bilhetes(casco: Node3D) -> Array:
+	var out: Array = []
+	var pilha: Array[Node] = [casco]
+	while not pilha.is_empty():
+		var no: Node = pilha.pop_back()
+		for filho in no.get_children():
+			if filho is MeshInstance3D:
+				out.append(filho)
+			else:
+				pilha.append(filho)
+	return out
+
 ## Caixa do casco, bilhete a bilhete, na escala própria do navio. `global_aabb` é servido pelo
 ## renderizador e devolve caixa vazia sob `--headless`, então a medição é `mesh.get_aabb()` puxado
-## pelo transform do nó dentro do `Casco` — o mesmo instrumento de `tools/probes/graficos.gd`. Pluma
-## e luz ficam de fora: são brilho, não volume, e entrariam na conta como silhueta que não existe.
+## pelo transform do nó dentro do `Casco` — o mesmo instrumento de `tools/probes/graficos.gd`. Desde
+## a fatia dos módulos a descida atravessa `CASCO`/`MOTORES`/`ARMAS`/`TRIPULACAO`: o bilhete mudou
+## de pai, não de cota, e o enquadramento tem de ver o mesmo casco de antes. Pluma e luz ficam de
+## fora: são brilho, não volume, e entrariam na conta como silhueta que não existe.
 ## Devolve `[minimo, maximo]`, ou Array vazio quando nenhum bilhete foi medido — enquadramento
 ## nenhum se assina sobre caixa vazia.
 func _caixa_do_casco(ship: Node3D) -> Array:
@@ -830,7 +1010,7 @@ func _caixa_do_casco(ship: Node3D) -> Array:
 	var maximo := Vector3(-INF, -INF, -INF)
 	var inverso: Transform3D = casco.global_transform.affine_inverse()
 	var medidos := 0
-	for billete in casco.get_children():
+	for billete in _bilhetes(casco):
 		var mi := billete as MeshInstance3D
 		if mi == null or mi.mesh == null:
 			continue

@@ -93,6 +93,22 @@ func _somar_casco(game) -> float:
 			total += float(unit["hp"])
 	return total
 
+## Bilhetes de um casco, descendentes do filho "Casco" e não só filhos diretos: desde a fatia dos
+## módulos os vinte corpos moram dentro de `CASCO`/`MOTORES`/`ARMAS`/`TRIPULACAO`. A medição é a
+## mesma, o que mudou é a descida — e a descida é recursiva justamente para a sonda não ter de
+## conhecer a arborização de cada fatia futura.
+func _bilhetes(casco: Node3D) -> Array:
+	var out: Array = []
+	var pilha: Array[Node] = [casco]
+	while not pilha.is_empty():
+		var no: Node = pilha.pop_back()
+		for filho in no.get_children():
+			if filho is MeshInstance3D:
+				out.append(filho)
+			else:
+				pilha.append(filho)
+	return out
+
 ## Caixa dos bilhetes de METAL do filho "Casco", medida na moldura do próprio Casco. A caixa vem de
 ## `mesh.get_aabb()` e do encadeamento de `global_transform`, nunca de `global_aabb`: em headless o
 ## AABB de mundo é serviço do renderizador, e o renderizador dummy devolve caixa vazia — a primeira
@@ -108,7 +124,7 @@ func _silhueta(unit: Dictionary) -> Vector3:
 	var minimo: Vector3 = Vector3(INF, INF, INF)
 	var maximo: Vector3 = Vector3(-INF, -INF, -INF)
 	var medidos := 0
-	for billete in casco.get_children():
+	for billete in _bilhetes(casco):
 		var mi := billete as MeshInstance3D
 		if mi == null or mi.mesh == null:
 			continue
@@ -141,11 +157,12 @@ func _initialize() -> void:
 	var casco: Node3D = _casco_of(game.fleet[0])
 	_assert("nave tem filho Casco", is_instance_valid(casco) and casco.name == "Casco",
 		"nome=%s" % str(casco.name))
-	_assert("nave de linha montada por inteiro", casco.get_child_count() >= 20,
-		"%d billetes (esperado >= 20)" % casco.get_child_count())
+	_assert("nave de linha montada por inteiro", _bilhetes(casco).size() >= 20,
+		"%d billetes (esperado >= 20)" % _bilhetes(casco).size())
 	var capitania: Node3D = _casco_of(game.enemies[0])
-	_assert("capitânia hostil leva mastro a mais", capitania.get_child_count() > casco.get_child_count(),
-		"%d contra %d da linha" % [capitania.get_child_count(), casco.get_child_count()])
+	_assert("capitânia hostil leva mastro a mais",
+		_bilhetes(capitania).size() > _bilhetes(casco).size(),
+		"%d contra %d da linha" % [_bilhetes(capitania).size(), _bilhetes(casco).size()])
 	var vivos := 0
 	for list in [game.fleet, game.enemies]:
 		for unit in list:
@@ -293,8 +310,8 @@ func _initialize() -> void:
 		hostil.get_meta("escape") == ESCOAMENTO_ALIADO, "escape=%s" % str(hostil.get_meta("escape")))
 	_assert("filete da presa vira azul", _mat(presa, "trim").albedo_color == BLUE.darkened(0.35),
 		"albedo=%s" % str(_mat(presa, "trim").albedo_color))
-	_assert("presa leva a marca dourada no Casco", _casco_of(presa).get_child_count() > 20,
-		"%d billetes depois da incorporação" % _casco_of(presa).get_child_count())
+	_assert("presa leva a marca dourada no Casco", _bilhetes(_casco_of(presa)).size() > 20,
+		"%d billetes depois da incorporação" % _bilhetes(_casco_of(presa)).size())
 
 	# 10 — Destroço: some a luz, não a nave; e o corpo morto continua parado.
 	var alvo_morte: Dictionary = game.enemies[3]
@@ -324,7 +341,8 @@ func _initialize() -> void:
 
 	# 12 — As quatro gramáticas de casco. A esquadra deixou de ser o mesmo navio dozenado, e a
 	# sonda não julga beleza: cobra as três leis que a tabela promete. (1) Vinte bilhetes no filho
-	# "Casco" em TODA gramática — é o que mantém verdes as asserções de bateria e convés, que comparam
+	# "Casco" em TODA gramática — contados descendo pelos quatro módulos, porque o bilhete mudou de
+	# pai e não de cota; é o que mantém verdes as asserções de bateria e convés, que comparam
 	# a casarola de um casco promovido com a de um cruzador puro. (2) Meia-boca de metal abaixo de
 	# 2,5 u na moldura do próprio casco, porque a faixa fecha a 5,0 de passo. (3) Forma é tabela, não
 	# sorteio: duas montadas da mesma cena têm silhuetas byte a byte idênticas e o mesmo estado de
@@ -339,7 +357,7 @@ func _initialize() -> void:
 	var billetes_ok := true
 	for i in range(6):
 		var casco_gram: Node3D = _casco_of(g_a.fleet[i])
-		if casco_gram.get_child_count() != 20:
+		if _bilhetes(casco_gram).size() != 20:
 			billetes_ok = false
 		var nome_gram: String = String(g_a.fleet[i]["node"].get_meta("gramatica"))
 		if not nomes.has(nome_gram):
@@ -353,8 +371,8 @@ func _initialize() -> void:
 	_assert("toda gramática veste os mesmos vinte bilhetes de linha", billetes_ok,
 		"seis cascos azuis conferidos um a um")
 	_assert("a capitânia leva o mastro dourado sobre a torre da própria gramática",
-		_casco_of(g_a.enemies[0]).get_child_count() == 21,
-		"%d billetes" % _casco_of(g_a.enemies[0]).get_child_count())
+		_bilhetes(_casco_of(g_a.enemies[0])).size() == 21,
+		"%d billetes" % _bilhetes(_casco_of(g_a.enemies[0])).size())
 	var silhuetas: Dictionary = {}
 	for i in range(6):
 		var nome_amostra: String = String(g_a.fleet[i]["node"].get_meta("gramatica"))
