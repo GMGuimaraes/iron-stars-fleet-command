@@ -80,11 +80,11 @@ func _mat(unit: Dictionary, chave: String) -> StandardMaterial3D:
 	var mats: Dictionary = ship.get_meta("mat")
 	return mats[chave]
 
+## O céu é lido pela variável do jogo, não pelo tipo do nó: desde a esquadra de blocos há TRÊS
+## `MultiMeshInstance3D` filhos do jogo (o céu e os dois corpos da massa), e varrer por tipo passava
+## a conferir o desenho de um esquadrão como se fosse o fundo do mapa.
 func _starfield(game) -> MultiMeshInstance3D:
-	for child in game.get_children():
-		if child is MultiMeshInstance3D:
-			return child
-	return null
+	return game.campo_estelar
 
 func _somar_casco(game) -> float:
 	var total := 0.0
@@ -418,8 +418,10 @@ func _initialize() -> void:
 		and int(g_a.visual_rng.state) == int(g_b.visual_rng.state),
 		"maior diferença de caixa %.6f u; visual_rng A=%d B=%d" % [ruído,
 			int(g_a.visual_rng.state), int(g_b.visual_rng.state)])
+	# Vinte e quatro, não vinte e dois: a esquadra de blocos pendura DOIS `MultiMeshInstance3D` no
+	# jogo (um por lado) e essa é a única árvore nova. A camada de materiais continua sem criar nó.
 	_assert("a camada de cascos não criou nó no tabuleiro",
-		g_a.get_child_count() == 22 and g_b.get_child_count() == 22,
+		g_a.get_child_count() == 24 and g_b.get_child_count() == 24,
 		"%d filhos na montagem" % g_a.get_child_count())
 
 	# 13 — Prova central: dois jogos, mesma semente, a mesma batalha com a pintura nova.

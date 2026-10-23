@@ -411,6 +411,17 @@ const Geometria := preload("res://geometria.gd")
 ## geometria sobre o cadastro do gerador, não nó de cena e não sorteio — e a pose mora aqui porque
 ## `battle_clock` é o único relógio que a ponte tem.
 const RigTripulante := preload("res://tripulante_rig.gd")
+## Esquadra de blocos: a massa de ~100 cascos por bloco que navega em volta dos doze núcleos. É
+## geradora de estado e de transformada, não nó de cena — as duas listas de dicionários vivem aqui
+## e os dois `MultiMeshInstance3D` da ponte são a única geometria dela. Nada que ela faz toca
+## `rng`: a prova é `tools/probes/esquadra.gd`.
+const Esquadra := preload("res://esquadra.gd")
+## Os dois degraus do zoom de campo. `PONTE_FOV` é o número com que a câmara nasce (78°, a sala
+## inteira no quadro); `CAMPO_FOV` é o teleobjetivo que faz uma casa de 1,6 u ocupar meia tela a
+## 40 u. O zoom fecha a FOV da MESMA câmara filha: nenhuma câmera nova, nenhuma sala nova, o
+## visor continua sendo a moldura — a massa entra no quadro por dentro dele.
+const PONTE_FOV := 78.0
+const CAMPO_FOV := 14.0
 var paused := false
 ## Signed: positivo é avante, negativo é ré. O HUD lê em porcentagem com sinal.
 var throttle := 0.0
@@ -453,6 +464,9 @@ var restart_button: Button
 ## continuam sendo trinta e cinco.
 var capitania_label: Label
 var speed_label: Label
+## A linha da massa no letreiro de cima: blocos vivos e cascos restantes de cada lado. É Label e
+## não botão — a contagem de trinta e cinco controles de `tools/probes/menu.gd` não se mexe.
+var massa_label: Label
 var command_label: Label
 var bridge_rig: Node3D
 var rng := RandomNumberGenerator.new()
@@ -596,6 +610,20 @@ var poco_lente: MultiMeshInstance3D
 var campo_estelar: MultiMeshInstance3D
 var estrelas_base: Array[Transform3D] = []
 var estrelas_pintadas: Array[Transform3D] = []
+## Os dois corpos da massa: UM `MultiMeshInstance3D` por time, cada um com as 2 880 casas dos seus
+## 120 blocos. Não existe nó por bloco nem nó por casa — é a mesma lei do céu estrelado, e é o que
+## faz de "milhares de naves" um punhado de chamadas de desenho medidas (11,9 por quadro com a
+## esquadra no ar, contra 240 se cada bloco fosse um nó) em vez de cinco mil e setecentos.
+var massa_aliada: MultiMeshInstance3D
+var massa_hostil: MultiMeshInstance3D
+## Estado da esquadra de blocos. Vive em dicionários; a pintura é derivação.
+var esquadra := Esquadra.new()
+## Degrau do zoom de campo, 0 (ponte) a 1 (teleobjetivo). Roda do mouse.
+var campo_zoom := 0.0
+## Salva em que as cores da massa foram reescritas por último: a cor só muda com o atrito, e o
+## atrito só cobra na salva — repintar 2 880 cores por quadro seria pagar duas vezes pelo mesmo
+## número.
+var cores_da_massa_na_salva := -1
 ## Quantas estrelas o céu emprestou para a lente no último quadro. Medido pela sonda: zero em
 ## campo aberto, e o teto da conta quando o poço está montado e a proa apontada para ele.
 var estrelas_dobradas := 0
@@ -693,6 +721,9 @@ func _ready() -> void:
 	# a frota nasce, e é para ele que o RECOMEÇAR volta antes de remontar os doze cascos.
 	visual_base = visual_rng.state
 	_build_fleets()
+	# A massa entra depois dos doze núcleos e antes da mesa: ela lê as posições de largada dos
+	# cascos como âncora, e a holografia continua contando só os doze.
+	_build_esquadras()
 	_rebuild_holo()
 	# Antes da primeira UI: sem isto a ponte abriria com 0/0 quando o tabuleiro já tem seis
 	# cascos hostis a confirmar.
@@ -724,6 +755,7 @@ func _process(delta: float) -> void:
 	else:
 		_update_capital_ship(delta)
 	_update_fleet(delta)
+	_atualizar_esquadras(delta)
 	_update_probes(delta)
 	_atualizar_misseis()
 	_atualizar_cacas()
@@ -747,6 +779,13 @@ func _input(event: InputEvent) -> void:
 			_toggle_pause()
 		elif event.keycode == KEY_ESCAPE:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	# Zoom de campo na roda. É `_input` e não `_unhandled_input` de propósito: a roda também rola
+	# as listas do painel, e o zoom não quer o gesto exclusivo — ele só lê, nunca toma o evento.
+	elif event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			campo_zoom = clampf(campo_zoom + 0.1, 0.0, 1.0)
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			campo_zoom = clampf(campo_zoom - 0.1, 0.0, 1.0)
 
 func _build_environment() -> void:
 	var world_env := WorldEnvironment.new()
@@ -998,7 +1037,7 @@ func _build_bridge() -> void:
 	camera.name = "BridgeCamera"
 	camera.position = Vector3(0, 1.0, 3.0)
 	camera.rotation_degrees = Vector3(-3, 0, 0)
-	camera.fov = 78
+	camera.fov = PONTE_FOV
 	bridge_rig.add_child(camera)
 	ponte_camera = camera
 	ponte_camera_base = camera.position
@@ -1346,6 +1385,12 @@ func _update_bridge(_delta: float) -> void:
 	# A trinca vem antes da guarda da mesa: o vidro é do casco, não do projetor holográfico, e um
 	# cenário montado sem mesa ainda tem de mostrar a rachadura que a última salva abriu.
 	_trinca_vidro()
+	# Zoom de campo escrito na câmara filha, a cada quadro, inclusive na pausa: é exatamente ali
+	# que o comandante encosta a roda para contar fileiras. Nenhuma câmera nova e nenhum nó novo —
+	# a FOV é o único número que este degrau mexe, e a posição da câmara continua sendo a
+	# assinatura que o retrato da ponte grava e devolve.
+	if is_instance_valid(ponte_camera):
+		ponte_camera.fov = lerpf(PONTE_FOV, CAMPO_FOV, campo_zoom)
 	if not is_instance_valid(holo_root):
 		return
 	holo_anel.rotation.y += _delta * 0.32
@@ -1442,6 +1487,106 @@ func _mais_proximo_vivo(lista: Array[Dictionary], chave_no: String, chave_vida: 
 			distancia = d
 			melhor = no.global_position
 	return melhor
+
+## ---- Esquadra de blocos: a massa em volta dos núcleos ----
+
+## Monta os dois corpos da massa: UM `MultiMeshInstance3D` por time, cada um com as 2 880 casas
+## dos seus 120 blocos, e a MESMA malha de cinco bilhetes nos dois — o que separa aliado de hostil
+## é a cor por instância e o brilho do material, nunca uma malha nova. É a lei do céu estrelado
+## aplicada a uma batalha: 5 760 navios desenhados em lote, porque um nó por casa seriam 5 760
+## chamadas no Compatibility e o visor viraria slide show. O preço medido da esquadra inteira, com
+## os 240 blocos no ar, é 11,9 chamadas de desenho por quadro (`tools/probes/massa_visivel.gd`) —
+## não as "duas" que os cabeçalhos antigos prometiam.
+##
+## A massa não tem nó pai e não é carimbada `de_batalha`: ela é cenário de guerra permanente, como
+## o campo de estrelas, e o RECOMEÇAR a remonta por dados (`_remontar_esquadras`) sem tocar em um
+## nó sequer. Um carimbo aqui faria o reset desmontar a geometria que a remontagem não recria.
+func _build_esquadras() -> void:
+	var malha := esquadra.malha_replica()
+	massa_aliada = _montar_massa("Esquadra Aliada", malha, BLUE * 0.3)
+	massa_hostil = _montar_massa("Esquadra Hostil", malha, RED * 0.3)
+	_remontar_esquadras()
+
+
+func _montar_massa(nome: String, malha: Mesh, brilho: Color) -> MultiMeshInstance3D:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	# Dois flags, dois papéis: sem `use_colors` o motor descarta a cor escrita por instância, e sem
+	# `vertex_color_use_as_albedo` o material descarta a cor que o motor passou. Um dos dois
+	# esquecido é a massa inteira cinza, com o atrito happening na conta e invisível na tela.
+	mm.use_colors = true
+	mm.mesh = malha
+	mm.instance_count = Esquadra.INSTANCIAS_POR_LADO
+	var no := MultiMeshInstance3D.new()
+	no.name = nome
+	no.multimesh = mm
+	# Albedo branco de caso pensado: com a cor vindo por instância, qualquer tom no material
+	# multiplicaria o tom da fileira, e o azul-aliado viraria verde-pálido no fim do atrito.
+	var mat := _material(Color.WHITE, 0.34, 0.55, brilho)
+	mat.vertex_color_use_as_albedo = true
+	no.material_override = mat
+	# Caixa autorgada cobrindo o campo inteiro: a AABB da malha é a de UMA nave de 1,2 u, e sem
+	# isto o culling por frustum decide que a esquadra não está na tela antes de ela aparecer.
+	no.custom_aabb = AABB(Vector3(-260.0, -140.0, -720.0), Vector3(520.0, 280.0, 760.0))
+	add_child(no)
+	return no
+
+
+## Posições dos núcleos vivos, na ordem do cadastro, até seis. É a âncora dos esquadrões: a massa
+## segue a linha, e a linha nunca segue a massa — os doze cascos continuam mandando no próprio
+## posicionamento, como as sondas deles assinam.
+func _nucleos_da_esquadra(aliada: bool) -> Array:
+	var lista := fleet if aliada else enemies
+	var posicoes: Array = []
+	for unit in lista:
+		if float(unit["hp"]) <= 0.0 or String(unit.get("order", "")) == "CAPTURADO":
+			continue
+		var node: Node3D = unit["node"]
+		if not is_instance_valid(node):
+			continue
+		posicoes.append(node.position)
+		if posicoes.size() >= Esquadra.ESQUADROES_NO_LADO:
+			break
+	return posicoes
+
+
+## Recruta a massa do zero. É a MESMA função no `_ready` e no RECOMEÇAR: a esquadra nasce das
+## posições de largada dos núcleos, e elas mudam com a semente nova — herdar a formação da partida
+## anterior seria a ponte mostrando uma batalha que o tabuleiro não está travando.
+func _remontar_esquadras() -> void:
+	esquadra.montar(_nucleos_da_esquadra(true), _nucleos_da_esquadra(false))
+	cores_da_massa_na_salva = -1
+	_pintar_massa(true)
+
+
+func _atualizar_esquadras(delta: float) -> void:
+	esquadra.passo(delta, _nucleos_da_esquadra(true), _nucleos_da_esquadra(false))
+	_pintar_massa(false)
+
+
+## Pinta as transformadas sujas e, quando a salva virou, as cores. A cor não precisa de repintura
+## por quadro porque o único canal que a move é o atrito, e o atrito cobra na salva.
+func _pintar_massa(forcar: bool) -> void:
+	var cores_sujas := forcar or esquadra.salva_numero != cores_da_massa_na_salva
+	var pares := [[massa_aliada, "aliado", BLUE], [massa_hostil, "hostil", RED]]
+	for par in pares:
+		var no: MultiMeshInstance3D = par[0]
+		var lado := String(par[1])
+		if not is_instance_valid(no) or no.multimesh == null:
+			continue
+		esquadra.pintar(no.multimesh, lado, forcar)
+		if cores_sujas:
+			esquadra.pintar_cores(no.multimesh, lado, par[2])
+	if cores_sujas:
+		cores_da_massa_na_salva = esquadra.salva_numero
+
+
+## A salva da massa, dentro da mesma cadência da salva dos núcleos. Os dois ledger não se tocam:
+## a massa não escreve `hp` de casco nenhum, não gasta um dígito de `rng` e não acrescenta uma
+## linha à contagem que as sondas dos doze cascos conferem.
+func _salva_da_massa() -> void:
+	esquadra.troca_salva()
+
 
 func _build_fleets() -> void:
 	# A faixa de deslocamento inicial é pintura de formação, não sorteio de batalha: morava em
@@ -1902,6 +2047,12 @@ func _build_ui() -> void:
 	speed_label.text = "VELOCIDADE +000%  //  SUBIDA +000  //  CASCO DA CAPITÂNIA 100%"
 	speed_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_row.add_child(speed_label)
+	# O zoom de campo mora no letreiro porque mora na roda do mouse: sem aviso, o comandante rolaria
+	# a roda e concluiria que a ponte ignora o gesto.
+	massa_label = Label.new()
+	massa_label.text = "MASSA: 120/120 blocos aliados • 120/120 hostis • roda do mouse = zoom"
+	massa_label.add_theme_font_size_override("font_size", 12)
+	top_row.add_child(massa_label)
 	pause_button = _add_button(top_row, "PAUSAR [ESPAÇO]", _toggle_pause)
 	restart_button = _add_button(top_row, "RECOMEÇAR", _recomecar_batalha)
 	var panel := PanelContainer.new()
@@ -4215,6 +4366,9 @@ func _resolve_volley() -> void:
 		_encerra_batalha()
 		return
 	var focus_target := _alvo_comandado()
+	# A massa troca salvas na MESMA cadência dos núcleos, antes de a ponte escolher para onde
+	# aponta: os dois ledgers são paralelos de propósito, e um não lê o estado do outro.
+	_salva_da_massa()
 	# A ponte manda a salva para um setor, não para um casco: o centro do disco é o alvo comandado
 	# e ele é desenhado na mesa antes de qualquer impacto existir.
 	setor_fogo_pos = (enemies[focus_target]["node"] as Node3D).global_position
@@ -4954,6 +5108,10 @@ func _recomecar_batalha() -> void:
 	rng.randomize()
 	visual_rng.state = visual_base
 	_build_fleets()
+	# A massa volta com os núcleos, e o zoom volta à sala: uma partida nova aberta no teleobjetivo
+	# da anterior mostraria uma esquadra remontada dentro do enquadramento da batalha velha.
+	_remontar_esquadras()
+	campo_zoom = 0.0
 	# O mapa se refaz no cenário escolhido pelo comandante: pedra rachada e janela de abalroamento são
 	# estado da batalha, não do mapa — é pela mesma razão que `_desmontar_cenario` devolve os ids a
 	# zero quando o botão do painel troca de faixa.
@@ -5051,6 +5209,9 @@ func _restaurar_ponte_da_base() -> void:
 	vidro.uv1_offset = trinca[2] as Vector3
 
 func _update_hud() -> void:
+	if is_instance_valid(massa_label):
+		massa_label.text = "%s • zoom %03d%% • roda do mouse" % [esquadra.resumo(),
+			int(roundf(campo_zoom * 100.0))]
 	if is_instance_valid(command_label):
 		var living := 0
 		var damaged := 0

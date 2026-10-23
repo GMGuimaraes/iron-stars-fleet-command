@@ -291,8 +291,9 @@ func _initialize() -> void:
 	# vazio) com 6% de folga, e a direção é de través de estibordo com um dedo de proa e 20° de picada.
 	# O ângulo é medido, não escolhido de ouvido: a 16° de través o casco enche mais o quadro, a média
 	# da tela cai a 0,0091 e o `05g` reprova no próprio portão de imagem — aço escuro sobre espaço
-	# escuro, e quanto menos céu na moldura menos luz. A 32° a luminância volta a 0,0119 com a junta
-	# de chapa lida na crista e no flanco.
+	# escuro, e quanto menos céu na moldura menos luz. A 32° a luminância volta — 0,0119 sem massa no
+	# mundo, 0,0133 com as 5 760 réplicas acesas atrás do costado — com a junta de chapa lida na
+	# crista e no flanco.
 	var casco_foto: Node3D = game.fleet[2]["node"]
 	var caixa_foto: Array = _caixa_do_casco(casco_foto)
 	var olhar_ext := Vector3(0.80, 0.34, -0.50).normalized()

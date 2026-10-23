@@ -48,11 +48,12 @@ const ESPALHAMENTO_MINIMO := 0.14
 ## Amostra do checksum de vértices: 4096 por unidade. Assinatura de silhueta, não de bytes —
 ## 2,4e-4 u de resolução não perde um vértice movido e sobrevive ao ruído de ponto flutuante.
 const PASSO_CHEKSUM := 4096.0
-## Gabarito da árvore, medido com o geoide já ligado: 22 filhos de uma montagem nova sem cenário
-## (lei de `superficies.gd`) mais o `cenario_root`, que é filho único. Dentro do `cenario_root` do
-## cinturão há exatamente um nó por pedra (14) e zero no campo aberto — as marcas de mesa não moram
-## aí, moram no `holo_root`, e são conferidas à parte.
-const FILHOS_DO_JOGO := 23
+## Gabarito da árvore, medido com o geoide já ligado: 24 filhos de uma montagem nova sem cenário
+## (vinte e dois da lei de `superficies.gd` mais os DOIS `MultiMeshInstance3D` da esquadra de blocos)
+## mais o `cenario_root`, que é filho único. Dentro do `cenario_root` do cinturão há exatamente um nó
+## por pedra (14) e zero no campo aberto — as marcas de mesa não moram aí, moram no `holo_root`, e
+## são conferidas à parte.
+const FILHOS_DO_JOGO := 25
 const FILHOS_DO_CINTURAO := 14
 const FILHOS_DO_ABERTO := 0
 ## Semente cravada das réguas de cauda, idêntica à de `superficies.gd` para as duas serem lidas
