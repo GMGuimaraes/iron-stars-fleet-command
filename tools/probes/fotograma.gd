@@ -2,9 +2,13 @@ extends SceneTree
 
 ## Fotogramas reais da ponte para ajuste de pintura. Headless usa o renderizador dummy e devolve
 ## tela preta: neblina, exposição, glow e recorte da janela só se medem com PNG de verdade, e
-## estes vinte e dois quadros são o material de leitura. Não mexe na economia nem no sorteio de
+## estes vinte e cinco quadros são o material de leitura. Não mexe na economia nem no sorteio de
 ## combate — mas os quadros do meio montam cenário de verdade, e cenário engole e queima: por isso a
-## sonda devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção.
+## sonda devolve os cascos a 100 antes de fotografar a estrela e diz isso na asserção. Os três
+## quadros da trinca (11b, 11c, 11d) são a exceção declarada: eles congelam o `process` do jogo,
+## carimbam o epicentro com uma ameaça posta à mão e medem a diferença pixel a pixel entre dois
+## fotogramas do mesmo tabuleiro — é a única régua que existe para a pergunta «a fissura nasceu do
+## lado certo do vidro, e nasceu uma vez só».
 ##
 ## Uso (janela real, sem --headless):
 ##   godot --path . --quit-after 4000 -s res://tools/probes/fotograma.gd
@@ -38,6 +42,39 @@ const POCO_DOPPLER := 0.45
 ## Espelho de `main.gd`: se o alcance do canhão da capitânia mudar lá, o quadro 05f quebra aqui —
 ## mesmo motivo das constantes do poço acima.
 const CAPITAL_ALCANCE := 60.0
+## Espelhos do visor e da câmera, para o quadro da trinca poder prever o pixel do epicentro. Se a
+## boca, a altura ou o FOV mudarem em `_build_bridge`, a projeção abaixo quebra — é de propósito: a
+## fissura só aponta para a ameaça se a conta do quadro e a do jogo forem a mesma conta.
+const VISOR_POS_Y := 1.3
+const VISOR_POS_Z := -7.85
+const VISOR_LARGURA := 13.2
+const PONTE_FOV := 78.0
+const TRINCA_FOLGA_UX := 0.32
+## Ameaça usada para carimbar o epicentro: a 20 u de lado e 60 u à frente ela projeta o leque a
+## ~22% da meia-tela do centro — longe do meio para não confundir com ruído, dentro da boca para
+## não ser engolido pela parede do ombro. E fica mais perto que a estrela (77,8 u do rig na origem),
+## então é ela quem ganha a escolha do `_ux_do_impacto`.
+const FONTE_X := 20.0
+const FONTE_Z := -60.0
+## Casco dos dois quadros trincados: degrau 2 (de 25% a 49% de dano) com o alarme já aceso dos dois
+## lados (`ALARME_CASCO` é 60), para que a única diferença entre os fotogramas seja o deslocamento.
+const TRINCA_HP := 49.0
+## Corte da diferença de luminância e passo da varredura. O leque aceso sob o alfa 0,05 do pão soma
+## ~0,1 de luminância no pixel — dois terços de ordem acima deste corte, que serve para o halo de
+## um terço (`_pinta`) também entrar na conta.
+const CORTE_DELTA := 0.012
+const PASSO_VARREDURA := 2
+## Piso da janela circular usada na comparação de luz com o quadro limpo, em pixels. A janela real é
+## o `raio_p90` medido do próprio leque — o corpo do desenho — porque o pior raio da mesma conta deu
+## 236 px e não é o leque: é o `glow` do motor vazando pela borda de baixo do pão até o parapeito.
+## Um leque miúdo demais para preencher a janela não apaga a asserção por acidente.
+const RAIO_JANELA_MIN := 24.0
+## Fração da janela que precisa acender entre o limpo e o trincado. É a régua de que a luz nova
+## nasceu *daquele* lugar do vidro e não de um reflexo de passagem: um píxel solto aqui e ali não
+## responde a pergunta, um quarto da clareira sim.
+const FACA_ACESA := 0.25
+## Distância aceita entre o epicentro previsto pela projeção e o centro medido no fotograma.
+const TOL_EPICENTRO := 90.0
 
 var breaks := 0
 var notes: Array[String] = []
@@ -201,10 +238,26 @@ func _initialize() -> void:
 	var alcance_ponte := float(game._capitania_alcance())
 	var lancados_antes := int(game.capitania_contagem["lancados"])
 	var olho: Vector3 = (game.bridge_rig as Node3D).global_position
+	# A régua é de diferença, não de absoluto: os quadros 05c e 05e deixam carga e agulha em voo, e a
+	# ponte estacionada em z −45 está exatamente no corredor por onde elas passam. Contar todo traço a
+	# menos de 1,8 u do olho faria a moldura depender de quantos quadros reais a máquina levou para
+	# achar o miolo do voo — a lei é «os lances *dela* nascem na frente do parapeito», e só o que a
+	# própria salva criou entra na conta.
+	var no_ar: Dictionary = {}
+	for filho in game.get_children():
+		if filho is MeshInstance3D:
+			no_ar[filho.get_instance_id()] = true
 	game._resolve_volley()
 	var bocais := 0
+	var estranhos: Array[String] = []
 	for filho in game.get_children():
-		if filho is MeshInstance3D and (filho as Node3D).global_position.distance_to(olho) < 1.8:
+		if not (filho is MeshInstance3D):
+			continue
+		if not (filho as Node3D).global_position.distance_to(olho) < 1.8:
+			continue
+		if no_ar.has(filho.get_instance_id()):
+			estranhos.append(String(filho.name))
+		else:
 			bocais += 1
 	_assert("com a ponte a %0.1f u do alvo comandado, o canhão de linha dela dispara" % alcance_ponte,
 		alcance_ponte <= CAPITAL_ALCANCE \
@@ -212,7 +265,8 @@ func _initialize() -> void:
 		"alcance %0.3f u contra o teto de %0.0f, %d lance(s) novos na conta da capitânia" % [
 			alcance_ponte, CAPITAL_ALCANCE, game.capitania_contagem["lancados"] - lancados_antes])
 	_assert("os lances dela nascem em cima do olho da ponte, à frente do parapeito", bocais == 3,
-		"%d traço(s) a menos de 1,8 u de (%s)" % [bocais, olho])
+		"%d traço(s) novo(s) a menos de 1,8 u de (%s); %d já estava no ar [%s]" % [
+			bocais, olho, estranhos.size(), ", ".join(estranhos)])
 	await _fotograma(game, "05f_capitania_atira")
 
 	# 05g — a chapa por fora, com o quadro derivado da própria chapa. Os quadros 05 e 05b julgam o
@@ -486,6 +540,194 @@ func _initialize() -> void:
 		"%d corpos, alarme=%s" % [game.tripulacao.size(), game.ponte_em_alarme])
 	await _fotograma(game, "11_tripulacao_alarme")
 
+	# 11b, 11c, 11d — o visor trincado fotografado contra ele mesmo. `tools/probes/vidro.gd` fecha
+	# degrau, cache, RNG inerte e o sinal do `uv1_offset` por aritmética; a pergunta do PNG é a única
+	# que nenhuma sonda de lógica responde, e ela é dupla:
+	#
+	# 1. o leque nasce do LADO da boca onde está a ameaça. Isso fixa a ordem da transformada de UV
+	#    (`amostra = uv × escala + deslocamento`, epicentro em `-ux × largura`) e o sentido do eixo U
+	#    da face medida — as duas coisas que um `offset` de sinal trocado faria nascer atrás do ombro
+	#    errado sem que nenhum número de cabeçalho discordasse;
+	# 2. o leque aparece UMA vez só. O pão é `CULL_DISABLED` (veste as duas faces) e a caixa tem seis
+	#    faces com a grade de UV em três colunas por duas linhas; é essa grade que faz uma única face
+	#    amostrar o quadro inteiro enquanto as outras cinco clampam na borda preta. Se a face de trás
+	#    também amostrasse, os dois quadros trincados ficariam quase idênticos e a diferença sumiria.
+	#
+	# A régua é a diferença entre os DOIS quadros trincados, nunca contra o quadro limpo: entre o casco
+	# cheio e o casco ferido a ponte também acende o alarme (corte em 60 u de casco) e inclina os seis
+	# operadores, e essa luz não é do vidro. Bombordo e boreste compartilham o MESMO `capital_hp`, o
+	# MESMO alarme, a MESMA tripulação e o MESMO tabuleiro congelado (`process_mode` desligado,
+	# `_update_bridge(0.0)` chamado à mão); o único pixel que os separa é o deslocamento do epicentro.
+	# O quadro limpo continua salvo para o olho conferir o antes, e é conferido só na janela do leque.
+	game.process_mode = Node.PROCESS_MODE_DISABLED
+	var rig_foto: Node3D = game.bridge_rig
+	var posto_rig := rig_foto.global_position
+	var giros_rig := rig_foto.global_rotation
+	var fonte: Dictionary = game.enemies[0]
+	var corpo_fonte: Node3D = fonte["node"]
+	var posto_fonte := corpo_fonte.global_position
+	var vida_fonte := float(fonte["hp"])
+	var vidas_vizinhas: Array[float] = []
+	var postos_vizinhos: Array[Vector3] = []
+	for i in range(1, game.enemies.size()):
+		vidas_vizinhas.append(float(game.enemies[i]["hp"]))
+		postos_vizinhos.append((game.enemies[i]["node"] as Node3D).global_position)
+		game.enemies[i]["hp"] = 0.0
+	# O rig volta à origem com giro zero para a projeção analítica ser a do `_ux_do_impacto` do jogo,
+	# que também trabalha no referencial do rig. A câmera é sentada no repouso: sem `process` rodando,
+	# o trêmulo escrito por `_process` congelaria onde a última salva o deixou.
+	rig_foto.global_position = Vector3.ZERO
+	rig_foto.global_rotation = Vector3.ZERO
+	game.ponte_camera.position = game.ponte_camera_base
+	game.rochas.clear()
+	game.astros.clear()
+	fonte["hp"] = 100.0
+	# O casco que carimba o epicentro fica invisível nos dois quadros: sem isso a diferença conteria a
+	# silhueta dele, que por construção projeta no MESMO ponto da trinca, e o cluster deixaria de ser
+	# do vidro. `_mais_proximo_vivo` lê posição e casco, nunca visibilidade.
+	corpo_fonte.visible = false
+	var visor: MeshInstance3D = game.ponte_visor
+	var boca: BoxMesh = visor.mesh as BoxMesh
+	_assert("a boca fotografada é a mesma que a sonda de lógica mede",
+			boca != null and absf(boca.size.x - VISOR_LARGURA) < 0.001
+				and visor.position.distance_to(Vector3(0.0, VISOR_POS_Y, VISOR_POS_Z)) < 0.001,
+			"%0.2f u de boca em z %0.2f" % [boca.size.x, visor.position.z])
+	game.capital_hp = 100.0
+	game._update_bridge(0.0)
+	await _fotograma(game, "11b_trinca_limpa")
+	var ux_limpo: float = game.ponte_trinca_ux
+	var degrau_limpo: int = game.ponte_trinca_degrau
+	_assert("com o casco cheio o vidro acorda limpo de verdade — degrau zero, sem placa, sem offset",
+			degrau_limpo == 0 and absf(ux_limpo) < 0.0001,
+			"degrau %d, ux %0.4f" % [degrau_limpo, ux_limpo])
+
+	corpo_fonte.global_position = Vector3(-FONTE_X, 0.0, FONTE_Z)
+	game.capital_hp = TRINCA_HP
+	game._update_bridge(0.0)
+	var ux_bombordo: float = game.ponte_trinca_ux
+	await _fotograma(game, "11c_trinca_bombordo")
+
+	game.capital_hp = 100.0
+	game._update_bridge(0.0)
+	corpo_fonte.global_position = Vector3(FONTE_X, 0.0, FONTE_Z)
+	game.capital_hp = TRINCA_HP
+	game._update_bridge(0.0)
+	var ux_boreste: float = game.ponte_trinca_ux
+	await _fotograma(game, "11d_trinca_boreste")
+
+	_assert("a ameaça a %0.0f u abre o epicentro antes do clamp da folga, espelhado de um lado ao outro" % FONTE_X,
+			ux_bombordo > 0.0 and ux_boreste < 0.0
+				and absf(ux_bombordo + ux_boreste) < 0.001
+				and absf(ux_bombordo) < TRINCA_FOLGA_UX,
+			"bombordo %0.4f, boreste %0.4f contra a folga %0.2f" % [ux_bombordo, ux_boreste,
+				TRINCA_FOLGA_UX])
+	var foto_limpa := Image.load_from_file(OUT + "11b_trinca_limpa.png")
+	var foto_port := Image.load_from_file(OUT + "11c_trinca_bombordo.png")
+	var foto_est := Image.load_from_file(OUT + "11d_trinca_boreste.png")
+	_assert("os três fotogramas da trinca existem em disco",
+			foto_limpa != null and foto_port != null and foto_est != null,
+			"%s/%s/%s" % [foto_limpa != null, foto_port != null, foto_est != null])
+	if foto_port != null and foto_est != null and foto_limpa != null:
+		var meio := float(foto_est.get_width()) / 2.0
+		var clusters: Dictionary = _trinca_na_tela(foto_port, foto_est, CORTE_DELTA)
+		var a_boreste: Dictionary = clusters["pos"]
+		var a_bombordo: Dictionary = clusters["neg"]
+		var olho_fonte: Vector3 = Vector3(-ux_boreste * boca.size.x, visor.position.y,
+			visor.position.z)
+		var alvo_port: Vector3 = Vector3(-ux_bombordo * boca.size.x, visor.position.y,
+			visor.position.z)
+		var px_boreste := _pixel_da_ponte(game, olho_fonte, foto_est)
+		var px_bombordo := _pixel_da_ponte(game, alvo_port, foto_port)
+		# 1 e 2: luz nova existe, e cai do lado que a ameaça ocupa. O cluster positivo é o leque que
+		# só o quadro de boreste tem; o negativo, o que só o de bombordo tem.
+		_assert("o leque de boreste acende pixels à direita do meio, onde a ameaça estava",
+				int(a_boreste["pixels"]) >= 40 and float(a_boreste["cx"]) > meio,
+				"%d pixels a %0.0f px contra o meio em %0.0f" % [a_boreste["pixels"],
+					a_boreste["cx"], meio])
+		_assert("o leque de bombordo acende pixels à esquerda do meio, onde a ameaça estava",
+				int(a_bombordo["pixels"]) >= 40 and float(a_bombordo["cx"]) < meio,
+				"%d pixels a %0.0f px contra o meio em %0.0f" % [a_bombordo["pixels"],
+					a_bombordo["cx"], meio])
+		# 3: a previsão analítica (transformada real da câmera + `-ux × largura`) bate com o pixel
+		# medido. É o portão da ordem da transformada: com o eixo U da face invertido, ou o `offset`
+		# somado antes da escala, o cluster nasceria a centenas de pixels do previsto.
+		var erro_est := absf(float(a_boreste["cx"]) - px_boreste.x)
+		var erro_port := absf(float(a_bombordo["cx"]) - px_bombordo.x)
+		_assert("o epicentro medido cai onde a projeção do vidro manda, nos dois lados",
+				erro_est <= TOL_EPICENTRO and erro_port <= TOL_EPICENTRO,
+				"erro %0.0f px a boreste e %0.0f px a bombordo, tolerância %0.0f px | previsto %0.0f/%0.0f, medido %0.0f/%0.0f" % [
+					erro_est, erro_port, TOL_EPICENTRO, px_bombordo.x, px_boreste.x,
+					a_bombordo["cx"], a_boreste["cx"]])
+		# 4: um cluster só, e dentro do pão. A régua vem da cena, não de número escrito aqui: (a)
+		# nenhum pixel do leque de boreste atravessa a linha do meio para a esquerda, nem o de
+		# bombordo para a direita — é isso que descarta a segunda cópia do quadro vestindo a face de
+		# trás; (b) o corpo do leque (o raio que cobre 90% dos pixels) cabe na meia-altura projetada
+		# do próprio visor, porque fissura que nasce no vidro não pode ser maior que o vidro; (c) o
+		# centro de cada leque cai dentro da boca projetada. O PIOR raio fica fora da asserção de
+		# propósito: medido a 236 px ele não é geometria da rachadura, é o `glow` do motor vazando
+		# pela borda de baixo do pão até o parapeito — luz do cenário, e o leque verdadeiro fecha em
+		# ~50 px.
+		var pao: Array[Vector2] = []
+		for sx in [-1.0, 1.0]:
+			for sy in [-1.0, 1.0]:
+				pao.append(_pixel_da_ponte(game, Vector3(visor.position.x + sx * boca.size.x * 0.5,
+					visor.position.y + sy * boca.size.y * 0.5, visor.position.z), foto_est))
+		var boca_px: Array[float] = [INF, -INF, INF, -INF]
+		for p in pao:
+			boca_px[0] = minf(boca_px[0], p.x)
+			boca_px[1] = maxf(boca_px[1], p.x)
+			boca_px[2] = minf(boca_px[2], p.y)
+			boca_px[3] = maxf(boca_px[3], p.y)
+		var meia_altura_px := (boca_px[3] - boca_px[2]) * 0.5
+		_assert("o leque é um cluster só, sem cópia espelhada do outro lado da boca",
+				float(a_boreste["min_x"]) > meio and float(a_bombordo["max_x"]) < meio
+					and float(a_boreste["raio_p90"]) <= meia_altura_px
+					and float(a_bombordo["raio_p90"]) <= meia_altura_px
+					and float(a_boreste["cx"]) > boca_px[0] and float(a_boreste["cx"]) < boca_px[1]
+					and float(a_bombordo["cx"]) > boca_px[0] and float(a_bombordo["cx"]) < boca_px[1],
+				("corpo p90 %0.0f/%0.0f px contra meia-altura do pão %0.0f px | bordas %0.0f/%0.0f "
+					+ "contra o meio %0.0f | pão projetado x[%0.0f..%0.0f] y[%0.0f..%0.0f] | cauda "
+					+ "do glow a %0.0f/%0.0f px") % [a_boreste["raio_p90"], a_bombordo["raio_p90"],
+						meia_altura_px, a_boreste["min_x"], a_bombordo["max_x"], meio,
+						boca_px[0], boca_px[1], boca_px[2], boca_px[3],
+						a_boreste["raio"], a_bombordo["raio"]])
+		# 5: os dois lados têm a mesma força — é o mesmo quadro de pixels do mesmo degrau, só
+		# espelhado pelo deslocamento. Assimetria aqui é a grade de UV vestindo faces diferentes.
+		var proporcao := float(a_boreste["pixels"]) / maxf(float(a_bombordo["pixels"]), 1.0)
+		_assert("os dois lados acendem a mesma conta de pixels", proporcao > 0.6
+				and proporcao < 1.67, "%0.2f de boreste sobre bombordo (%d/%d)" % [
+					proporcao, a_boreste["pixels"], a_bombordo["pixels"]])
+		# 6: no quadro limpo aquele lugar do pão estava apagado, e no trincado acendeu. A janela é o
+		# corpo medido do leque (não o pior raio, que é glow), e a régua é a fração da clareira que
+		# muda de estado — não uma luminância de piso escrita à mão: a primeira versão desta asserção
+		# cobria `antes < 0,12` e mediu 0,138, porque o pão limpo não é preto, é vidro de ponte com
+		# luz de trabalho âmbar por trás. O que a fissura faz é subir aquele lugar de 0,138 a 0,281.
+		var raio_janela := maxf(float(a_bombordo["raio_p90"]), RAIO_JANELA_MIN)
+		var clareira := _luz_em_torno_de(foto_limpa, foto_port, px_bombordo, raio_janela,
+			CORTE_DELTA)
+		var faca := float(clareira["acensos"]) / maxf(float(clareira["amostras"]), 1.0)
+		_assert("o mesmo lugar do pão estava apagado no limpo e acendeu no trincado",
+				int(clareira["acensos"]) >= 30 and float(clareira["ganho"]) > 0.02
+					and faca >= FACA_ACESA,
+				("%d de %d pixels (fração %0.2f) acima do corte na janela de %0.0f px, luminância "
+					+ "%0.3f virou %0.3f (ganho %0.3f)") % [clareira["acensos"], clareira["amostras"],
+						faca, raio_janela, clareira["antes"], clareira["depois"],
+						clareira["ganho"]])
+
+	# Devolução do tabuleiro: a ruína fotografa a seguir é outro contrato e não lê rocha nem astro,
+	# mas lê os cascos e o relógio — nada aqui deixa a esquadra em outro estado do que encontrou.
+	corpo_fonte.visible = true
+	corpo_fonte.global_position = posto_fonte
+	fonte["hp"] = vida_fonte
+	for i in range(1, game.enemies.size()):
+		game.enemies[i]["hp"] = vidas_vizinhas[i - 1]
+		(game.enemies[i]["node"] as Node3D).global_position = postos_vizinhos[i - 1]
+	rig_foto.global_position = posto_rig
+	rig_foto.global_rotation = giros_rig
+	game.capital_hp = 40.0
+	game._update_bridge(0.0)
+	game.process_mode = Node.PROCESS_MODE_INHERIT
+
 	# 12 e 13 — a ruína da capitânia fotografada em dois momentos do próprio relógio da morte: a
 	# meia-sequência, com clarão aberto dentro do casco e estrobo na luz fria, e o fim dela, com os
 	# três adernamentos nos tetos, o deck escurecido e a holografia apagada. `tools/probes/morte.gd`
@@ -640,6 +882,112 @@ func _distancia_de_enquadramento(minimo: Vector3, maximo: Vector3, olhar: Vector
 		pior = maxf(pior, ao_longe + absf(proj.dot(direita)) / tan_h)
 		pior = maxf(pior, ao_longe + absf(proj.dot(cima)) / tan_v)
 	return maxf(pior, 0.5)
+
+## Retrato da trinca na tela: varre os dois fotogramas do MESMO tabuleiro e guarda os pixels cuja
+## luminância mudou mais que `corte`, separados pelo sinal. `pos` é o que só existe no segundo
+## quadro (o leque de boreste); `neg`, o que só existe no primeiro (o de bombordo). A varredura anda
+## de dois em dois pixels: o leque tem ~110 px de diâmetro, e meia resolução não move o centro nem o
+## raio — move o tempo, que em janela já é caro.
+func _trinca_na_tela(a: Image, b: Image, corte: float) -> Dictionary:
+	var w := b.get_width()
+	var h := b.get_height()
+	var pontos_pos: Array[Vector2] = []
+	var pontos_neg: Array[Vector2] = []
+	for v in range(0, h, PASSO_VARREDURA):
+		for u in range(0, w, PASSO_VARREDURA):
+			var ca: Color = a.get_pixel(u, v)
+			var cb: Color = b.get_pixel(u, v)
+			var la := 0.2126 * ca.r + 0.7152 * ca.g + 0.0722 * ca.b
+			var lb := 0.2126 * cb.r + 0.7152 * cb.g + 0.0722 * cb.b
+			var delta := lb - la
+			if delta > corte:
+				pontos_pos.append(Vector2(float(u), float(v)))
+			elif delta < -corte:
+				pontos_neg.append(Vector2(float(u), float(v)))
+	return {"pos": _cluster(pontos_pos), "neg": _cluster(pontos_neg), "meio": float(w) / 2.0}
+
+## Centro do conjunto (média simples das posições — é o centro do desenho, não o brilho dele), a
+## caixa em X e Y, o pior raio medido a partir do centro e o raio que cobre noventa por cento dos
+## pixels. O `raio` é o pior — e o pior, medido, é o vazão do `glow` sobre o parapeito, não o leque:
+## no degrau 2 a conta deu corpo a ~50 px e cauda a 235 px. Por isso a asserção lê `raio_p90`, que é
+## o leque, e guarda `raio` só para o número sair no log. Vazio devolve zeros: quem chama decide se
+## a ausência é prova, e um cluster fantasma tem de aparecer como contagem, não como coordenada.
+func _cluster(pontos: Array[Vector2]) -> Dictionary:
+	if pontos.is_empty():
+		return {"pixels": 0, "cx": 0.0, "cy": 0.0, "min_x": 0.0, "max_x": 0.0,
+			"min_y": 0.0, "max_y": 0.0, "raio": 0.0, "raio_p90": 0.0}
+	var sx := 0.0
+	var sy := 0.0
+	var minimo_x := INF
+	var maximo_x := -INF
+	var minimo_y := INF
+	var maximo_y := -INF
+	for p in pontos:
+		sx += p.x
+		sy += p.y
+		minimo_x = minf(minimo_x, p.x)
+		maximo_x = maxf(maximo_x, p.x)
+		minimo_y = minf(minimo_y, p.y)
+		maximo_y = maxf(maximo_y, p.y)
+	var centro := Vector2(sx / float(pontos.size()), sy / float(pontos.size()))
+	var raios: Array[float] = []
+	for p in pontos:
+		raios.append(p.distance_to(centro))
+	raios.sort()
+	var pior: float = raios[raios.size() - 1]
+	var p90: float = raios[mini(int(raios.size() * 0.90), raios.size() - 1)]
+	return {"pixels": pontos.size(), "cx": centro.x, "cy": centro.y, "min_x": minimo_x,
+		"max_x": maximo_x, "min_y": minimo_y, "max_y": maximo_y, "raio": pior, "raio_p90": p90}
+
+## Projecta um ponto do mundo no pixel da janela pela transformada REAL da câmera da ponte — origem
+## incluida, porque com o `process` desligado o trêmulo congela onde a última salva o deixou, e a
+## previsão tem de ser a da imagem salva, não a do repouso. A abertura horizontal sai da proporção do
+## próprio quadro, como em `_distancia_de_enquadramento`: fingir 16:9 fixo deslocaria o epicentro
+## previsto numa janela quadrada.
+func _pixel_da_ponte(game, alvo: Vector3, tela: Image) -> Vector2:
+	var camera: Camera3D = game.ponte_camera
+	var t: Transform3D = camera.global_transform
+	var desloc := alvo - t.origin
+	var along := -desloc.dot(t.basis.z)
+	var tan_v := tan(deg_to_rad(PONTE_FOV) * 0.5)
+	var tan_h := tan_v * (float(tela.get_width()) / maxf(float(tela.get_height()), 1.0))
+	var ndc := Vector2(desloc.dot(t.basis.x) / maxf(along * tan_h, 0.0001),
+		desloc.dot(t.basis.y) / maxf(along * tan_v, 0.0001))
+	return Vector2((ndc.x + 1.0) * 0.5 * float(tela.get_width()),
+		(1.0 - ndc.y) * 0.5 * float(tela.get_height()))
+
+## A mesma janela circular nos dois quadros: a luminância média de cada um, quantos pixels passam do
+## corte no trincado e o ganho entre eles. É a prova de que a luz nova nasceu naquele lugar do pão —
+## um alarme de console acendendo em outro ponto não entraria na conta.
+func _luz_em_torno_de(limpa: Image, trincada: Image, alvo: Vector2, raio: float,
+		corte: float) -> Dictionary:
+	var acensos := 0
+	var amostras := 0
+	var soma_antes := 0.0
+	var soma_depois := 0.0
+	var quadrado := raio * raio
+	var cx := int(round(alvo.x))
+	var cy := int(round(alvo.y))
+	for v in range(cy - int(raio), cy + int(raio) + 1):
+		if v < 0 or v >= limpa.get_height():
+			continue
+		for u in range(cx - int(raio), cx + int(raio) + 1):
+			if u < 0 or u >= limpa.get_width():
+				continue
+			if float((u - cx) * (u - cx) + (v - cy) * (v - cy)) > quadrado:
+				continue
+			var ca: Color = limpa.get_pixel(u, v)
+			var cb: Color = trincada.get_pixel(u, v)
+			var la := 0.2126 * ca.r + 0.7152 * ca.g + 0.0722 * ca.b
+			var lb := 0.2126 * cb.r + 0.7152 * cb.g + 0.0722 * cb.b
+			amostras += 1
+			soma_antes += la
+			soma_depois += lb
+			if lb - la > corte:
+				acensos += 1
+	var n := maxf(float(amostras), 1.0)
+	return {"acensos": acensos, "amostras": amostras, "antes": soma_antes / n,
+		"depois": soma_depois / n, "ganho": (soma_depois - soma_antes) / n}
 
 func _tabular(game) -> void:
 	for i in range(game.fleet.size()):

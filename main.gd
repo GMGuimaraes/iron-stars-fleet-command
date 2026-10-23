@@ -359,6 +359,29 @@ const MORTE_TREMOR_FIM := 0.9
 ## Tela morta: sem energia não há leitura de ponte. É a cor do fim, não um alarme a mais — por
 ## isso ela é escrita uma vez na ignição, com a mesma disciplina do flanco de `ponte_em_alarme`.
 const COR_TELA_MORTA := Color(0.012, 0.014, 0.02)
+## Trinca do canopy: um degrau a cada 25% de casco perdido, e o degrau 3 fica até o fim — fissura
+## não se solda sozinha. São três quadros cumulativos gerados em `superficies.gd`, e o vidro nunca
+## fica opaco: a trinca é emissão, nunca albedo (o alfa do pão é 0,05 e uma textura de albedo
+## multiplicaria justamente o alfa — o painel engordaria onde o vidro rachou e a batalha sumiria
+## atrás do branco).
+const TRINCA_POR_CASCO := 25.0
+## A aresta acesa é fria e quase branca de propósito: o vermelho já é a notícia do alarme, e duas
+## notícias na mesma luz viram ruído. Vidro rachado pega a luz da batalha, não a luz do painel.
+const COR_TRINCA := Color(0.72, 0.84, 1.0)
+const TRINCA_ENERGIA := 2.6
+## A grade de UV medida do `BoxMesh`: as seis faces do pão dividem o quadro em 3×2, e a face de
+## normal +Z — a que a câmera da ponte vê, porque o jogo inteiro se vê de dentro — mora em
+## u[0, 1/3] v[0, 1/2]. Multiplicar por (3,2) é o que faz UMA única face vestir a trinca: as outras
+## cinco caem fora do quadro e, com o repeat desligado, clampam para a borda preta. Sem segundo
+## material, sem segundo nó, e sem a mesma estrela desenhada duas vezes em espelho pelo pão de 5 cm.
+## A grade é conferida em `tools/probes/vidro.gd`, que reprova se o motor mudar a costura.
+const TRINCA_ESCALA_UV := Vector3(3.0, 2.0, 1.0)
+## Folga do deslocamento em u: meio painel menos o raio da maior mancha, para a estrela nunca ser
+## cortada pela moldura ao mirar no canto. A sonda confere este número contra
+## `Superficies.TRINCA_RAIO` e `Superficies.TRINCA_ESQUEMA_X` em vez de acreditar nele.
+## Era 0,38 com o leque de raio 34; o raio 56 que enche o pão leva a meia-extensão de 0,10 para
+## 0,16 do painel, então a folga recua para 0,32 e a soma (0,48) continua dentro do 0,50.
+const TRINCA_FOLGA_UX := 0.32
 ## Ponte sonora (trilha clássica + efeitos abafados de vácuo) montada como filho da cena, não
 ## como sistema global: headless não tem alto-falante, e é assim que a sonda consegue ler
 ## `pedidos` e `soaram` sem depender de saída de áudio.
@@ -589,6 +612,14 @@ var ponte_energia_fria := 0.0
 ## a asserção do fim é voltar para ela com exatidão de vírgula.
 var ponte_camera: Camera3D
 var ponte_camera_base := Vector3.ZERO
+## O pão da frente, guardado pelo nó e não pela medida digitada: a trinca projeta a ameaça no plano
+## e na largura que o visor TEM, e uma cópia destes números em constante divergiria na primeira
+## retocada de moldura.
+var ponte_visor: MeshInstance3D
+## Degrau de trinca escrito no vidro e o u do ponto de impacto. `-1` é o chão: nenhuma escrita foi
+## feita ainda, e o primeiro quadro do jogo escreve do mesmo jeito que qualquer outro.
+var ponte_trinca_degrau := -1
+var ponte_trinca_ux := 0.0
 ## Fotografia da ponte no quadro em que ela foi montada: atitude, posição, câmera, materiais do
 ## deck, telas, luzes e holografia. É a base que o RECOMEÇAR devolve, e ela é lida dos nós, nunca
 ## reescrita como constante — a ruína pinta a ponte escrevendo exatamente nesses valores, e uma
@@ -851,6 +882,23 @@ func _build_bridge() -> void:
 	vidro.metallic = 0.15
 	vidro.roughness = 0.35
 	vidro.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# O vidro já nasce vestido para a trinca, mas apagado: a cor e a energia da aresta ficam aqui,
+	# no chão gravado em `ponte_base`, para que escrever um degrau seja ligar e trocar o quadro —
+	# nunca pintar cor. É assim que o retrato da ponte devolve o vidro limpo sem precisar saber o
+	# número da trinca, e é por isso que `tools/probes/recomecar.gd` continua conferindo os mesmos
+	# três campos de sempre em cada material do deck.
+	vidro.emission = COR_TRINCA
+	vidro.emission_energy_multiplier = TRINCA_ENERGIA
+	vidro.uv1_scale = TRINCA_ESCALA_UV
+	# Repeat desligado é o que faz a escala de grade funcionar: fora do quadro a amostra clampa na
+	# borda preta em vez de tilear a estrela de volta para dentro do pão.
+	#
+	# É `false`, não um nome de enum: medido no 4.7.2, `BaseMaterial3D.texture_repeat` é um `bool`
+	# (o motor imprime `typeof 1` na leitura), e nenhum `TEXTURE_REPEAT_*` existe em `BaseMaterial3D`
+	# — o `--check-only` reprova. O que a casa chama de "não chutar nome" é isto: a linha lê o que o
+	# motor tem, não o que a documentação do Godot 3 tinha.
+	vidro.texture_repeat = false
+	vidro.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	# Soalho e teto: sem eles a câmera flutua no vácuo em vez de estar dentro de um navio.
 	_box(Vector3(0, -2.1, 2.2), Vector3(15, 0.5, 20), piso, bridge_rig)
 	_box(Vector3(0, 5.4, 2.2), Vector3(15, 0.4, 20), casco_ponte, bridge_rig)
@@ -876,7 +924,7 @@ func _build_bridge() -> void:
 	_box(Vector3(0, -1.05, -7.75), Vector3(13.4, 0.13, 0.2), ouro, bridge_rig)
 	for lado in [-1.0, 1.0]:
 		_box(Vector3(lado * 2.3, 1.3, -7.7), Vector3(0.11, 4.7, 0.16), trim, bridge_rig)
-	_box(Vector3(0, 1.3, -7.85), Vector3(13.2, 4.6, 0.05), vidro, bridge_rig)
+	ponte_visor = _box(Vector3(0, 1.3, -7.85), Vector3(13.2, 4.6, 0.05), vidro, bridge_rig)
 	# Postos de trabalho em duas linhas de cada bordo: o console inclinado e a tela de leitura.
 	# A bancada não flutua: ela pousa num pedestal pelo lado de fora, e o vão livre por dentro é o
 	# espaço de joelho do operador. Sem pedestal era uma laje no ar — e laje no ar denuncia o
@@ -1282,6 +1330,9 @@ func _atualiza_blip(unit: Dictionary, aliada: bool) -> void:
 ## Acorda a ponte: anel girando e blip em dia com o tabuleiro. Roda também na pausa, porque a
 ## mesa existe para o comandante ler a batalha enquanto dá ordem.
 func _update_bridge(_delta: float) -> void:
+	# A trinca vem antes da guarda da mesa: o vidro é do casco, não do projetor holográfico, e um
+	# cenário montado sem mesa ainda tem de mostrar a rachadura que a última salva abriu.
+	_trinca_vidro()
 	if not is_instance_valid(holo_root):
 		return
 	holo_anel.rotation.y += _delta * 0.32
@@ -1293,6 +1344,91 @@ func _update_bridge(_delta: float) -> void:
 	# mesa para não mandar a frota para cima da própria ponte.
 	if is_instance_valid(holo_capitania):
 		holo_capitania.position = holo_root.position + _holo_de(bridge_rig.position)
+
+## O visor trinca no degrau do casco, e escreve uma vez por degrau — nunca por quadro. É a lei do
+## apagão aplicada ao vidro: se a fissura fosse repintada a cada `delta`, o material do visor
+## acordaria diferente a cada leitura e nenhuma sonda conseguiria assinar a ponte.
+##
+## A escala de 25% vem do `TRINCA_POR_CASCO` e o teto de degraus vem do gerador, não de número
+## escrito aqui: `Superficies.trinca(0)` devolve nulo e desliga a emissão, então o casco cheio é
+## exatamente o vidro limpo que `_build_bridge` entregou.
+func _trinca_vidro() -> void:
+	if not is_instance_valid(bridge_rig) or not bridge_rig.has_meta("mat"):
+		return
+	var mats: Dictionary = bridge_rig.get_meta("mat")
+	if not mats.has("vidro"):
+		return
+	var degrau := clampi(int((100.0 - capital_hp) / TRINCA_POR_CASCO), 0,
+		Superficies.trincas_existentes())
+	if degrau == ponte_trinca_degrau:
+		return
+	var vidro: StandardMaterial3D = mats["vidro"]
+	ponte_trinca_degrau = degrau
+	vidro.emission_enabled = degrau > 0
+	vidro.emission_texture = Superficies.trinca(degrau)
+	ponte_trinca_ux = _ux_do_impacto() if degrau > 0 else 0.0
+	vidro.uv1_offset = Vector3(ponte_trinca_ux, 0.0, 0.0)
+
+## Onde a fissura nasce, em fração da boca do visor. Nenhum dos quatro caminhos que ferem a
+## capitânia (abalroamento, salva, coroa e poço) registra coordenada — eles mexem só no número do
+## casco, e mudar os quatro para carregar um vetor seria a pintura dar ordem à conta. Então o
+## epicentro é carimbado uma vez, no quadro em que o degrau fecha, lido do corpo perigoso mais
+## próximo: a trinca que se abre agora aponta para o que está ali agora, e não deriva depois,
+## porque trinca já no vidro não muda de lugar.
+##
+## A estrela entra como candidata mesmo sem ser nó do tabuleiro: ela fere por radiação e a posição
+## dela já é uma constante cravada na conta. Com o campo vazio ela é o que sobra — e é também o que
+## faz desta função uma resposta sempre válida, sem bandeira de "não achei alvo".
+func _ux_do_impacto() -> float:
+	var origem: Vector3 = bridge_rig.global_position
+	var candidatos: Array[Vector3] = [
+		_mais_proximo_vivo(enemies, "node", "hp", origem),
+		_mais_proximo_vivo(rochas, "no", "integridade", origem),
+		_mais_proximo_vivo(astros, "no", "", origem),
+		ESTRELA_POS,
+	]
+	var elegido := Vector3.ZERO
+	var distancia := INF
+	for pos in candidatos:
+		var d := pos.distance_to(origem)
+		if d < distancia:
+			distancia = d
+			elegido = pos
+	# Tudo em coordenada do rig: a câmera e o painel são filhos dele, e é no espaço deles que o
+	# vidro existe. `to_local` devolve a posição do corpo como o oficial de ponte a vê.
+	var no_rig: Vector3 = bridge_rig.to_local(elegido)
+	var olho: Vector3 = ponte_camera_base
+	var plano := ponte_visor.position.z
+	var dx := no_rig.x - olho.x
+	var dz := no_rig.z - olho.z
+	if dz >= -0.001:
+		# Corpo atrás do ombro não tem onde nascer no visor: pino no bordo do MESMO lado. Como o
+		# centro da mancha cai em `-ux × largura`, o sinal é o oposto do `x` do corpo — é o lado que
+		# esta linha afirma, nunca a distância; o quadro de janela decide o resto.
+		return -signf(dx) * TRINCA_FOLGA_UX
+	var x_atingido := olho.x + dx * ((plano - olho.z) / dz)
+	return clampf(-x_atingido / (ponte_visor.mesh as BoxMesh).size.x,
+		-TRINCA_FOLGA_UX, TRINCA_FOLGA_UX)
+
+## Posição do corpo ainda inteiro mais próximo de `origem`, ou `Vector3.INF` quando a lista não tem
+## nenhum. `chave_vida` é vazia nos astros, que não morrem e portanto nunca saem do tabuleiro;
+## `chave_no` é `node` nos cascos da esquadra e `no` nos corpos de cenário — diferença histórica que
+## a trinca não vai consertar reescrevendo a ficha de ninguém.
+func _mais_proximo_vivo(lista: Array[Dictionary], chave_no: String, chave_vida: String,
+		origem: Vector3) -> Vector3:
+	var melhor := Vector3.INF
+	var distancia := INF
+	for item in lista:
+		if chave_vida != "" and float(item[chave_vida]) <= 0.0:
+			continue
+		var no: Node3D = item[chave_no] as Node3D
+		if not is_instance_valid(no):
+			continue
+		var d := no.global_position.distance_to(origem)
+		if d < distancia:
+			distancia = d
+			melhor = no.global_position
+	return melhor
 
 func _build_fleets() -> void:
 	# A faixa de deslocamento inicial é pintura de formação, não sorteio de batalha: morava em
@@ -4704,6 +4840,11 @@ func _recomecar_batalha() -> void:
 	throttle = 0.0
 	capital_hp = 100.0
 	capital_velocity = Vector3.ZERO
+	# O degrau volta a zero junto com o casco, e zero é exatamente o que o retrato devolveu ao
+	# `vidro`: emissão desligada, placa nula, epicentro no centro. Deixar o contador velho aqui
+	# seria uma ponte limpa que se acha trincada e nunca reescreve o material.
+	ponte_trinca_degrau = 0
+	ponte_trinca_ux = 0.0
 	ram_windows.clear()
 	battle_clock = 0.0
 	fire_clock = 0.0
@@ -4798,13 +4939,20 @@ func _demolir_carimbados(pai: Node) -> void:
 ## paleta. Entram no retrato a atitude e a posição do rig, a câmera, as duas luzes, os quatro nós da
 ## holografia e cada material do deck com tela e vidro. A tripulação não precisa: ela já se refaz a
 ## cada quadro a partir das próprias bases, e o que a congelava era `ponte_sem_energia`.
+##
+## O estado da trinca vai num campo próprio, ao lado dos materiais e não dentro deles: o `vidro` já
+## é fotografado na cor, na emissão e na energia, e os três botões que a fissura mexe
+## (`emission_enabled`, `emission_texture`, `uv1_offset`) são dela. Errar aqui é o RECOMEÇAR voltar
+## com a rachadura do abalroamento anterior no vidro de uma esquadra nova.
 func _gravar_base_da_ponte() -> void:
 	var mats: Dictionary = bridge_rig.get_meta("mat")
+	var vidro: StandardMaterial3D = mats["vidro"]
 	var retrato: Dictionary = {"rig_pos": bridge_rig.position, "rig_rot": bridge_rig.rotation,
 		"camera": ponte_camera.position,
 		"luz": [ponte_luz_trabalho.light_energy, ponte_luz_fria.light_energy],
 		"holo_visivel": holo_root.visible, "tela": [ponte_telas.albedo_color, ponte_telas.emission,
-			ponte_telas.emission_energy_multiplier], "mat": {}}
+			ponte_telas.emission_energy_multiplier], "mat": {},
+		"trinca": [vidro.emission_enabled, vidro.emission_texture, vidro.uv1_offset]}
 	for chave in mats:
 		var mat: StandardMaterial3D = mats[chave]
 		retrato["mat"][chave] = [mat.albedo_color, mat.emission, mat.emission_energy_multiplier]
@@ -4832,6 +4980,11 @@ func _restaurar_ponte_da_base() -> void:
 		mat.albedo_color = pinta[0] as Color
 		mat.emission = pinta[1] as Color
 		mat.emission_energy_multiplier = float(pinta[2])
+	var trinca: Array = ponte_base["trinca"]
+	var vidro: StandardMaterial3D = mats["vidro"]
+	vidro.emission_enabled = bool(trinca[0])
+	vidro.emission_texture = trinca[1] as Texture2D
+	vidro.uv1_offset = trinca[2] as Vector3
 
 func _update_hud() -> void:
 	if is_instance_valid(command_label):

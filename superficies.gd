@@ -31,6 +31,38 @@ const PLANETA_ALTURA := 64
 const PLANETA_VARIEDADES := 4
 ## 0 = matriz intemperizada, 1 = face recém-fraturada (mais clara, cratera menos gasta).
 const ROCHA_VARIEDADES := 2
+## Lado do quadro de trinca. É potência de dois pelos mesmos mipmaps da placa, e 128 porque a
+## fissura tem que sobreviver ao close-up do console sem virar serrilha na borda.
+const PASSO_TRINCA := 128
+const TRINCA_DEGRAUS := 3
+const TRINCA_CENTRO := PASSO_TRINCA / 2
+## Raio máximo da mancha em cada degrau, em pixels do quadro. É o que faz o degrau 3 caber no
+## pão com folga: ver `TRINCA_FOLGA_UX` em `main.gd`, que a sonda confere contra este número.
+##
+## O quadro de 128 linhas cai sobre um pão de 237 pixels de altura: cada linha do desenho vale
+## ~1,85 pixel de tela. Com raio 15/24/34 a fissura usava metade do quadro e virava um fiapo — a
+## sonda de janela media ganho de luz e aprovava, o olho via névoa. Estes raios preenchem o pão
+## quase até a borda (degrau 3 = 56 linhas ≈ 104 pixels na vertical contra 118 de meia-altura) e
+## por isso o desenho continua dentro do quadro: `comp` no máximo vale o próprio raio e o halo de
+## `_acende` soma 1 linha, nunca 65.
+const TRINCA_RAIO: Array[float] = [26.0, 40.0, 56.0]
+## Fissuras primárias abertas em cada degrau — cumulativo por construção, não por sorteio.
+const TRINCA_ABERTURA: Array[int] = [5, 9, 14]
+## Os catorze raios possíveis do leque, e o passo com que eles vão abrindo: `(i × 5) mod 14` é uma
+## permutação porque 5 e 14 são primos entre si, então os cinco do degrau 1 saem espalhados e os
+## catorze do degrau 3 fecham a circunferência inteira. O inverso `(k × 3) mod 14` diz em qual
+## posto do leque cada raio entra, e é por ele que o degrau 2 contém o degrau 1 pixel a pixel.
+const TRINCA_LEQUE := 14
+const TRINCA_PASSO_ABERTURA := 5
+const TRINCA_PASSO_FECHO := 3
+## O visor é 2,87 vezes mais largo que alto e o quadro é quadrado: desenhado redondo, o leque
+## sairia uma ellipse achata na tela. O fator é a conta inversa da proporção do pão, e é por isso
+## que a mancha de degrau 3 fecha em ~2,4 m nos dois eixos em vez de 7,0 × 2,4 m.
+const TRINCA_ESQUEMA_X := 0.35
+## Frações do comprimento de cada raio em que as duas teias concêntricas do último degrau passam,
+## e quantos segmentos ligam um raio ao seguinte.
+const TRINCA_ANEL_FRACOES: Array[float] = [0.42, 0.72]
+const TRINCA_ANEL_PASSOS := 8
 
 static var _cache: Dictionary = {}
 
@@ -171,6 +203,125 @@ static func planeta(variedade: int) -> Dictionary:
 ## Quantas famílias de planeta existem — a sonda usa a constante, não um número escrito à mão.
 static func planetas_existentes() -> int:
 	return PLANETA_VARIEDADES
+
+## A trinca do canopy: três quadros cumulativos de fissura, desenhados pelo mesmo hash inteiro que
+## desenha a rocha — nenhum `rng` da casa é tocado, e por isso duas montadas da mesma cena assinam
+## o mesmo pixmap e a sonda pode conferir o degradê degrau a degrau.
+##
+## Não é uma `pele`, e é de propósito. O albedo do visor é uma cor com alfa 0,05, e é por ele que a
+## trinca não pode passar: em `TRANSPARENCY_ALPHA` a textura multiplica também o alfa, então o pão
+## ganharia opacidade justamente onde o vidro rachou e perderia a batalha atrás do branco. A
+## fissura entra pela EMISSÃO, que o motor soma depois da luz e não depende do alfa — é assim que
+## uma linha acesa se vê através de um vidro que quase não existe.
+##
+## O degrau é cumulativo por construção, não por sobreposição: o mesmo raio do leque anda os mesmos
+## passos do degrau anterior e só vai mais longe, o halo nunca escurece pixel (`max` em `_pinta`), e
+## ramo e anel só chegam por cima. É isso que permite à sonda exigir que todo pixel aceso do degrau
+## 1 esteja aceso no 3, em vez de confiar que a tabela foi escrita certa.
+static func trinca(degrau: int) -> ImageTexture:
+	var d := clampi(int(degrau), 0, TRINCA_DEGRAUS)
+	if d == 0:
+		return null
+	var chave := "trinca:%d" % d
+	if not _cache.has(chave):
+		var quadro := Image.create_empty(PASSO_TRINCA, PASSO_TRINCA, false, Image.FORMAT_RGB8)
+		quadro.fill(Color(0, 0, 0))
+		var angulos := PackedFloat32Array()
+		var raios := PackedFloat32Array()
+		angulos.resize(TRINCA_LEQUE)
+		raios.resize(TRINCA_LEQUE)
+		for i in range(TRINCA_ABERTURA[d - 1]):
+			var k := (i * TRINCA_PASSO_ABERTURA) % TRINCA_LEQUE
+			var ang := TAU * float(k) / float(TRINCA_LEQUE) \
+				+ (_bruto(k, 3, 17) - 0.5) * 0.28
+			var comp := TRINCA_RAIO[d - 1] * (0.62 + 0.38 * _bruto(k, 9, 41))
+			angulos[k] = ang
+			raios[k] = comp
+			_fissura(quadro, ang, comp, k, d)
+		if d >= TRINCA_DEGRAUS:
+			_anéis(quadro, angulos, raios)
+		_cache[chave] = _final(quadro)
+	return _cache[chave]
+
+## Quantos degraus de trinca existem — a sonda usa a constante, não um número escrito à mão.
+static func trincas_existentes() -> int:
+	return TRINCA_DEGRAUS
+
+## Um raio do leque: anda pixel a pixel com o ângulo passeando pelo hash, e ramifica a partir do
+## degrau 2. O ramo é desenhado com `degrau` 1 de propósito — sem isso um filho do degrau 3 geraria
+## netos e a trinca viraria renda.
+##
+## O ponto de nascimento e o comprimento do ramo são cravados no MAIOR raio da tabela, não no
+## comprimento do degrau que pede o desenho. Parece um detalhe de gosto e é a lei: com o ramo em
+## `0,55 × comprimento`, o degrau 2 ramificava em 22 px e o 3 em 30,8 px — dois ramos diferentes, e
+## o degrau 2 não cabia dentro do 3. Enquanto o leque foi pequeno (raio 15/24/34) os dois caíam em
+## cima dos primários vizinhos e a sonda de cumulação aprovava por aglomeração, não por construção;
+## o leque grande desmascarou a coincidência. Cravado no raio máximo, o ramo do 2 é o do 3 pixel a
+## pixel, e o degrau só acrescenta.
+static func _fissura(quadro: Image, angulo: float, comprimento: float, k: int,
+		degrau: int) -> void:
+	var ang := angulo
+	var base := TRINCA_RAIO[TRINCA_DEGRAUS - 1]
+	var ramo_um := base * 0.55
+	var ramo_dois := base * 0.8
+	var abriu_um := false
+	var abriu_dois := false
+	for s in range(int(ceil(comprimento)) + 1):
+		ang += (_bruto(k, s, 41) - 0.5) * 0.07
+		var t := float(s)
+		_acende(quadro, float(TRINCA_CENTRO) + cos(ang) * t * TRINCA_ESQUEMA_X,
+			float(TRINCA_CENTRO) + sin(ang) * t, 1.0)
+		if degrau >= 2 and not abriu_um and t >= ramo_um:
+			abriu_um = true
+			_fissura(quadro, ang + (_bruto(k, 5, 71) - 0.5) * 0.9 + 0.75,
+				base * 0.34, k + 23, 1)
+		if degrau >= 3 and not abriu_dois and t >= ramo_dois:
+			abriu_dois = true
+			_fissura(quadro, ang - (_bruto(k, 11, 73) - 0.5) * 0.9 - 0.75,
+				base * 0.22, k + 57, 1)
+
+## As duas teias concêntricas do degrau 3: cordas ligando raios vizinhos do leque, a 42% e 72% do
+## comprimento de cada um. É o que faz o quadro ler aranha e não ventarola.
+static func _anéis(quadro: Image, angulos: PackedFloat32Array, raios: PackedFloat32Array) -> void:
+	for fracao in TRINCA_ANEL_FRACOES:
+		for k in range(TRINCA_LEQUE):
+			var outro := (k + 1) % TRINCA_LEQUE
+			var ang_de := angulos[k]
+			var ang_ate := angulos[outro]
+			if k == TRINCA_LEQUE - 1:
+				ang_ate += TAU
+			for s in range(TRINCA_ANEL_PASSOS + 1):
+				var t := float(s) / float(TRINCA_ANEL_PASSOS)
+				var ang := lerpf(ang_de, ang_ate, t)
+				var r := lerpf(raios[k], raios[outro], t) * float(fracao) \
+					* (1.0 + (_bruto(k, s, 61) - 0.5) * 0.12)
+				_acende(quadro, float(TRINCA_CENTRO) + cos(ang) * r * TRINCA_ESQUEMA_X,
+					float(TRINCA_CENTRO) + sin(ang) * r, 0.82)
+
+## A linha é um núcleo de duas linhas e quatro vizinhos a um terço: fenda não é fio, é aresta que
+## pega luz ao redor.
+##
+## O núcleo tem duas linhas na vertical porque o quadro de 128 cai sobre um pão de 237 pixels na
+## vertical e 686 na horizontal: uma linha do desenho vale 1,85 pixel de tela, contra 5,36 do lado
+## de lá. É a mesma anisotropia que `TRINCA_ESQUEMA_X` compensa no comprimento do raio, agora
+## compensada na espessura — com núcleo de uma linha o filete fino era engolido pelo antialias e a
+## trinca, medida pela sonda como ganho de luz, continuava lendo como névoa no fotograma.
+static func _acende(quadro: Image, x: float, y: float, v: float) -> void:
+	var px := int(round(x))
+	var py := int(round(y))
+	_pinta(quadro, px, py, v)
+	_pinta(quadro, px, py + 1, v)
+	_pinta(quadro, px + 1, py, v * 0.34)
+	_pinta(quadro, px - 1, py, v * 0.34)
+	_pinta(quadro, px, py + 2, v * 0.34)
+	_pinta(quadro, px, py - 1, v * 0.34)
+
+## `max`, nunca troca: é esta palavra que faz o degrau 3 conter o degrau 1 inteiro.
+static func _pinta(quadro: Image, x: int, y: int, v: float) -> void:
+	if x < 0 or y < 0 or x >= PASSO_TRINCA or y >= PASSO_TRINCA:
+		return
+	if v > quadro.get_pixel(x, y).r:
+		quadro.set_pixel(x, y, Color(v, v, v))
 
 static func guardado_em(nome: String) -> bool:
 	return _cache.has(nome)
