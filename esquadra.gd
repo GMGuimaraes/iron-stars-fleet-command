@@ -23,6 +23,14 @@ extends RefCounted
 ## `MultiMesh` — sob headless a leitura devolve identidade. O estado verdadeiro mora nas duas
 ## listas; a pintura é derivação pura, e um bloco parado com o mesmo número de casas não é
 ## repintado.
+##
+## Lei da largada, respeitada à letra: as duas muralhas começam separadas por campo suficiente para
+## ser cruzado, e o campo é geometria, não sorteio. A estação de cada lado segue os núcleos, o recuo
+## hostil trava a fachada a `DISTANCIA_DE_CONTATO` da nossa, e os blocos chegam até a estação a
+## `MARCHA_DE_BLOCO`. O campo não vem da grade: aberta a fenda entre blocos, os dois lados a
+## recuo zero ainda nascem a 24,0 u de fachada a fachada — menos que o próprio contato, e longe de
+## qualquer travessia. É o recuo que compra os 154 u da largada, e a asserção contrafactual
+## (`tools/probes/esquadra.gd`, família 2) é o que impede a grade de ser creditada por eles.
 
 ## Grade de casas do bloco. Quatro de boreste a bombordo, três camadas de altura, duas de
 ## profundidade: 24 é o que fecha o orçamento acordado (240 blocos × 24 = 5 760 instâncias) e é
@@ -31,42 +39,62 @@ const CASAS_X := 4
 const CASAS_Y := 3
 const CASAS_Z := 2
 const CASAS := CASAS_X * CASAS_Y * CASAS_Z
-## Passo entre casas: 1,6 u com a réplica a 0,25 (boca medida de 0,912 u) deixa 0,688 u de costura
-## sem desfazer o volume — o bloco se lê como UM bloco, não como enxame.
-const PASSO_CASA := 1.6
+## Passo por eixo, e não um passo só. A replica nao e cubica: a caixa crua da malha e 3,647 de asa
+## a asa x 1,07 de altura x 5,0 de proa a popa, e a 0,25 isso fecha **0,912 x 0,268 x 1,25 u**. Com
+## passo unico de 1,6 restavam 0,688 u no costado mas só **0,35 u de proa a popa** -- dois cascos
+## quase encostados no eixo que o olho le como profundidade, e era isso que fazia a largada parecer
+## monte. 3,2 abre 2,29 no costado e 1,95 no comprimento; a camada fica em 1,6 porque o casco tem
+## 0,27 de altura e ar vertical extra so afastaria o bloco sem nada a mostrar.
+const PASSO_CASA_X := 3.2
+const PASSO_CASA_Y := 1.6
+const PASSO_CASA_Z := 3.2
 ## Escala da réplica sobre a malha de cinco bilhetes. A boca é lida da caixa da malha escalada, não
-## de conta de cabeça: **3,647 u de asa a asa × 0,25 fecha 0,912 u** dentro da casa de 1,6, com
-## 0,688 u de folga entre duas fileiras — que é o que separa "bloco organizado" de "mancha" e o que
-## a régua de vão de `tools/probes/massa_visivel.gd` confere no visor (casa 0,800 contra vão 0,036).
+## de conta de cabeça: **3,647 u de asa a asa × 0,25 fecha 0,912 u** dentro da casa de 3,2, com
+## 2,288 u de folga entre duas fileiras — que é o que separa "bloco organizado" de "mancha" e o que
+## a régua de vão de `tools/probes/massa_visivel.gd` confere no visor.
 ## O bloco não escala com o atrito: quem encolhe é o número de
 ## casas, única leitura honesta de "fileiras perdidas".
 const ESCALA_REPLICA := 0.25
 
 ## Grade do esquadrão: 5 × 4 blocos = 20. Passo separado em x e z porque o bloco não é quadrado: o
-## piso do bloco fecha 6,4 × 3,2 u (4 × 2 casas de 1,6), e um passo único obrigaria o respiro de
-## vante a ser o mesmo de boreste.
+## piso do bloco fecha 10,5 × 4,45 u (centros de casa em (4−1)×3,2 e (2−1)×3,2, mais a boca e o
+## comprimento da replica), e um passo único obrigaria o respiro de vante a ser o mesmo de boreste.
 const COLUNAS_NO_ESQUADRAO := 5
 const LINHAS_NO_ESQUADRAO := 4
 const BLOCOS_NO_ESQUADRAO := COLUNAS_NO_ESQUADRAO * LINHAS_NO_ESQUADRAO
-## 8 em x abre 1,6 u de costura entre blocos vizinhos; 5 em z abre 1,8 sobre os 3,2 do piso. É o
-## mínimo que ainda deixa o bloco ler como bloco — e o que cabe na profundidade que a separação das
-## duas linhas permite.
-const PASSO_BLOCO_X := 8.0
-const PASSO_BLOCO_Z := 5.0
-## Grade do lado: 3 × 2 esquadrões = 6, um por faixa lateral — na mesma ordem de boreste dos seis
-## núcleos. Campo de 15 × 8 blocos.
+## 13 em x deixa 2,49 u de ar entre os cascos mais próximos de dois blocos vizinhos; 7 em z deixa
+## 2,55 sobre o comprimento da réplica. É o ar que faz a muralha ler como fileiras de blocos em vez
+## de parede contínua — e o que cabia nos 8 × 5 antigos era 0,7 u, quase nada.
+const PASSO_BLOCO_X := 13.0
+const PASSO_BLOCO_Z := 7.0
+## Grade do lado: 3 × 2 esquadrões = 6. A segunda dimensão é **altura**, não profundidade: empilhar
+## os esquadrões em y abre a muralha em dois andares (e dá a quem está em cima o alvo de quem está
+## embaixo, que é o pedido) sem comer o fundo do tabuleiro, que é justamente o que as duas linhas
+## precisam para ter campo entre elas. Campo de 15 blocos de boreste a bombordo por 4 de vante.
 const COLUNAS_NO_LADO := 3
-const LINHAS_NO_LADO := 2
-const ESQUADROES_NO_LADO := COLUNAS_NO_LADO * LINHAS_NO_LADO
-## Passo de CONTINUAÇÃO de grade, não de respiro: 40 = (5 − 1) × 8 + 8 e 20 = (4 − 1) × 5 + 5, então
-## o bloco que fecha um esquadrão e o que abre o vizinho ficam à mesma distância dos colegas de
-## dentro. Com 36 × 22 a costura entre esquadrões saía 4 u em x — menor que os 6,4 do piso, e dois
-## blocos de esquadrões vizinhos se sobrepunham. A profundidade do LADO sai 20 + 15 = 35 u, ±17,5 em
-## torno do núcleo: com as duas linhas a ~45 u uma da outra, as fachadas ficam a ~10 u e nenhum bloco
-## aliado atravessa um hostil. O par antigo 52 × 44 dava ±40 de profundidade e fazia as duas esquadras
-## se sobreporem no centro da linha.
-const PASSO_ESQUADRAO_X := 40.0
-const PASSO_ESQUADRAO_Z := 20.0
+const CAMADAS_NO_LADO := 2
+const ESQUADROES_NO_LADO := COLUNAS_NO_LADO * CAMADAS_NO_LADO
+## Passo de CONTINUAÇÃO de grade em x: 65 = (5 − 1) × 13 + 13, então o bloco que fecha um esquadrão
+## e o que abre o vizinho ficam à mesma distância dos colegas de dentro. Em y a regra é outra — os
+## dois andares não se seguem dentro de uma fileira, apenas se sobrepõem — e 12 u abrem 8,5 u de ar
+## entre os cascos do andar de cima e os de baixo, sobre os 3,47 que o bloco tem de altura.
+## A profundidade do LADO sai (4 − 1) × 7 + 4,45 = 25,45 u, ±12,7 em torno do núcleo: com as duas
+## linhas a ~45 u, as fachadas já não se atravessam, e sobra fundo de sobra para o campo de
+## aproximação abaixo.
+const PASSO_ESQUADRAO_X := 65.0
+const PASSO_ESQUADRAO_Y := 12.0
+## Fundo lido de uma muralha, de fachada a traseira, em unidades de tabuleiro: os centros dos
+## blocos mais extremos (3 × 7) mais o vão entre as duas casas de proa e popa (1 × 3,2) = 24,2 u. É a
+## caixa que a sonda confere contra o tabuleiro, não o braço que a aproximação usa para saber onde
+## para -- para isso existe `FACHADA_DA_MURALHA`.
+const FUNDO_DA_MURALHA := float((LINHAS_NO_ESQUADRAO - 1) * PASSO_BLOCO_Z) \
+	+ float((CASAS_Z - 1) * PASSO_CASA_Z)
+## Braço do centro da muralha até a fileira da frente, lido no CENTRO do casco: (4 − 1) × 7 ÷ 2 =
+## 10,5 u. A fachada é esse centro, não a ponta do casco (a ponta vem da caixa da malha e é a sonda
+## quem a lê), e as duas muralhas têm o mesmo braço: a estação hostil para quando os dois centros
+## frontais chegam a `DISTANCIA_DE_CONTATO`, o que acontece a recuo −16,0 -- travessia de 154,0 u
+## para 40,0 u medida na família 10 da sonda.
+const FACHADA_DA_MURALHA := float(LINHAS_NO_ESQUADRAO - 1) * PASSO_BLOCO_Z / 2.0
 const BLOCOS_NO_LADO := ESQUADROES_NO_LADO * BLOCOS_NO_ESQUADRAO
 ## Instâncias de um `MultiMesh` de lado: é a conta que o probe confere. Um lote só por time é o que
 ## impede a esquadra de custar uma chamada de desenho por casa; o preço real medido em janela está em
@@ -87,6 +115,16 @@ const DANO_DE_BLOCO := 2.2
 ## outro lado queima, e o bloco de retaguarda continua com as vinte casas — a vista que separa
 ## "batalha massiva" de "todo mundo morrendo junto".
 const ALCANCE_DE_BLOCO := 60.0
+## Distância de FACHADA em que a muralha hostil para de avançar. Tem de ser maior que zero para
+## bloco nenhum atravessar bloco, e menor que `ALCANCE_DE_BLOCO` para a frente queimar enquanto a
+## retaguarda continua inteira. É o freio da aproximação, não uma ordem do jogador.
+const DISTANCIA_DE_CONTATO := 40.0
+## Campo que a muralha hostil cruza na largada, em unidades de tabuleiro: para trás do centro dos
+## próprios núcleos, ela nasce a esta distância e anda até o contato a `MARCHA_DE_BLOCO`. Com 130 u
+## de recuo, a fachada começa a 154,0 u da nossa (medido em `tools/probes/esquadra.gd`, família 10)
+## e o cruzamento leva 19,0 s de marcha visível -- o "espaço a ser atravessado" que a largada de
+## 10 u não tinha. Não sorteia nada: é constante de cadastro, e a mesma em toda partida.
+const CAMPO_DE_APROXIMACAO := 130.0
 ## Reparo dos três eixos que se consertam, por segundo. Casco fica de fora de propósito.
 const REPARO := {"MOTORES": 1.1, "ARMAS": 0.9, "TRIPULACAO": 0.6}
 ## Os quatro eixos que uma salva pode cobrar, em rotação. `CASCO` é o valor de `navios`, não uma
@@ -102,6 +140,14 @@ var blocos_hostis: Array[Dictionary] = []
 ## segue a esquadra — os doze cascos continuam mandando no próprio posicionamento.
 var centro_aliado := Vector3.ZERO
 var centro_hostil := Vector3.ZERO
+## Recuo da muralha hostil em z, medido a partir do centro dos próprios núcleos: negativo é ficar
+## para trás, longe da nossa linha. É o único número de posicionamento que a massa tem por si, e
+## existe porque a grade, sozinha, não faz campo: a recuo zero as duas fachadas nascem a 24,0 u
+## -- menos que `DISTANCIA_DE_CONTATO` e sem nada a cruzar. É este recuo, não o ar entre blocos,
+## quem compra os 154 u da largada (a contrafactual está em `tools/probes/esquadra.gd`, família 2).
+## Quem caminha são os BLOCOS, a `MARCHA_DE_BLOCO`, até o posto que esta estação dita: o recuo é
+## alvo, teleporte de corpo não há.
+var recuo_hostil := 0.0
 var salva_numero := 0
 var perdas_aliadas := 0
 var perdas_hostis := 0
@@ -126,24 +172,25 @@ static func casa_local(c: int) -> Vector3:
 	var ix := dentro % CASAS_X
 	var iz := int(float(dentro) / float(CASAS_X))
 	return Vector3(
-		(float(ix) - float(CASAS_X - 1) / 2.0) * PASSO_CASA,
-		(float(camada) - float(CASAS_Y - 1) / 2.0) * PASSO_CASA,
-		(float(iz) - float(CASAS_Z - 1) / 2.0) * PASSO_CASA)
+		(float(ix) - float(CASAS_X - 1) / 2.0) * PASSO_CASA_X,
+		(float(camada) - float(CASAS_Y - 1) / 2.0) * PASSO_CASA_Y,
+		(float(iz) - float(CASAS_Z - 1) / 2.0) * PASSO_CASA_Z)
 
 
 ## Posto do bloco na grade do lado: posição do esquadrão no tabuleiro do lado mais o posto do
-## bloco dentro do esquadrão. Aritmética pura de índice, sem sorteio e sem leitura de cena.
+## bloco dentro do esquadrão. Aritmética pura de índice, sem sorteio e sem leitura de cena. A
+## segunda dimensão do LADO é altura: `linha_esq` empilha o andar de cima sobre o de baixo, e o
+## fundo do tabuleiro fica inteiro para o campo que as duas muralhas cruzam.
 static func posto_no_lado(esq: int, indice: int, ancora: Vector3) -> Vector3:
 	var coluna_esq := esq % COLUNAS_NO_LADO
-	var linha_esq := int(float(esq) / float(COLUNAS_NO_LADO))
+	var camada_esq := int(float(esq) / float(COLUNAS_NO_LADO))
 	var bc := indice % COLUNAS_NO_ESQUADRAO
 	var br := int(float(indice) / float(COLUNAS_NO_ESQUADRAO))
 	return ancora + Vector3(
 		(float(coluna_esq) - float(COLUNAS_NO_LADO - 1) / 2.0) * PASSO_ESQUADRAO_X
 			+ (float(bc) - float(COLUNAS_NO_ESQUADRAO - 1) / 2.0) * PASSO_BLOCO_X,
-		0.0,
-		(float(linha_esq) - float(LINHAS_NO_LADO - 1) / 2.0) * PASSO_ESQUADRAO_Z
-			+ (float(br) - float(LINHAS_NO_ESQUADRAO - 1) / 2.0) * PASSO_BLOCO_Z)
+		(float(camada_esq) - float(CAMADAS_NO_LADO - 1) / 2.0) * PASSO_ESQUADRAO_Y,
+		(float(br) - float(LINHAS_NO_ESQUADRAO - 1) / 2.0) * PASSO_BLOCO_Z)
 
 
 func _novo_bloco(id: int, esq: int, indice: int, lado: String, pos: Vector3) -> Dictionary:
@@ -158,10 +205,11 @@ func _novo_bloco(id: int, esq: int, indice: int, lado: String, pos: Vector3) -> 
 ##
 ## Cinco bilhetes fundidos numa única `ArrayMesh`: espinha, proa em cone, popa, dorso e as duas
 ## asas. É a MESMA família de silhueta do cruzador de linha dos núcleos, compactada para caber na
-## casa de 1,6 u — o bloco precisa de fileiras que se leiam como fileiras, e a malha crua mede
-## 3,647 × 1,07 × 5,0 u, então um casco deste tamanho dentro de uma casa de 1,6 viraria borrão
-## sobreposto. Boca final **0,912 u** lida da caixa escalada, folga de **0,688 u** para o
-## vizinho, e o paralelepípedo continua sendo lido como um volume só.
+## casa de 3,2 u — o bloco precisa de fileiras que se leiam como fileiras, e a malha crua mede
+## 3,647 × 1,07 × 5,0 u, então um casco deste tamanho dentro de uma casa apertada viraria borrão
+## sobreposto. Boca final **0,912 u** e comprimento **1,25 u**, lidos da caixa escalada, com
+## **2,288 u** de folga no costado e **1,95 u** de proa a popa: o paralelepípedo continua sendo lido
+## como um volume só, mas agora com costura nos dois eixos que o olho chama de profundidade.
 ##
 ## Fundir é o que paga a conta: com uma malha só por time, 2 880 casas viram UM `MultiMesh` e um
 ## lote. Com cinco primitivas separadas seriam cinco passadas de desenho por time — ainda barato, mas
@@ -243,9 +291,10 @@ static func _fundir(vertices: PackedVector3Array, normais: PackedVector3Array,
 
 
 ## Monta as duas massas. `nucleos_*` são as posições dos doze cascos de hoje: a muralha de um lado é
-## ANCORADA NO CENTRO DE MASSA dos seus núcleos, e o esquadrão `i` ocupa a faixa `i` da muralha, na
-## mesma ordem de boreste do casco `i`. Ancorar cada esquadrão no PRÓPRIO núcleo foi tentado e é
-## mentira de grade: os cascos estão a ~5 u uns dos outros e o passo da massa é 8 × 5, então as seis
+## ANCORADA NA ESTAÇÃO do lado — o centro de massa dos seus núcleos, mais o recuo que a lei da
+## largada manda — e o esquadrão `i` ocupa a faixa `i` da muralha (coluna em boreste, andar em
+## altura), na mesma ordem do casco `i`. Ancorar cada esquadrão no PRÓPRIO núcleo foi tentado e é
+## mentira de grade: os cascos estão a ~5 u uns dos outros e o passo da massa é 13 × 7, então as seis
 ## grades particulares saíam deslocadas entre si e 36 pares de companheiros de linha se atravessavam
 ## (medido em `tools/probes/esquadra.gd`). Uma grade por lado é o que faz a formação ser lida como
 ## formação.
@@ -258,10 +307,11 @@ func montar(nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 	presas = 0
 	centro_aliado = _centro_de(nucleos_aliados)
 	centro_hostil = _centro_de(nucleos_hostis)
+	recuo_hostil = -float(CAMPO_DE_APROXIMACAO)
 	var id := 0
 	for lado in ["aliado", "hostil"]:
 		var lista := blocos_aliados if lado == "aliado" else blocos_hostis
-		var ancora := centros(lado)
+		var ancora := estacao(lado)
 		for esq in range(ESQUADROES_NO_LADO):
 			for indice in range(BLOCOS_NO_ESQUADRAO):
 				lista.append(_novo_bloco(id, esq, indice, lado,
@@ -282,6 +332,25 @@ func centros(lado: String) -> Vector3:
 	return centro_aliado if lado == "aliado" else centro_hostil
 
 
+## Ponto do tabuleiro ao qual a grade do lado está presa: o centro dos próprios núcleos para o
+## aliado, que defende a própria linha, e o centro recuado para o hostil, que ainda está cruzando o
+## campo. É a âncora real da muralha; `centros()` continua sendo a régua dos núcleos, que as sondas
+## e o README citam.
+func estacao(lado: String) -> Vector3:
+	return centros(lado) + Vector3(0.0, 0.0, recuo_hostil if lado == "hostil" else 0.0)
+
+
+## Para onde o recuo anda: o tanto de trás que põe a nossa fachada e a deles a
+## `DISTANCIA_DE_CONTATO` uma da outra, nunca adiantado em relação aos próprios núcleos. As duas
+## fachadas medem o mesmo braço a partir do centro de cada muralha (`FACHADA_DA_MURALHA`), por isso
+## ele entra duas vezes na conta: usar o fundo inteiro no lugar do braço deixa a linha parada 3,2 u
+## antes do contato, que é a quebra que a família 10 da sonda pegou na primeira rodada. Se a nossa
+## linha recuar, o alvo recua junto; se ela avançar, a muralha encurta o campo até o contato.
+func _recuo_alvo() -> float:
+	var alvo := centro_aliado.z - 2.0 * FACHADA_DA_MURALHA - DISTANCIA_DE_CONTATO
+	return minf(0.0, alvo - centro_hostil.z)
+
+
 func lista_de(lado: String) -> Array[Dictionary]:
 	return blocos_aliados if lado == "aliado" else blocos_hostis
 
@@ -294,17 +363,20 @@ static func casas_vivas(bloco: Dictionary) -> int:
 	return maxi(1, int(ceilf(frac * float(CASAS))))
 
 
-## Um quadro de massa: cada bloco persegue o posto do seu esquadrão, e o posto persegue o núcleo.
-## `move_toward`, nunca teleportar — é a mesma lei que faz as formações dos doze cascos levarem
-## tempo de locomoção.
+## Um quadro de massa: cada bloco persegue o posto do seu esquadrão, e o posto persegue a estação do
+## lado. `move_toward`, nunca teleportar — é a mesma lei que faz as formações dos doze cascos levarem
+## tempo de locomoção, e é ela que faz o campo de aproximação ser cruzado em ~19 s de marcha em vez
+## de resolvido de uma vez: a estação da muralha hostil apenas segue a nossa linha, quem anda até
+## ela são os blocos, a `MARCHA_DE_BLOCO`.
 func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 	centro_aliado = _centro_de(nucleos_aliados)
 	centro_hostil = _centro_de(nucleos_hostis)
+	recuo_hostil = _recuo_alvo()
 	for lado in ["aliado", "hostil"]:
 		for b in lista_de(lado):
 			if not bool(b["vivo"]):
 				continue
-			var posto := posto_no_lado(int(b["esquadrao"]), int(b["formacao"]), centros(lado))
+			var posto := posto_no_lado(int(b["esquadrao"]), int(b["formacao"]), estacao(lado))
 			var partida: Vector3 = b["pos"]
 			var marcha := MARCHA_DE_BLOCO * (0.35 + float(b["MOTORES"]) / 100.0 * 0.65)
 			b["pos"] = (b["pos"] as Vector3).move_toward(posto, delta * marcha)
@@ -484,7 +556,7 @@ func _recrutar_postos() -> void:
 		for p in range(BLOCOS_NO_LADO):
 			if not donos.has(p):
 				livres.append(p)
-		var ancora := centros(lado)
+		var ancora := estacao(lado)
 		for b in sem_teto:
 			if livres.is_empty():
 				break

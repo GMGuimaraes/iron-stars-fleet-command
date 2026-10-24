@@ -7,16 +7,19 @@ extends SceneTree
 ## Uma sonda que só conferisse "apareceu alguma coisa" aprovaria um enxame desordenado tão bem quanto
 ## uma linha de batalha. O que ela cobra:
 ##
-## 1) A CONTA FECHA. 4 × 3 × 2 = 24 casas; 5 × 4 = 20 blocos por esquadrão; 3 × 2 = 6 esquadrões por
-##    lado; 120 blocos por lado, 240 no tabuleiro, 2 880 instâncias por `MultiMesh`, 5 760 desenhadas
-##    — e 24 000 cascos na largada, porque "milhares de navios" é número que se mede, não adjetivo.
-## 2) A GRADE NÃO SE ATRAVESSA. Nenhum piso de bloco sobrepõe outro do MESMO lado, nenhum sobrepõe o
-##    do lado ADVERSO, e a fachada aliada fica toda atrás da fachada hostil. Foi assim que os erros de
-##    layout apareceram: com passo 12 e esquadrões a 52 × 44 a profundidade do lado dava ±40 u e as
-##    duas esquadras se sobrepunham no centro da linha; e com cada esquadrão ancorado no SEU núcleo
-##    (5 u de distância entre cascos, passo de 8 × 5 na massa) as seis grades particulares saíam
-##    deslocadas uma da outra e 36 pares de companheiros de linha se atravessavam. Uma grade por lado
-##    é o que faz a formação ser lida como formação.
+## 1) A CONTA FECHA. 4 × 3 × 2 = 24 casas; 5 × 4 = 20 blocos por esquadrão; 3 colunas × 2 andares = 6
+##    esquadrões por lado; 120 blocos por lado, 240 no tabuleiro, 2 880 instâncias por `MultiMesh`,
+##    5 760 desenhadas — e 24 000 cascos na largada, porque "milhares de navios" é número que se
+##    mede, não adjetivo.
+## 2) A GRADE NÃO SE ATRAVESSA E TEM AR. Nenhum piso de bloco sobrepõe outro do MESMO lado, nenhum
+##    sobrepõe o do lado ADVERSO, e a fachada aliada fica toda atrás da traseira hostil. Foi assim que
+##    os erros de layout apareceram: com passo 12 e esquadrões a 52 × 44 a profundidade do lado dava
+##    ±40 u e as duas esquadras se sobrepunham no centro da linha; e com cada esquadrão ancorado no
+##    SEU núcleo (5 u de distância entre cascos, passo de 13 × 7 na massa) as seis grades particulares
+##    saíam deslocadas uma da outra e 36 pares de companheiros de linha se atravessavam. Uma grade por
+##    lado é o que faz a formação ser lida como formação. O ar também é cobrado: o par de blocos mais
+##    apertado do lado tem de deixar ≥ 2,4 u entre cascos, e com o passo antigo de 8 × 5 sobravam 0,7
+##    u — muralha sem emenda entre blocos lê-se como uma peça só, não como fileiras de blocos.
 ## 3) O TOPO FECHA PRIMEIRO. A casa é ordenada camada por camada, de baixo para cima: sob atrito some
 ##    a camada de cima, nunca um buraco no meio. É a silhueta encolhendo que faz a lotação ser lida
 ##    de longe.
@@ -30,23 +33,38 @@ extends SceneTree
 ##    campo em vez de escrever fora do `MultiMesh`. Qualquer apagamento corrige a lista para cima,
 ##    então o lado inteiro é marcado sujo, e a cauda órfã do lado que perdeu é apagada — sem isso
 ##    fica um bloco fantasma de 24 casas pendurado no campo.
-## 6) DUAS MONTADAS GÊMEAS FECHAM O MESMO LEDGER. Sesenta salvas em duas instâncias com as mesmas
-##    âncoras devolvem `resumo()`, vivos, navios, perdas e presas idênticos: a salva é um quadro
-##    conjunto, lido antes de qualquer escrita.
-## 7) NENHUM SORTEIO TOCADO. Duzentos quadros de massa, sessenta salvas e uma repintura forçada não
-##    movem `rng` nem `visual_rng`, e a cauda de quarenta sorteios é a da semente cravada — a mesma
-##    régua de `geoide.gd` e `superficies.gd`. E o ledger dos doze cascos não ganha uma linha: nenhum
-##    `hp` de casco é escrito pela massa.
+## 6) DUAS MONTADAS GÊMEAS FECHAM O MESMO LEDGER. Marchadas até o contato, sessenta salvas em duas
+##    instâncias com as mesmas âncoras devolvem `resumo()`, vivos, navios, perdas e presas idênticos:
+##    a salva é um quadro conjunto, lido antes de qualquer escrita. A marcha é precondition: desde que
+##    a largada ganhou campo de aproximação, salvas disparadas a 154 u não lançam contra nada, e
+##    "ledger idêntico" sairia do zero — não da paridade.
+## 7) NENHUM SORTEIO TOCADO. Duzentos quadros de massa, a travessia inteira, sessenta salvas e uma
+##    repintura forçada não movem `rng` nem `visual_rng`, e a cauda de quarenta sorteios é a da
+##    semente cravada — a mesma régua de `geoide.gd` e `superficies.gd`. E o ledger dos doze cascos não
+##    ganha uma linha: nenhum `hp` de casco é escrito pela massa. A família confere também que a massa
+##    QUEIMOU nesse intervalo, porque inércia medida sobre troca vazia não prova nada.
 ## 8) PARADO E INTEIRO NÃO CUSTA ESCRITA. A segunda pintura sem movimento devolve zero blocos
-##    tocados; com um quadro de marcha devolve os duzentos e quarenta. O custo de conta por quadro é
-##    MEDIDO e impresso, não prometido.
+##    tocados; com um quadro de marcha devolve os duzentos e quarenta, e em duzentos quadros de
+##    marcha devolve quarenta e oito mil. O portão é essa CONTA, que é determinística. O relógio é
+##    impresso como medida, não como lei: a mesma máquina deu 761, 918 e 1 287 ms para os mesmos
+##    duzentos quadros em três rodadas seguidas — com ±35 % de ruído, nenhum número de `ms` pode
+##    ser assinado aqui, e a asserção antiga (`custo_ms >= 0.0`) não podia reprovar nada.
 ## 9) A PONTE MOSTRA A MASSA E A RODA DÁ ZOOM. Dois nós `MultiMeshInstance3D` na cena, malha única
 ##    compartilhada, a caixa crua lida da própria malha (3,647 x 1,07 x 5,0) fechando a boca em
-##    0,9118 u dentro da casa de 1,6 com 0,6882 u de costura — é o número que decide se a fileira se
-##    lê como fileira, e ele vem da malha, nunca do cabeçalho, `use_colors` +
+##    0,912 u dentro da casa de 3,2 — 2,288 u de costura no costado e 1,95 u de proa a popa, lidos do
+##    `AABB` da malha nos dois eixos horizontais: é o número que decide se a fileira se lê como
+##    fileira, e ele vem da malha, nunca do cabeçalho, `use_colors` +
 ##    `vertex_color_use_as_albedo` ligados (esquecer um dos dois é a massa inteira cinza), caixa de
 ##    desenho autorgada cobrindo o campo, a roda levando a FOV de 78° a 14° com aperto nas duas
 ##    pontas, e o letreiro da massa sendo `Label` — os 35 botões de `menu.gd` não se mexem.
+## 10) A LARGADA TEM CAMPO E ELE É CRUZADO MARCHANDO. As duas fachadas nascem a 154,0 u uma da outra e
+##     fecham exatamente em `DISTANCIA_DE_CONTATO` (40 u) sob `MARCHA_DE_BLOCO`: o maior deslocamento
+##     de um bloco em um quadro é o passo da marcha, o vão nunca fica abaixo do contato, e a travessia
+##     leva 19,0 s de tela. O recuo tem prova contrafactual — com a estação em zero a grade sozinha
+##     deixa 24,0 u de fachada a fachada, MENOS que o próprio contato e longe de qualquer travessia.
+##     É a régua que desmente a conta de cabeça desta sessão: o campo não é comprado pelo ar entre
+##     blocos, é comprado pelo recuo, e sem esta asserção "abrir o ar" passaria como se tivesse feito
+##     a aproximação sozinha.
 ##
 ## Uso: godot --headless --path . --quit-after 6000 -s res://tools/probes/esquadra.gd
 
@@ -61,16 +79,34 @@ const BLOCOS_POR_LADO := 120
 const CASAS := 24
 const INSTANCIAS_POR_LADO := 2880
 const NAVIOS_NO_BLOCO := 100
-## Piso do bloco em u: 4 casas de 1,6 em x, 2 em z. É a régua da asserção de sobreposição.
-const PISO_X := 6.4
-const PISO_Z := 3.2
+## Piso do bloco em u: 4 casas de 3,2 em x mais a boca de 0,912, 2 casas de 3,2 em z mais os 1,25 de
+## comprimento, 3 camadas de 1,6 em y mais os 0,27 de altura. É a régua das asserções de sobreposição
+## e de ar — os três eixos, porque a muralha agora também empilha andar.
+const PISO_X := 10.52
+const PISO_Z := 4.45
+const PISO_Y := 3.47
 ## Passo da grade que a sonda assinou — a malha é contínua entre esquadrões, não só dentro deles.
-const PASSO_X := 8.0
-const PASSO_Z := 5.0
+const PASSO_X := 13.0
+const PASSO_Z := 7.0
+## Ar mínimo entre os cascos mais próximos de dois blocos vizinhos do mesmo lado. Com o passo antigo
+## de 8 × 5 isto aqui valia 0,7 u e a muralha não tinha emenda.
+const AR_MINIMO := 2.4
 const PONTE_FOV_LARGO := 78.0
 const PONTE_FOV_FECHADO := 14.0
 ## Folga de coordenada: a grade é contagem exata, mas `move_toward` deixa resto de ponto flutuante.
 const FOLGA := 0.1
+## A travessia: 114,0 u de marcha (154,0 − 40,0) a 6 u/s chegam ao contato em 1.140 quadros. 600 é
+## "no meio do campo"; 1.200 é a conta já fechada, com folga. O teto de um quadro é o passo da
+## marcha — campo cruzado de salto não é aproximação, é teleporte.
+const QUADROS_A_MEIO := 600
+const QUADROS_DA_TRAVESSIA := 1200
+const SALTO_MAXIMO := Esquadra.MARCHA_DE_BLOCO / 60.0
+## Campo lido na largada, de fachada a fachada: os 130 u de recuo mais os 45 u de separação dos doze
+## núcleos, menos o braço de cada muralha até sua fileira frontal (2 × 10,5 u de centro de casco).
+## Conta que a família 10 mede e o README cita — é a régua do "espaço a ser cruzado".
+const CAMPO_ESPERADO := 154.0
+## Tolerância da fachada: a marcha fecha em `move_toward` e o centro de casa não é régua exata.
+const FOLGA_CONTATO := 1.0
 const QUADROS := 200
 const SALVAS := 60
 const SEMENTE_RNG := 1234567890
@@ -130,11 +166,43 @@ func _novo_mm(e: Esquadra) -> MultiMesh:
 	mm.instance_count = Esquadra.INSTANCIAS_POR_LADO
 	return mm
 
-## Sobreposição de pisos: dois blocos ocupam o mesmo espaço se as caixas de 6,4 × 3,2 se cruzam.
+## Sobreposição de pisos: dois blocos ocupam o mesmo espaço se as caixas de 10,5 × 4,45 × 3,47 se
+## cruzam nos TRÊS eixos. Ignorar y era correto enquanto a segunda dimensão do lado era profundidade;
+## desde que os esquadrões se empilham em altura, dois blocos dividem a mesma coluna de boreste a 12 u
+## de piso vertical, e uma régua de dois eixos lê isso como 120 sobreposições que não existem.
 func _sobrepoe(a: Dictionary, b: Dictionary) -> bool:
 	var pa: Vector3 = a["pos"]
 	var pb: Vector3 = b["pos"]
-	return absf(pa.x - pb.x) < PISO_X - FOLGA and absf(pa.z - pb.z) < PISO_Z - FOLGA
+	return absf(pa.x - pb.x) < PISO_X - FOLGA and absf(pa.z - pb.z) < PISO_Z - FOLGA \
+		and absf(pa.y - pb.y) < PISO_Y - FOLGA
+
+
+## Põe a massa em contato de linha antes de cobrar troca de salva. É precondition, não enfeite:
+## desde que a largada ganhou campo de aproximação, o hostil nasce a 154,0 u de fachada e o alcance
+## é 60 u, então sessenta salvas disparadas na monta não achavam alvo nenhum -- o "ledger idêntico
+## das duas montadas" saía de zero lançamentos, não de paridade, e a asserção ficava aprovando o
+## vazio. Marchar é o único caminho honesto até lá: é o `passo` do jogo, com os mesmos núcleos da
+## monta, e o contador devolvido prova que houve travessia.
+func _marchar_ate_contato(e: Esquadra, nuc_a: Array, nuc_h: Array) -> int:
+	var q := 0
+	while _fachadas(e) > Esquadra.DISTANCIA_DE_CONTATO + FOLGA_CONTATO \
+			and q < QUADROS_DA_TRAVESSIA:
+		e.passo(1.0 / 60.0, nuc_a, nuc_h)
+		q += 1
+	return q
+
+
+## Idem a `_marchar_ate_contato`, mas pela porta da ponte: `_atualizar_esquadras` é o único `passo`
+## que o jogo chama, e é ele — não a sonda — quem tem de fechar o campo. É puro pela mesma lei que a
+## família 7 diz conferir: locomoção e pintura, sem sorteio e sem escrita em casco.
+func _marchar_na_ponte(jogo) -> int:
+	var q := 0
+	while _fachadas(jogo.esquadra) > Esquadra.DISTANCIA_DE_CONTATO + FOLGA_CONTATO \
+			and q < QUADROS_DA_TRAVESSIA:
+		jogo._atualizar_esquadras(1.0 / 60.0)
+		q += 1
+	return q
+
 
 func _faixa_z(e: Esquadra, lado: String) -> Dictionary:
 	var minimo := INF
@@ -144,6 +212,26 @@ func _faixa_z(e: Esquadra, lado: String) -> Dictionary:
 		minimo = minf(minimo, z)
 		maximo = maxf(maximo, z)
 	return {"min": minimo, "max": maximo}
+
+## Idem em y: é a régua dos dois andares, a segunda dimensão do lado desde que o ar abriu.
+func _faixa_y(e: Esquadra, lado: String) -> Dictionary:
+	var minimo := INF
+	var maximo := -INF
+	for b in e.lista_de(lado):
+		var y: float = (b["pos"] as Vector3).y
+		minimo = minf(minimo, y)
+		maximo = maxf(maximo, y)
+	return {"min": minimo, "max": maximo}
+
+## Vão de fachada a fachada, lido no centro do casco da última fileira de cada muralha. Positivo é
+## campo ainda por cruzar; negativo é uma esquadra dentro da outra.
+func _fachadas(e: Esquadra) -> float:
+	return float(_faixa_z(e, "aliado")["min"]) - float(_faixa_z(e, "hostil")["max"])
+
+## Ar entre caixas de blocos: o eixo em que eles se separam, descontado o piso. negativo é sobreposição.
+static func _ar_entre(pa: Vector3, pb: Vector3) -> float:
+	return maxf(absf(pa.x - pb.x) - PISO_X,
+		maxf(absf(pa.z - pb.z) - PISO_Z, absf(pa.y - pb.y) - PISO_Y))
 
 func _initialize() -> void:
 	print("SONDA-ESQUADRA: comecando")
@@ -178,18 +266,21 @@ func _initialize() -> void:
 		"%d aliado + %d hostil = %d cascos" % [e.navios("aliado"), e.navios("hostil"),
 			e.navios("aliado") + e.navios("hostil")])
 
-	# ── 2. a grade nao se atravessa ─────────────────────────────────────────────────────────
+	# ── 2. a grade nao se atravessa, e tem ar ───────────────────────────────────────────────
 	var propria := 0
 	var alheia := 0
 	var minimo_centro := INF
+	var ar_min := INF
 	for lado in ["aliado", "hostil"]:
 		var lista := e.lista_de(lado)
 		for i in range(lista.size()):
 			for j in range(i + 1, lista.size()):
 				if _sobrepoe(lista[i], lista[j]):
 					propria += 1
-				var d: float = (lista[i]["pos"] as Vector3).distance_to(lista[j]["pos"])
-				minimo_centro = minf(minimo_centro, d)
+				var pa: Vector3 = lista[i]["pos"]
+				var pb: Vector3 = lista[j]["pos"]
+				minimo_centro = minf(minimo_centro, pa.distance_to(pb))
+				ar_min = minf(ar_min, _ar_entre(pa, pb))
 	for a in e.blocos_aliados:
 		for b in e.blocos_hostis:
 			if _sobrepoe(a, b):
@@ -202,15 +293,41 @@ func _initialize() -> void:
 	_assert("nenhum bloco sobrepoe o piso de um companheiro de linha", propria == 0,
 		"%d sobreposigoes no mesmo lado, centro mais proximo a %.2f u (passo %.0f x %.0f)" % [
 			propria, minimo_centro, PASSO_X, PASSO_Z])
+	_assert("o par de blocos mais apertado do lado ainda deixa ar entre cascos",
+		ar_min >= AR_MINIMO,
+		"%.2f u de ar no par mais junto (piso %.2f x %.2f x %.2f dentro do passo %.0f x %.0f); com o passo antigo de 8 x 5 o ar era 0,7 u" % [
+			ar_min, PISO_X, PISO_Z, PISO_Y, PASSO_X, PASSO_Z])
 	var folga_linhas := float(faixa_a["min"]) - float(faixa_h["max"])
 	_assert("nenhum bloco aliado atravessa um hostil", alheia == 0,
 		"%d sobreposicoes entre os lados; fachada aliada em z %.1f, traseira hostil em z %.1f, %s de %.1f u" % [
 			alheia, faixa_a["min"], faixa_h["max"],
 			"folga" if folga_linhas > 0.0 else "CRUZADAS", absf(folga_linhas)])
-	_assert("a profundidade do lado cabe na separacao das duas linhas",
-		faixa_a["max"] - faixa_a["min"] <= 2.0 * Esquadra.PASSO_ESQUADRAO_Z + 4.0,
-		"lado com %.1f u de profundidade, linhas a %.1f u" % [faixa_a["max"] - faixa_a["min"],
-			absf((e.centros("aliado") as Vector3).z - (e.centros("hostil") as Vector3).z)])
+	var sep_nucleos := absf((e.centros("aliado") as Vector3).z - (e.centros("hostil") as Vector3).z)
+	var fundo_lado := float(faixa_a["max"]) - float(faixa_a["min"])
+	# A segunda dimensão do LADO mudou de eixo: os dois grupos de esquadrões não se seguem mais em
+	# profundidade, se empilham em altura. É o que devolve fundo de tabuleiro para o campo.
+	var andar := _faixa_y(e, "aliado")
+	_assert("o lado e tres colunas de dois andares, nao duas fileiras de fundo",
+		Esquadra.COLUNAS_NO_LADO * Esquadra.CAMADAS_NO_LADO == 6 \
+			and absf(float(andar["max"]) - float(andar["min"]) - Esquadra.PASSO_ESQUADRAO_Y) < FOLGA \
+			and fundo_lado <= Esquadra.FUNDO_DA_MURALHA,
+		"andares a %.1f u de separacao, lado com %.1f u de fundo contra %.1f u de muralha (linhas a %.1f u)" % [
+			float(andar["max"]) - float(andar["min"]), fundo_lado, Esquadra.FUNDO_DA_MURALHA,
+			sep_nucleos])
+	# O contrafactual do recuo: a grade, sozinha, NAO faz campo. Sem estacao recuada as fachadas
+	# nascem a ~24 u — menos que o proprio contato — e o pedido ("um espaco grande a ser cruzado")
+	# voltaria a ser um acaso de layout, pago com muro contra muro.
+	var cf := _nova_esquadra()
+	cf.recuo_hostil = 0.0
+	for lado_cf in ["aliado", "hostil"]:
+		for b in cf.lista_de(lado_cf):
+			b["pos"] = Esquadra.posto_no_lado(int(b["esquadrao"]), int(b["formacao"]),
+				cf.estacao(lado_cf))
+	var fachada_cf := _fachadas(cf)
+	_assert("sem a estacao recuada nao ha campo nenhum, so grade colada",
+		fachada_cf < Esquadra.DISTANCIA_DE_CONTATO,
+		"recuo zero deixa fachada a fachada em %.1f u, contra %.0f u de contato e %.0f u de campo na largada" % [
+			fachada_cf, Esquadra.DISTANCIA_DE_CONTATO, CAMPO_ESPERADO])
 	_assert("o campo inteiro cabe no tabuleiro de hoje", dentro,
 		"largura %.0f u, fundo %.0f u, de x %.0f a %.0f e z %.0f a %.0f" % [ext["largura"],
 			ext["fundo"], (ext["min"] as Vector3).x, (ext["max"] as Vector3).x,
@@ -366,13 +483,32 @@ func _initialize() -> void:
 	var nuc_h := _nucleos(false)
 	var x := _nova_esquadra()
 	var y := _nova_esquadra()
+	var quadros_x := _marchar_ate_contato(x, nuc_a, nuc_h)
+	var quadros_y := _marchar_ate_contato(y, nuc_a, nuc_h)
+	# Lida imediatamente após a marcha: depois das sessenta salvas a fileira da frente já afundou, e
+	# a régua de fachada passa a medir o vazio que ela deixou (54 u, não 40). Não é erro — é outra
+	# grandeza, e a asserção de travessia quer a de chegada.
+	var fachada_chegada := _fachadas(x)
 	var k := 0
+	var ultima_fogo: Dictionary = {}
 	while k < SALVAS:
 		x.passo(1.0 / 60.0, nuc_a, nuc_h)
 		y.passo(1.0 / 60.0, nuc_a, nuc_h)
-		x.troca_salva()
+		ultima_fogo = x.troca_salva()
 		y.troca_salva()
 		k += 1
+	# A travessia tem de acontecer nas duas montadas do mesmo jeito -- é a paridade do instrumento,
+	# e é o que impede a asserção de baixo de ser aprovada por um lado que andou e outro que ficou.
+	_assert("as duas montadas cruzam o campo no mesmo quadro", quadros_x == quadros_y \
+			and quadros_x > 0, "%d quadros de marcha ate o contato nas duas, fachada de chegada em %.1f u" % [
+				quadros_x, fachada_chegada])
+	# Sem esta, a família inteira seria contabilidade de vazio: `lancados` é o número de pares que
+	# efetivamente tinham alvo a 60 u, e zero lançamentos não prova paridade nenhuma.
+	_assert("depois da travessia a salva encontra alvo: a troca nao e fogo contra o vazio",
+		int(ultima_fogo.get("lancados", 0)) > 0,
+			"%d lancados na ultima salva, salva numero %d, fachada %.1f u apos %d afundados aliados" % [
+				int(ultima_fogo.get("lancados", 0)), int(ultima_fogo.get("salva", 0)),
+				_fachadas(x), int(x.perdas_aliadas)])
 	_assert("%d salvas em duas montadas gemeas fecham ledger identico" % SALVAS,
 		x.resumo() == y.resumo() and int(x.perdas_aliadas) == int(y.perdas_aliadas) \
 			and int(x.perdas_hostis) == int(y.perdas_hostis) and int(x.presas) == int(y.presas) \
@@ -414,14 +550,21 @@ func _initialize() -> void:
 	while q < QUADROS:
 		jogo._atualizar_esquadras(1.0 / 60.0)
 		q += 1
+	# A travessia antes do tiro, também na ponte: com o campo de aproximação da largada, sessenta
+	# salvas lançadas contra uma muralha a 154 u de fachada não acham alvo nenhum, e a asserção de
+	# "nenhum sorteio tocado" passaria dígito por dígito com a massa apagada. Inércia provada sobre
+	# troca vazia não inércia — é contabilidade de nada.
+	var q_marcha := _marchar_na_ponte(jogo)
 	var s := 0
 	while s < SALVAS:
 		jogo._salva_da_massa()
 		s += 1
 	jogo._pintar_massa(true)
-	_assert("%d quadros de massa nao movem o gerador de combate" % QUADROS,
+	_assert("%d quadros de massa mais %d de travessia nao movem o gerador de combate" % [
+		QUADROS, q_marcha],
 		int(jogo.rng.state) == rng_antes, "%d -> %d" % [rng_antes, int(jogo.rng.state)])
-	_assert("%d quadros de massa nao movem o gerador visual" % QUADROS,
+	_assert("%d quadros de massa mais %d de travessia nao movem o gerador visual" % [
+		QUADROS, q_marcha],
 		int(jogo.visual_rng.state) == visual_antes, "%d -> %d" % [visual_antes,
 			int(jogo.visual_rng.state)])
 	# O estado é lido ANTES da cauda: `_cauda` consome quarenta sorteios e, comparada depois, ela
@@ -433,8 +576,8 @@ func _initialize() -> void:
 		if cauda_semente[i] != cauda_depois[i]:
 			cauda_igual = false
 	_assert("a cauda de quarenta sorteios sobrevive a massa", cauda_igual,
-		"estado %d antes e %d depois de %d quadros e %d salvas; cauda abre em %d nos dois lados" % [
-			rng_antes, rng_pos_massa, QUADROS, SALVAS, cauda_semente[0]])
+		"estado %d antes e %d depois de %d quadros, %d de travessia e %d salvas; cauda abre em %d nos dois lados" % [
+			rng_antes, rng_pos_massa, QUADROS, q_marcha, SALVAS, cauda_semente[0]])
 	var hps_depois: Array[int] = []
 	for lista in [jogo.fleet, jogo.enemies]:
 		for unit in lista:
@@ -443,6 +586,15 @@ func _initialize() -> void:
 	_assert("a massa nao escreve o hp de casco nenhum: o ledger dos doze nao ganha linha",
 		not casco_mexido, "%d cascos conferidos, %d divergentes" % [hps_antes.size(),
 			0 if not casco_mexido else hps_antes.size()])
+	# A régua que diz que as três de cima mediram alguma coisa: se a travessia não fechou o campo, os
+	# doze mil navios continuam intactos e a inércia é aprovada sobre uma batalha que não aconteceu.
+	var vivos_ponte := int(jogo.esquadra.navios("aliado")) + int(jogo.esquadra.navios("hostil"))
+	_assert("na ponte a troca queima de verdade depois de %d quadros de travessia" % q_marcha,
+		vivos_ponte < 2 * BLOCOS_POR_LADO * Esquadra.NAVIOS_NO_BLOCO,
+			"%d navios vivos de %d, fachada %.1f u, %d aliados e %d hostis afundados, %d rendidos" % [
+				vivos_ponte, 2 * BLOCOS_POR_LADO * Esquadra.NAVIOS_NO_BLOCO,
+				_fachadas(jogo.esquadra), int(jogo.esquadra.perdas_aliadas),
+				int(jogo.esquadra.perdas_hostis), int(jogo.esquadra.presas)])
 
 	# ── 8. parado e inteiro nao custa escrita (+ custo medido) ──────────────────────────────
 	var p := _nova_esquadra()
@@ -458,23 +610,34 @@ func _initialize() -> void:
 	# A linha avance 0,05 u por quadro: com âncora fixa os blocos chegam no posto e o laço para de
 	# escrever, e o número medido seria o de uma frota ancorada, não o de uma batalha em marcha.
 	var custo_quadros := 0.0
+	var escritas := 0
 	var inicio_ms := Time.get_ticks_msec()
 	var w := 0
 	while w < QUADROS:
+		# O avanço vem ANTES do passo: com o primeiro quadro no mesmo pé da monta, a esquadra aliada
+		# já está colada no próprio posto, nenhum bloco se move, e a régua devolve 47 880 em vez de
+		# 48 000 — que é a contagem correta de uma frota que patinou um quadro, não de uma em marcha.
+		custo_quadros -= 0.05
 		var nuc_movidos: Array = []
 		for n in nuc_a:
 			nuc_movidos.append((n as Vector3) + Vector3(0.0, 0.0, custo_quadros))
 		p.passo(1.0 / 60.0, nuc_movidos, nuc_h)
-		p.pintar(mm_p, "aliado", false)
-		p.pintar(mm_q, "hostil", false)
-		custo_quadros -= 0.05
+		escritas += p.pintar(mm_p, "aliado", false) + p.pintar(mm_q, "hostil", false)
 		w += 1
 	var custo_ms := float(Time.get_ticks_msec() - inicio_ms)
 	var casas_por_quadro := 2 * INSTANCIAS_POR_LADO
 	var casas_ms := float(QUADROS * casas_por_quadro) / maxf(custo_ms, 1.0)
-	_assert("o custo de conta por quadro e medido, nao prometido", custo_ms >= 0.0,
-		"%d quadros de passo + pintura em %d ms = %.3f ms/quadro, %d casas por quadro, %.0f casas/ms" % [
-			QUADROS, int(custo_ms), custo_ms / float(QUADROS), casas_por_quadro, casas_ms])
+	# O relógio saiu do portão, não do log. Três rodadas do MESMO código nesta máquina fecharam os
+	# mesmos duzentos quadros em 761, 918 e 1 287 ms — ±35 % de ruído, com um `godot.exe` pendurado
+	# de outra sessão comendo núcleo — e a asserção antiga (`custo_ms >= 0.0`) não podia reprovar
+	# nada. O que é determinístico é a conta de escritas: marcha em curso tem de repintar os
+	# duzentos e quarenta blocos em todo quadro, e é isso que a lei cobra. O `ms` continua impresso,
+	# como medida, com o intervalo das rodadas escrito no README.
+	_assert("%d quadros de marcha repintam os duzentos e quarenta blocos, sem excecao" % QUADROS,
+		escritas == QUADROS * 2 * BLOCOS_POR_LADO,
+			"%d escritas de bloco contra %d esperadas; %.3f ms por quadro (%d ms no total, %d casas/ms) - relógio impresso, nao portado" % [
+				escritas, QUADROS * 2 * BLOCOS_POR_LADO, custo_ms / float(QUADROS), int(custo_ms),
+				int(casas_ms)])
 
 	# ── 9. a ponte mostra a massa e a roda da zoom ──────────────────────────────────────────
 	var no_a: MultiMeshInstance3D = jogo.massa_aliada
@@ -514,12 +677,16 @@ func _initialize() -> void:
 	# instancias intacta e o olho reprovando.
 	var aabb_replica: AABB = (mm1.mesh as ArrayMesh).get_aabb()
 	var boca := aabb_replica.size.x * Esquadra.ESCALA_REPLICA
-	_assert("a replica fecha dentro da casa com costura lida, nao com vontade",
+	var comprimento := aabb_replica.size.z * Esquadra.ESCALA_REPLICA
+	_assert("a replica fecha dentro da casa nos dois eixos, com costura lida, nao com vontade",
 		aabb_replica.size.distance_to(Vector3(3.647, 1.07, 5.0)) < 0.01 \
-			and boca < Esquadra.PASSO_CASA and absf(boca - 0.912) < 0.005,
-		"caixa crua %.3f x %.2f x %.1f, escala %.2f, boca %.4f u na casa de %.1f, costura %.4f u" % [
+			and boca < Esquadra.PASSO_CASA_X and absf(boca - 0.912) < 0.005 \
+			and comprimento < Esquadra.PASSO_CASA_Z and absf(comprimento - 1.25) < 0.005,
+		"caixa crua %.3f x %.2f x %.1f, escala %.2f: boca %.4f u na casa de %.1f (costura %.4f u), comprimento %.3f u na casa de %.1f (costura %.3f u)" % [
 			aabb_replica.size.x, aabb_replica.size.y, aabb_replica.size.z,
-			Esquadra.ESCALA_REPLICA, boca, Esquadra.PASSO_CASA, Esquadra.PASSO_CASA - boca])
+			Esquadra.ESCALA_REPLICA, boca, Esquadra.PASSO_CASA_X,
+			Esquadra.PASSO_CASA_X - boca, comprimento, Esquadra.PASSO_CASA_Z,
+			Esquadra.PASSO_CASA_Z - comprimento])
 	jogo.campo_zoom = 0.0
 	jogo._update_bridge(0.0)
 	var fov_larga := float(jogo.ponte_camera.fov)
@@ -562,6 +729,66 @@ func _initialize() -> void:
 			and jogo.esquadra.vivos("hostil") == BLOCOS_POR_LADO,
 		"salva %d, zoom %.2f, %d + %d blocos vivos" % [jogo.esquadra.salva_numero, jogo.campo_zoom,
 			jogo.esquadra.vivos("aliado"), jogo.esquadra.vivos("hostil")])
+
+	# ── 10. o campo de aproximacao e cruzado marchando ───────────────────────────────────────
+	# A régua é de fachada, lida no centro do casco da última fileira dos dois lados, e o laço roda
+	# SEM salvas: aqui se mede locomoção, não atrito. O recuo é alvo — quem anda é bloco.
+	var t := _nova_esquadra()
+	var fachada := _fachadas(t)
+	var recuo_largada := float(t.recuo_hostil)
+	var recuo_alvo := float(t._recuo_alvo())
+	_assert("a largada abre campo de aproximacao entre as duas fachadas",
+		absf(fachada - CAMPO_ESPERADO) < FOLGA_CONTATO \
+			and absf(recuo_largada + float(Esquadra.CAMPO_DE_APROXIMACAO)) < 0.001,
+		"fachada a fachada em %.1f u na largada, com a muralha hostil a %.0f u dos proprios nucleos" % [
+			fachada, recuo_largada])
+	var salto_max := 0.0
+	var menor_fachada := fachada
+	var fachada_meio := 0.0
+	var mf := 0
+	while mf < QUADROS_DA_TRAVESSIA:
+		var antes: Array = []
+		for b in t.lista_de("hostil"):
+			antes.append(b["pos"])
+		t.passo(1.0 / 60.0, nuc_a, nuc_h)
+		var ki := 0
+		for b in t.lista_de("hostil"):
+			salto_max = maxf(salto_max, (b["pos"] as Vector3).distance_to(antes[ki] as Vector3))
+			ki += 1
+		menor_fachada = minf(menor_fachada, _fachadas(t))
+		if mf == QUADROS_A_MEIO:
+			fachada_meio = _fachadas(t)
+		mf += 1
+	var segundos := float(QUADROS_DA_TRAVESSIA) / 60.0
+	_assert("a marcha nao salta: o maior deslocamento de um bloco em um quadro e o passo da marcha",
+		salto_max <= SALTO_MAXIMO + 0.0001,
+		"%d quadros de travessia (~%.0f s de tela): maior passo de um bloco em %.4f u, teto %.4f u" % [
+			QUADROS_DA_TRAVESSIA, segundos, salto_max, SALTO_MAXIMO])
+	_assert("dez segundos de campo custam dez segundos de marcha: nao ha ease nem salto",
+		absf((fachada - fachada_meio) - float(QUADROS_A_MEIO) * SALTO_MAXIMO) < 1.0 \
+			and fachada_meio > Esquadra.DISTANCIA_DE_CONTATO,
+		"apos %d quadros (%.0f s) a fachada anda %.1f u e ainda ha %.1f u por cruzar" % [
+			QUADROS_A_MEIO, float(QUADROS_A_MEIO) / 60.0, fachada - fachada_meio, fachada_meio])
+	_assert("a travessia para no contato: nunca encosta, nunca atravessa",
+		absf(_fachadas(t) - Esquadra.DISTANCIA_DE_CONTATO) < FOLGA_CONTATO \
+			and menor_fachada >= Esquadra.DISTANCIA_DE_CONTATO - FOLGA_CONTATO,
+		"fachada final %.1f u (minima vista %.1f u, contato %.0f u, alcance %.0f u)" % [
+			_fachadas(t), menor_fachada, Esquadra.DISTANCIA_DE_CONTATO, Esquadra.ALCANCE_DE_BLOCO])
+	# A estacao segue a linha: a muralha hostil recua com a nossa se a nossa recuar, e para nos
+	# proprios nucleos se a nossa avancar demais — `minf(0, ...)` é o teto dela.
+	var nuc_atras: Array = []
+	for n in nuc_a:
+		nuc_atras.append((n as Vector3) + Vector3(0.0, 0.0, -30.0))
+	t.passo(1.0 / 60.0, nuc_atras, nuc_h)
+	var recuo_atras := float(t._recuo_alvo())
+	var nuc_frente: Array = []
+	for n in nuc_a:
+		nuc_frente.append((n as Vector3) + Vector3(0.0, 0.0, 60.0))
+	t.passo(1.0 / 60.0, nuc_frente, nuc_h)
+	_assert("a muralha hostil segue a nossa linha, e nunca passa dos proprios nucleos",
+		absf(recuo_atras - (recuo_alvo - 30.0)) < 0.01 and absf(float(t._recuo_alvo())) < 0.001,
+		"linha nossa recuada 30 u -> recuo %.1f u; avancada 60 u -> recuo %.1f u (alvo de largada %.1f u)" % [
+			recuo_atras, t._recuo_alvo(), recuo_alvo])
 
 	print("SONDA-ESQUADRA: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for nota in notes:
