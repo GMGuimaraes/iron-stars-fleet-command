@@ -217,6 +217,11 @@ func _novo_bloco(id: int, esq: int, indice: int, lado: String, pos: Vector3) -> 
 		"vel": Vector3.ZERO, "rumo": 0.0, "navios": float(NAVIOS_NO_BLOCO),
 		"MOTORES": 100.0, "ARMAS": 100.0, "TRIPULACAO": 100.0, "vivo": true, "presa": false,
 		"rendicao": false,
+		# Ordem da ponte: o bloco persegue o posto do esquadrão enquanto `com_destino` é falso, e
+		# persegue `destino` (ponto absoluto, com y) quando a ponte escreveu um. Os dois campos
+		# andam juntos porque `Vector3.ZERO` é um destino legítimo — um falso com destino zero é a
+		# muralha inteira navegando para a origem do mundo.
+		"destino": Vector3.ZERO, "com_destino": false, "selecionado": false,
 		"pintas": {"casas": -1, "pos": Vector3(1e9, 0.0, 0.0), "rumo": 1e9}}
 
 
@@ -401,6 +406,11 @@ func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 			if not bool(b["vivo"]):
 				continue
 			var posto := posto_no_lado(int(b["esquadrao"]), int(b["formacao"]), estacao(lado))
+			# Ordem da ponte ganha do posto de formação: o bloco com destino escrito anda até o
+			# ponto que o comandante apontou e segura lá, em vez de ser puxado de volta pela
+			# estação. `move_toward` é o mesmo de sempre, então o destino não teleporta nada.
+			if bool(b["com_destino"]):
+				posto = b["destino"] as Vector3
 			var partida: Vector3 = b["pos"]
 			var marcha := MARCHA_DE_BLOCO * (0.35 + float(b["MOTORES"]) / 100.0 * 0.65)
 			b["pos"] = (b["pos"] as Vector3).move_toward(posto, delta * marcha)
@@ -479,6 +489,136 @@ func mandar_fogo(posicao: Vector3) -> void:
 func soltar_fogo() -> void:
 	fogo_concentrado = false
 	alvo_comandado = Vector3.ZERO
+
+
+## ---- Ordem de movimento da ponte (fatia 1 do comando por clique) ----
+##
+## A esquadra sempre obedeceu só ao fogo. Aqui entra o outro ramo do comando: seleção e destino,
+## escritos por clique no tabuleiro. Três leis mandam no desenho:
+## * **Nada de nó novo.** O bloco é um `Dictionary`, e a seleção é um campo dele — selecionar 120
+##   blocos criando 120 `Node3D` seria exatamente o custo que a massa existe para evitar.
+## * **Destino é translação, não colapso.** `mandar_destino` move a *formação* inteira: cada bloco
+##   recebe o ponto clicado somado ao deslocamento que ele já tinha contra o centro da seleção. Sem
+##   isso, dois cliques empilhariam 120 blocos num único posto do chão e a muralha viraria um ponto.
+## * **Ordem não sorteia.** Nenhum `randf` aqui, e o `y` entra pela mão do comandante: o destino é um
+##   `Vector3` de três eixos, porque a segunda dimensão do lado é altura e um clique só em x/z não
+##   manda o andar de cima descer.
+func limpar_selecao() -> void:
+	for b in blocos_aliados:
+		b["selecionado"] = false
+
+
+## Seleciona um bloco pelo id. O retorno é o bloco escolhido (vazio se o id não existe ou está
+## morto), para o chamador ler a posição sem varrer a lista de novo.
+func selecionar_bloco(id: int) -> Dictionary:
+	for b in blocos_aliados:
+		b["selecionado"] = (int(b["id"]) == id and bool(b["vivo"]))
+	var alvo := _acha(id)
+	# O `is_empty()` primeiro não é cerimônia: um id hostil nunca esteve nesta lista, e ler a chave
+	# `selecionado` dum dicionário vazio é erro de runtime, não seleção recusada.
+	return alvo if (not alvo.is_empty() and bool(alvo["selecionado"])) else {}
+
+
+## Seleção de esquadrão: os vinte blocos (`BLOCOS_NO_ESQUADRAO`) do esquadrão do bloco tocado.
+## É o clique com modificador, e ela continua sendo uma passada sobre a lista — não um intervalo
+## de ids, porque a grade intercala os blocos de um esquadrão com os do vizinho.
+func selecionar_esquadrao(id: int) -> int:
+	var alvo := _acha(id)
+	if alvo.is_empty():
+		return 0
+	var esq := int(alvo["esquadrao"])
+	var marcados := 0
+	for b in blocos_aliados:
+		var pertence := int(b["esquadrao"]) == esq and bool(b["vivo"])
+		b["selecionado"] = pertence
+		marcados += 1 if pertence else 0
+	return marcados
+
+
+func _acha(id: int) -> Dictionary:
+	for b in blocos_aliados:
+		if int(b["id"]) == id:
+			return b
+	return {}
+
+
+func selecionados() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for b in blocos_aliados:
+		if bool(b["selecionado"]) and bool(b["vivo"]):
+			out.append(b)
+	return out
+
+
+func bloco_por_id(id: int) -> Dictionary:
+	return _acha(id)
+
+
+## Quantos blocos vivos há na seleção — lido antes de escrever qualquer destino.
+func contar_selecionados() -> int:
+	return selecionados().size()
+
+
+## Ordem "navegar para": a formação selecionada é transladada como um corpo até `ponto`. Devolve
+## quantos blocos receberam o destino, que é o número que a sonda cobra no ledger.
+func mandar_destino(ponto: Vector3) -> int:
+	var lista := selecionados()
+	if lista.is_empty():
+		return 0
+	var centro := Vector3.ZERO
+	for b in lista:
+		centro += b["pos"] as Vector3
+	centro /= float(lista.size())
+	var escritos := 0
+	for b in lista:
+		var desloc := (b["pos"] as Vector3) - centro
+		b["destino"] = ponto + desloc
+		b["com_destino"] = true
+		escritos += 1
+	return escritos
+
+
+## Ordem "assumir o anel de raio `raio` em torno do marco": cada bloco selecionado recebe um posto
+## sobre a circunferência, na *própria* direção atual contra o marco. É a ordem relativa que o
+## pedido chama de "a X km do buraco negro", e ela é conferível: fechada a marcha, a distância de
+## cada bloco ao marco é o raio pedido, no eixo x/z, para todo bloco da seleção.
+func mandar_orbita(marco: Vector3, raio: float) -> int:
+	var lista := selecionados()
+	if lista.is_empty() or raio <= 0.0:
+		return 0
+	var escritos := 0
+	for b in lista:
+		var de_marco := (b["pos"] as Vector3) - marco
+		var rumo := Vector3(de_marco.x, 0.0, de_marco.z)
+		if rumo.length_squared() <= 0.0001:
+			# Bloco exatamente sobre o marco não tem direção própria: o anel dele é o norte do
+			# tabuleiro, constante e sorteado de ninguém.
+			rumo = Vector3(0.0, 0.0, -1.0)
+		b["destino"] = marco + (rumo.normalized() * raio) \
+			+ Vector3(0.0, de_marco.y, 0.0)
+		b["com_destino"] = true
+		escritos += 1
+	return escritos
+
+
+## Retirar a ordem de movimento: os blocos voltam a perseguir o posto do próprio esquadrão. É o
+## gesto "seguir a linha", e ele não escreve posição nenhuma — só troca o alvo do `move_toward`.
+func soltar_destinos() -> int:
+	var soltos := 0
+	for b in blocos_aliados:
+		if bool(b["com_destino"]):
+			b["com_destino"] = false
+			soltos += 1
+	return soltos
+
+
+## O estado da ordem, para o relatório e para a sonda: quantos blocos estão sob destino escrito.
+func com_destino() -> int:
+	var n := 0
+	for b in blocos_aliados:
+		if bool(b["com_destino"]) and bool(b["vivo"]):
+			n += 1
+	return n
 
 
 ## A troca de salvas da massa. Fecha o ledger do bloco sem encostar no ledger dos doze cascos: a

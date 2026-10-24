@@ -1,6 +1,6 @@
 # Comando por clique, escala espacial e esquadra com hierarquia — desenho
 
-Data: 2026-10-23 · Estado: aprovado para escrita, não aprovado para implementação ·
+Data: 2026-10-23 · Estado: aprovado — implementação começou pela fatia 1 em 2026-10-24 ·
 Caminho: architectural (novo subsistema de entrada + seis subsistemas de combate encadeados)
 
 ## 0. O que este documento é
@@ -201,4 +201,6 @@ fatias 1 a 5 estiverem verdes.
 - Custo de pintura é medido e impresso, não prometido.
 - README, cabeçalho das sondas e este spec no **mesmo commit** da fatia; números velhos não
   sobrevivem à varredura de exaustão.
-- Nada de moldura duplicando a arte da cena; nada de emoji no código; comentários ASCII nos `.gd`.
+- Nada de moldura duplicando a arte da cena; nada de emoji no código; comentários em português
+  **com acento**, como o resto da casa — a cláusula ASCII deste spec estava errada e a fatia 1
+  fechou com a convenção real do repositório.

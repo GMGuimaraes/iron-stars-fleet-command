@@ -418,11 +418,11 @@ func _initialize() -> void:
 		and int(g_a.visual_rng.state) == int(g_b.visual_rng.state),
 		"maior diferença de caixa %.6f u; visual_rng A=%d B=%d" % [ruído,
 			int(g_a.visual_rng.state), int(g_b.visual_rng.state)])
-	# Vinte e cinco, não vinte e quatro: a esquadra de blocos pendura TRÊS `MultiMeshInstance3D` no
-	# jogo (um corpo de casco por lado e o nó dos traços da salva) e essa é a única árvore nova. A
-	# camada de materiais continua sem criar nó.
+	# Vinte e seis, não vinte e cinco: a esquadra de blocos pendura TRÊS `MultiMeshInstance3D` no
+	# jogo (um corpo de casco por lado e o nó dos traços da salva) e a fatia de comando pendura UM
+	# `Camera3D`. Essas são as duas árvores novas; a camada de materiais continua sem criar nó.
 	_assert("a camada de cascos não criou nó no tabuleiro",
-		g_a.get_child_count() == 25 and g_b.get_child_count() == 25,
+		g_a.get_child_count() == 26 and g_b.get_child_count() == 26,
 		"%d filhos na montagem" % g_a.get_child_count())
 
 	# 13 — Prova central: dois jogos, mesma semente, a mesma batalha com a pintura nova.

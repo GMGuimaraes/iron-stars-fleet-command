@@ -422,6 +422,46 @@ const Esquadra := preload("res://esquadra.gd")
 ## visor continua sendo a moldura — a massa entra no quadro por dentro dele.
 const PONTE_FOV := 78.0
 const CAMPO_FOV := 14.0
+## Escala declarada (spec §1). O tabuleiro continua medido e jurado em `u` no README e nas sondas;
+## `U_PARA_KM` é a cláusula nova que diz quanto vale uma `u` na fala do comandante. As outras três
+## derivam dela, e `UA_EM_U` / `PARSEC_EM_U` entram declaradas e NÃO usadas na tática: segundo-luz
+## e unidade astronômica são unidades de viagem, reservadas à camada estratégica que ainda não
+## existe. A identidade `km == u * U_PARA_KM` é conferida por `tools/probes/comando.gd`.
+const U_PARA_KM := 1.0
+const U_PARA_LUZ_MS := U_PARA_KM * 1000.0 / 299_792.458
+const UA_EM_U := 149_597_870.7
+const PARSEC_EM_U := 3.0857e13
+## Raio de escolha do clique, em pixels de tela. 26 px é maior que a boca projetada de um bloco a
+## meia altura do campo e menor que a distância entre dois blocos vizinhos projetados — é o que
+## impõe ao desempate por distância à câmera decidir, e não um raio generoso demais.
+const RAIO_ESCOLHA_PX := 26.0
+## Olho tático: FOV fixa, e o zoom dele é ALTURA, não lente. Com a lente fechando, o vão entre dois
+## blocos mudaria de ângulo sólido a cada degrau e o comandante perderia a régua que a fatia do ar
+## entre fileiras acabou de cravar.
+const TATICO_FOV := 55.0
+const TATICO_ALTURA_INICIAL := 110.0
+const TATICO_ALTURA_MIN := 24.0
+const TATICO_ALTURA_MAX := 320.0
+const TATICO_ALTURA_PASSO := 1.15
+## Centro do campo de aproximação: a massa larga em z −23 e a muralha hostil encosta em z −103.
+const TATICO_FOCO_INICIAL := Vector3(0.0, 0.0, -63.0)
+## Pixels de cursor que ainda são clique. Abaixo disto a soltura do botão dá ordem; acima, foi
+## arrasto e o olho se moveu — sem esta guarda todo pan também navegaria a esquadra.
+const TATICO_CLIQUE_FOLGA_PX := 6.0
+## Dois candidatos dentro desta banda de pixels empatam na escolha, e a palavra passa a ser da
+## distância ao olho. É o que desfaz o ambíguo da vista de topo: o bloco do andar de cima tapa o do
+## de baixo no MESMO pixel, e sem desempate o clique pegaria o andar errado da casa.
+const ESCOLHA_DESEMPATE_PX := 4.0
+## Caixa do olho: a caixa da massa medida pela sonda (x ±56, z −103..−23) com folga de um terço de
+## largura em cada bordo. O limite é da CÂMERA, não da ordem: o clique pode mandar bloco para fora
+## dela, e ele continua andando — o que não pode é o comandante perder o mapa de vista.
+const TATICO_LIMITE_X := 90.0
+const TATICO_LIMITE_Z_VANTE := 30.0
+const TATICO_LIMITE_Z_FUNDO := -150.0
+## Distância de ordem em torno de um marco. Oitenta unidades é o degrau que fica fora dos dois perigos
+## de posição do cenário: o poço puxa até 46 (`POCO_ALCANCE`) e a estrela cozinha até 70
+## (`ESTRELA_CALOR_RAIO`), enquanto o vento solar (alcance 96) só desvia, não cobra casco.
+const ANEL_DE_MARCO := 80.0
 var paused := false
 ## Signed: positivo é avante, negativo é ré. O HUD lê em porcentagem com sinal.
 var throttle := 0.0
@@ -620,6 +660,22 @@ var massa_hostil: MultiMeshInstance3D
 var esquadra := Esquadra.new()
 ## Degrau do zoom de campo, 0 (ponte) a 1 (teleobjetivo). Roda do mouse.
 var campo_zoom := 0.0
+## "PONTE" é o visor da sala; "TATICO" é o olho de cima, onde o clique manda. TAB alterna, e o
+## escopo da roda segue o modo: em TATICO a roda move a ALTURA do olho, nunca o `campo_zoom` — é a
+## cláusula que a sonda da massa já cobra ao jurar que só a roda manda no zoom da ponte.
+var campo_modo := "PONTE"
+## Olho tático: filho DO JOGO, não do rig. Ele fotografa a mesma cena de outro lugar, sem moldura
+## nova duplicando a arte — e por isso a única geometria que ele custa é um nó na árvore, conferido
+## pelas sondas de gabarito.
+var tatico_camera: Camera3D
+var tatico_foco := TATICO_FOCO_INICIAL
+var tatico_altura := TATICO_ALTURA_INICIAL
+## Arrasto do olho: o pixel onde o botão desceu e o foco daquele instante. `_arrasto_moveu` é o que
+## separa pan de ordem — sem ele, todo arrasto também navegaria a esquadra.
+var _arrasto_inicio := Vector2.ZERO
+var _arrasto_foco := Vector3.ZERO
+var _arrasto_ativo := false
+var _arrasto_moveu := false
 ## Salva em que as cores da massa foram reescritas por último: a cor só muda com o atrito, e o
 ## atrito só cobra na salva — repintar 2 880 cores por quadro seria pagar duas vezes pelo mesmo
 ## número.
@@ -737,6 +793,11 @@ func _ready() -> void:
 	# A massa entra depois dos doze núcleos e antes da mesa: ela lê as posições de largada dos
 	# cascos como âncora, e a holografia continua contando só os doze.
 	_build_esquadras()
+	# O olho tático é UM nó filho do jogo — o custo declarado da fatia de comando, conferido pelos
+	# gabaritos de `tools/probes/superficies.gd`, `geoide.gd` e `graficos.gd`, que sobem para a medida
+	# nova e re-medida nesta rodada. Ele não toma o quadro: a ponte declarou-se corrente na montagem
+	# dela, e o olho novo só entra por TAB.
+	_montar_camera_tatica()
 	_rebuild_holo()
 	# Antes da primeira UI: sem isto a ponte abriria com 0/0 quando o tabuleiro já tem seis
 	# cascos hostis a confirmar.
@@ -792,13 +853,59 @@ func _input(event: InputEvent) -> void:
 			_toggle_pause()
 		elif event.keycode == KEY_ESCAPE:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		elif event.keycode == KEY_TAB:
+			_trocar_modo_camera()
 	# Zoom de campo na roda. É `_input` e não `_unhandled_input` de propósito: a roda também rola
 	# as listas do painel, e o zoom não quer o gesto exclusivo — ele só lê, nunca toma o evento.
+	# O escopo é do modo: em TATICO a roda içe o olho, e `campo_zoom` não é tocado por ela — a
+	# ponte continua com a FOV contratada mesmo depois de o comandante voar para cima.
 	elif event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			campo_zoom = clampf(campo_zoom + 0.1, 0.0, 1.0)
+			if campo_modo == "TATICO":
+				_mover_altura_tatica(TATICO_ALTURA_PASSO)
+			else:
+				campo_zoom = clampf(campo_zoom + 0.1, 0.0, 1.0)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			campo_zoom = clampf(campo_zoom - 0.1, 0.0, 1.0)
+			if campo_modo == "TATICO":
+				_mover_altura_tatica(1.0 / TATICO_ALTURA_PASSO)
+			else:
+				campo_zoom = clampf(campo_zoom - 0.1, 0.0, 1.0)
+
+## O comando por clique mora em `_unhandled_input`, não em `_input`: um botão do painel é dono do
+## próprio gesto, e uma ordem escrita por cima da interface seria o comandante movendo a esquadra
+## sem querer ao recolher um grupo. Em PONTE o clique não manda nada — a sala é um olho, não uma
+## mesa de mapa; a ordem por clique é a consequência do modo tático, não uma segunda porta.
+func _unhandled_input(event: InputEvent) -> void:
+	if campo_modo != "TATICO" or not is_instance_valid(tatico_camera):
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		var botoes := event as InputEventMouseButton
+		if botoes.pressed:
+			_arrasto_ativo = true
+			_arrasto_moveu = false
+			_arrasto_inicio = botoes.global_position
+			_arrasto_foco = tatico_foco
+		elif _arrasto_ativo:
+			_arrasto_ativo = false
+			if not _arrasto_moveu:
+				# `shift_pressed`, não `shift`: em Godot 4 os modificadores de `InputEventWithModifiers`
+				# são `alt_pressed` / `shift_pressed` / `ctrl_pressed` / `meta_pressed`, e escrever o nome
+				# do 3.x aqui derruba a linha inteira em runtime na hora da soltura. A cabeça fria não pode
+				# pegar isso: `comando.gd` chama `_clicar_no_campo` direto, sem passar por este despachante,
+				# então só `comando_olho.gd` — que injeta prensa, varredura e soltura reais em janela —
+				# exerce este caminho. Foi assim que o nome velho apareceu e saiu, nesta fatia.
+				_clicar_no_campo(botoes.global_position, botoes.shift_pressed)
+	elif event is InputEventMouseMotion:
+		var varredura := event as InputEventMouseMotion
+		if not _arrasto_ativo:
+			return
+		var desvio := varredura.global_position - _arrasto_inicio
+		if desvio.length() > TATICO_CLIQUE_FOLGA_PX:
+			_arrasto_moveu = true
+		if _arrasto_moveu:
+			_arrastar_tatico(desvio)
+			_arrasto_inicio = varredura.global_position
+			_arrasto_foco = tatico_foco
 
 func _build_environment() -> void:
 	var world_env := WorldEnvironment.new()
@@ -1054,6 +1161,12 @@ func _build_bridge() -> void:
 	bridge_rig.add_child(camera)
 	ponte_camera = camera
 	ponte_camera_base = camera.position
+	# A ponte DECLARA-se o olho da abertura em vez de herdar isso da ordenação do viewport: o `Camera3D`
+	# tático monta depois dela, as duas empatariam em prioridade e o empate é decidido pela ordem de
+	# entrada — a partida abriria em vista de topo, com a sala fora do quadro. `make_current()` crava a
+	# ponte antes do primeiro TAB e é o que torna a lei "um olho por vez" conferível de cabeça fria,
+	# porque o estado `current` só existe depois de uma chamada explícita.
+	camera.make_current()
 	# O retrato da ponte montada é a última coisa que `_build_bridge` faz: ele lê os nós como eles
 	# acordaram, e é para esse estado que o RECOMEÇAR volta.
 	_gravar_base_da_ponte()
@@ -1588,6 +1701,255 @@ func _remontar_esquadras() -> void:
 	cores_da_massa_na_salva = -1
 	_apagar_tracos()
 	_pintar_massa(true)
+
+
+## ---- Olho tático e comando por clique (fatia 1 do comando) ----
+##
+## A esquadra obedecia só pelo painel: dois campos numéricos e uma lista. Esta camada põe um segundo
+## olho sobre o tabuleiro e faz do clique a MESMA ordem, sem criar um nó por bloco, sem criar janela
+## desenhada dentro da cena e sem tocar nos 35 botões do painel. Quatro leis mandam aqui:
+## * **Um olho por vez.** `ponte_camera` e `tatico_camera` se alternam por `current` / `make_current()`
+##   — no Godot 4 `Camera3D` não tem `enabled`, quem manda no quadro é o viewport, e ele só tem uma
+##   câmera corrente. A FOV contratada
+##   da ponte (78° → 14° pela roda) não é tocada pelo modo, e a sonda da massa continua jurando que
+##   só a roda manda no zoom da ponte — agora com o complemento honesto: o clique move outra coisa.
+## * **Escolha é projeção, não volume.** Bloco não tem `Node3D`: o que se compara com o cursor é
+##   `unproject_position` da posição lógica. Criar 240 corpos para poder usar `PhysicsRayQuery` seria
+##   desfazer o único motivo de a massa existir.
+## * **A capitânia não é candidata.** Em TATICO o comandante *é* a ponte; ela não tem destino e não
+##   tem bloco, e selecioná-la inventaria uma semântica que nenhum painel hoje conhece.
+## * **Clique não sorteia.** Nenhum `randf` no caminho e nenhum bit de `rng` gasto por seleção,
+##   destino, marco ou troca de modo — a lei que a fatia da massa já assina por A/B de semente.
+func _montar_camera_tatica() -> void:
+	var camera := Camera3D.new()
+	camera.name = "TacticalCamera"
+	camera.fov = TATICO_FOV
+	# Nenhum `make_current()`: a ponte declarou-se corrente na montagem, e o viewport tem UMA câmera
+	# corrente escolhida por prioridade — quem entra depois de uma já corrente não toma o quadro.
+	# Escrever `camera.enabled = false` aqui seria a lei certa com a API do 3.x: `Camera3D.enabled` não
+	# existe no 4.7, o erro de runtime derruba o `_ready` e o nó nunca chega ao `tatico_camera`.
+	add_child(camera)
+	tatico_camera = camera
+	_pintar_camera_tatica()
+
+
+## O olho de cima: plantado sobre o foco, olhando o tabuleiro de topo, com o norte do campo para cima
+## do quadro. Giro escrito à mão e não `look_at`: a direção de visita é exatamente −Y, e `look_at` com
+## o `up` paralelo à direção não tem plano de rotação — é o mesmo motivo que fez o anel gravitacional
+## escolher um eixo constante em vez de um sorteado.
+func _pintar_camera_tatica() -> void:
+	if not is_instance_valid(tatico_camera):
+		return
+	tatico_camera.position = tatico_foco + Vector3(0.0, tatico_altura, 0.0)
+	tatico_camera.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+
+
+## Unidades de mundo por pixel de tela no plano do foco — conta de FOV e altura, não constante. Com a
+## lente fixa e a altura mudando, um arrasto de cem pixels tem de percorrer mais mapa lá em cima do
+## que aqui embaixo; sem esta régua o pan derraparia em um degrau e colaria no outro.
+func _unidades_por_pixel_tatico() -> float:
+	var pixels := float(get_viewport().size.y)
+	if pixels <= 1.0:
+		return 1.0
+	return 2.0 * tatico_altura * tan(deg_to_rad(TATICO_FOV) * 0.5) / pixels
+
+
+func _mover_altura_tatica(fator: float) -> void:
+	tatico_altura = clampf(tatico_altura * fator, TATICO_ALTURA_MIN, TATICO_ALTURA_MAX)
+	_pintar_camera_tatica()
+
+
+## Puxar o mapa pelo cursor: o foco anda contra o desvio, na conta exata de pixels do olho, e bate
+## nos limites do tabuleiro para o comandante nunca perder a esquadra por ter arrastado demais.
+func _arrastar_tatico(desvio: Vector2) -> void:
+	var s := _unidades_por_pixel_tatico()
+	tatico_foco = Vector3(
+		clampf(tatico_foco.x - desvio.x * s, -TATICO_LIMITE_X, TATICO_LIMITE_X),
+		tatico_foco.y,
+		clampf(tatico_foco.z - desvio.y * s, TATICO_LIMITE_Z_FUNDO, TATICO_LIMITE_Z_VANTE))
+	_pintar_camera_tatica()
+
+
+func _trocar_modo_camera() -> void:
+	campo_modo = "PONTE" if campo_modo == "TATICO" else "TATICO"
+	_aplicar_modo_camera()
+
+
+## Um quadro por vez: o `make_current()` do olho que entra é também o que tira o outro, porque o
+## viewport tem UMA câmera corrente e a antiga perde o estado sozinha. Não há segunda linha a escrever
+## — e é isso que a sonda confere, lendo `is_current()` dos dois lados depois do TAB.
+func _aplicar_modo_camera() -> void:
+	if campo_modo == "TATICO":
+		_pintar_camera_tatica()
+		if is_instance_valid(tatico_camera):
+			tatico_camera.make_current()
+	else:
+		if is_instance_valid(ponte_camera):
+			ponte_camera.make_current()
+
+
+## As candidatas do clique: os blocos vivos dos dois lados, os cascos nomeados vivos dos dois lados e
+## os três marcos do cadastro. Morto não é candidata — cadáver continua carregando a última ordem, e
+## escolher um daria uma seleção que o tabuleiro não tem.
+func _candidatas_do_clique() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for lado in ["aliado", "hostil"]:
+		for b in esquadra.lista_de(lado):
+			if not bool(b["vivo"]):
+				continue
+			out.append({"tipo": "BLOCO", "lado": lado, "id": int(b["id"]),
+				"esquadrao": int(b["esquadrao"]), "pos": b["pos"] as Vector3})
+	for par in [[fleet, "CASCO"], [enemies, "HOSTIL"]]:
+		var lista: Array = par[0]
+		for i in range(lista.size()):
+			var u: Dictionary = lista[i]
+			if float(u["hp"]) <= 0.0:
+				continue
+			var corpo: Node3D = u["node"]
+			if not is_instance_valid(corpo):
+				continue
+			out.append({"tipo": String(par[1]), "indice": i, "nome": String(u["name"]),
+				"pos": corpo.global_position})
+	out.append({"tipo": "MARCO", "nome": "POÇO", "pos": POCO_POS})
+	out.append({"tipo": "MARCO", "nome": "ESTRELA", "pos": ESTRELA_POS})
+	out.append({"tipo": "MARCO", "nome": "SISTEMA", "pos": SISTEMA_POS})
+	return out
+
+
+## A candidata sob o pixel: a mais próxima do cursor dentro de `RAIO_ESCOLHA_PX`. Empatando dentro de
+## `ESCOLHA_DESEMPATE_PX`, vence quem está mais perto do olho. O empate não é raro nem é ruído: ele é a
+## pilha. Dois blocos com o mesmo x/z e andares separados por 24 u coincidem em **0,00 px** quando a
+## coluna está no eixo óptico, e a 228,9 px quando está a 91,0 u dele (`tools/probes/comando_olho.gd`,
+## medida na grade real). Ou seja: "o andar de cima tapa o de baixo" vale perto do centro do quadro —
+## longe do eixo a própria perspectiva separa os andares e o raio decide sozinho. Perto do centro, sem
+## critério de altura, o desempate escolheria o andar errado da casa.
+func _unidade_sob_o_pixel(pixel: Vector2) -> Dictionary:
+	if not is_instance_valid(tatico_camera):
+		return {}
+	var melhor: Dictionary = {}
+	for c in _candidatas_do_clique():
+		var onde := tatico_camera.unproject_position(c["pos"] as Vector3)
+		var distancia := onde.distance_to(pixel)
+		if distancia > RAIO_ESCOLHA_PX:
+			continue
+		var do_olho := tatico_camera.global_position.distance_to(c["pos"] as Vector3)
+		var troca := melhor.is_empty()
+		if not troca:
+			if absf(distancia - float(melhor["pixels"])) <= ESCOLHA_DESEMPATE_PX:
+				troca = do_olho < float(melhor["do_olho"])
+			else:
+				troca = distancia < float(melhor["pixels"])
+		if troca:
+			var nova := (c as Dictionary).duplicate()
+			nova["pixels"] = distancia
+			nova["do_olho"] = do_olho
+			melhor = nova
+	return melhor
+
+
+## O ponto do plano de ordem sob o cursor. É o plano do `y` do foco, não o do tabuleiro zero: a
+## altitude da esquadra é da formação, e um clique nunca decide andar de cima contra andar de baixo.
+func _ponto_sob_o_pixel(pixel: Vector2) -> Vector3:
+	if not is_instance_valid(tatico_camera):
+		return tatico_foco
+	var origem := tatico_camera.project_ray_origin(pixel)
+	var direcao := tatico_camera.project_ray_normal(pixel)
+	# `Plane.intersects_ray` devolve um `Variant` VAZIO quando o raio não cruza o plano — não os três
+	# INF do `Geometry2D`. Com o olho de topo o cruzamento existe por construção, mas a devolução
+	# honesta é o foco: um destino nulo escrito no bloco abortaria a ordem em runtime, e um destino
+	# gigante sumiria com a muralha do mapa em vez de dar erro.
+	var tocado: Variant = Plane(Vector3.UP, tatico_foco.y).intersects_ray(origem, direcao)
+	return tocado as Vector3 if tocado != null else tatico_foco
+
+
+func _dizer(texto: String) -> void:
+	if is_instance_valid(report_label):
+		report_label.text = texto
+
+
+## Leitura de escala (spec §1): a mesma grandeza em `u`, em km e em segundos-luz, na frase do
+## comandante. O código continua medindo em `u`; o que aqui se formata é a cláusula `1 u = 1 km`.
+func _ler_escala(distancia_u: float) -> String:
+	return "%.1f u = %.1f km = %.5f ms-luz" % [distancia_u, distancia_u * U_PARA_KM,
+		distancia_u * U_PARA_KM * U_PARA_LUZ_MS]
+
+
+## Clique em água vazia: ordem de navegação para a seleção. O destino é translação da formação, não
+## colapso num ponto — 120 blocos para um único posto do chão seria a muralha virando um pixel.
+## Sem bloco selecionado, a ordem é dos cascos nomeados e ela entra pelo caminho de sempre
+## (`_give_order`), com os dois SpinBox escritos pelo clique como espelho numérico.
+func _navegar_no_ponto(ponto: Vector3) -> void:
+	if is_instance_valid(position_x_input):
+		position_x_input.value = clampf(ponto.x, position_x_input.min_value,
+			position_x_input.max_value)
+	if is_instance_valid(position_z_input):
+		position_z_input.value = clampf(ponto.z, position_z_input.min_value,
+			position_z_input.max_value)
+	var escritos := esquadra.mandar_destino(ponto)
+	if escritos == 0:
+		_give_order("MOVER")
+		return
+	_dizer("NAVEGAR // %d bloco(s) marchando para (%.1f, %.1f): o destino é de cada bloco, somado ao próprio posto — a formação é transladada, não empilhada. %s" % [escritos, ponto.x, ponto.z, _ler_escala((ponto - esquadra.centros("aliado")).length())])
+
+
+## O gesto bruto: resolve a candidata sob o pixel e entrega a ordem. A resolução é lei de janela
+## (`unproject_position` precisa de matriz de câmera viva); a execução é dicionário puro e por isso o
+## `tools/probes/comando.gd` a confere de cabeça fria, com uma candidata montada à mão.
+func _clicar_no_campo(pixel: Vector2, com_turno: bool) -> void:
+	var tocada := _unidade_sob_o_pixel(pixel)
+	if tocada.is_empty():
+		if com_turno:
+			var soltos := esquadra.soltar_destinos()
+			_dizer("SEGUIR A LINHA // %d bloco(s) de volta ao posto do próprio esquadrão." % soltos)
+			return
+		_navegar_no_ponto(_ponto_sob_o_pixel(pixel))
+		return
+	_executar_ordem(tocada, com_turno)
+
+
+## Cada ramo é uma ordem que já existia no painel, não uma ordem nova: selecionar, designar alvo,
+## concentrar fogo, navegar, contornar um marco. A seleção é uma só por vez — tocar um casco nomeado
+## despeja os blocos, porque duas seleções simultâneas fariam o clique seguinte mandar metade do
+## tabuleiro para um ponto e a outra metade para outro.
+func _executar_ordem(tocada: Dictionary, com_turno: bool) -> void:
+	var tipo := String(tocada["tipo"])
+	if tipo == "BLOCO":
+		if String(tocada["lado"]) == "aliado":
+			var id := int(tocada["id"])
+			if com_turno:
+				var marcados := esquadra.selecionar_esquadrao(id)
+				_dizer("ESQUADRÃO // %d bloco(s) do esquadrão %d em seleção; a próxima ordem de navegação é deles." % [marcados, int(tocada["esquadrao"])])
+			else:
+				var bloco := esquadra.selecionar_bloco(id)
+				if bloco.is_empty():
+					_dizer("SELEÇÃO RECUSADA // o bloco %d não está vivo." % id)
+				else:
+					_dizer("BLOCO %d // %d navios no ar, seleção de um; SHIFT+clique pega o esquadrão inteiro." % [id, int(bloco["navios"])])
+		else:
+			esquadra.mandar_fogo(tocada["pos"] as Vector3)
+			_dizer("FOGO CONCENTRADO // bloco hostil %d comandado: todo bloco aliado que o alcança larga o próprio vizinho e atira nele. SOLTAR FOGO no painel devolve a linha." % int(tocada["id"]))
+	elif tipo == "CASCO":
+		esquadra.limpar_selecao()
+		var i := int(tocada["indice"])
+		selection_scope = "NAVE %d" % (i + 1)
+		_rebuild_selectors()
+		_dizer("SELEÇÃO // %s é a unidade do painel agora; as ordens por botão e o próximo clique são dela." \
+			% String(tocada["nome"]))
+	elif tipo == "HOSTIL":
+		selected_target = int(tocada["indice"])
+		_rebuild_selectors()
+		_dizer("ALVO // %s é a prioridade da linha; é o mesmo girar do seletor de alvo, pela mão." \
+			% String(tocada["nome"]))
+	else:
+		var marco := tocada["pos"] as Vector3
+		var anel := esquadra.mandar_orbita(marco, ANEL_DE_MARCO)
+		if anel == 0:
+			tatico_foco = Vector3(marco.x, tatico_foco.y, marco.z)
+			_pintar_camera_tatica()
+			_dizer("%s // olho içado sobre o marco, sem seleção para ordenar; ele está a %s do ponto de largada da linha aliada." % [String(tocada["nome"]), _ler_escala((marco - esquadra.centros("aliado")).length())])
+		else:
+			_dizer("%s // %d bloco(s) assumindo o anel de %s em torno do marco, cada um no próprio rumo atual." % [String(tocada["nome"]), anel, _ler_escala(ANEL_DE_MARCO)])
+	_update_hud()
 
 
 func _atualizar_esquadras(delta: float) -> void:
@@ -2200,7 +2562,7 @@ func _build_ui() -> void:
 	# O zoom de campo mora no letreiro porque mora na roda do mouse: sem aviso, o comandante rolaria
 	# a roda e concluiria que a ponte ignora o gesto.
 	massa_label = Label.new()
-	massa_label.text = "MASSA: 120/120 blocos aliados • 120/120 hostis • roda do mouse = zoom"
+	massa_label.text = "MASSA: 120/120 blocos aliados • 120/120 hostis • roda do mouse = zoom • [TAB] = olho tático, clique = ordem"
 	massa_label.add_theme_font_size_override("font_size", 12)
 	top_row.add_child(massa_label)
 	pause_button = _add_button(top_row, "PAUSAR [ESPAÇO]", _toggle_pause)
@@ -5270,6 +5632,17 @@ func _recomecar_batalha() -> void:
 	# da anterior mostraria uma esquadra remontada dentro do enquadramento da batalha velha.
 	_remontar_esquadras()
 	campo_zoom = 0.0
+	# O olho volta à sala junto com o zoom: uma partida nova aberta de cima mostraria a esquadra
+	# remontada dentro do enquadramento da batalha velha, e o `campo_modo` é estado de câmera, não de
+	# combate. Seleção e destino já morreram com os blocos — `_remontar_esquadras` refaz cada
+	# dicionário do zero, e é por isso que não há um `limpar_selecao()` aqui para conferir.
+	campo_modo = "PONTE"
+	tatico_foco = TATICO_FOCO_INICIAL
+	tatico_altura = TATICO_ALTURA_INICIAL
+	_arrasto_ativo = false
+	_arrasto_moveu = false
+	_pintar_camera_tatica()
+	_aplicar_modo_camera()
 	# O mapa se refaz no cenário escolhido pelo comandante: pedra rachada e janela de abalroamento são
 	# estado da batalha, não do mapa — é pela mesma razão que `_desmontar_cenario` devolve os ids a
 	# zero quando o botão do painel troca de faixa.
@@ -5368,8 +5741,12 @@ func _restaurar_ponte_da_base() -> void:
 
 func _update_hud() -> void:
 	if is_instance_valid(massa_label):
-		massa_label.text = "%s • zoom %03d%% • roda do mouse" % [esquadra.resumo(),
-			int(roundf(campo_zoom * 100.0))]
+		# O letreiro fala do olho e da ordem agora, não só da massa. O zoom da ponte continua na régua
+		# em qualquer modo, porque é exatamente assim que o comandante vê que a roda do TATICO não o
+		# tocou: o dígito fica parado enquanto a altura muda.
+		massa_label.text = "%s • zoom %03d%% • olho %s • %d bloco(s) na seleção • %d sob destino • [TAB]" % [
+			esquadra.resumo(), int(roundf(campo_zoom * 100.0)), campo_modo,
+			esquadra.contar_selecionados(), esquadra.com_destino()]
 	if is_instance_valid(command_label):
 		var living := 0
 		var damaged := 0

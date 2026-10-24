@@ -49,10 +49,10 @@ const AMOSTRA := 8
 ## Gabarito de uma montagem nova SEM cenário, medido nesta rodada em três montadas seguidas: 7 de
 ## ambiente (WorldEnvironment, dois sóis, três malhas do fundo, o MultiMesh das estrelas) + TRÊS
 ## nós da esquadra de blocos (dois `MultiMeshInstance3D` de casco, um por lado, mais o dos traços da
-## salva) + ponte + doze cascos + CanvasLayer + PonteSonora = 25. O 26 que `tools/probes/geoide.gd`
-## lê é esta mesma árvore com o `cenario_root` do cenário montado, que é filho único e entra um por
-## cenário.
-const FILHOS_DO_JOGO := 25
+## salva) + ponte + doze cascos + CanvasLayer + PonteSonora + o `Camera3D` tático = 26. O 27 que
+## `tools/probes/geoide.gd` lê é esta mesma árvore com o `cenario_root` do cenário montado, que é
+## filho único e entra um por cenário.
+const FILHOS_DO_JOGO := 26
 ## Ponte montada SEM cenário: 125 filhos, inventariados um a um por posição nesta rodada. O gabarito
 ## é a medida, não uma soma esperada, e ela fecha com a partição por construtor: 72 do `_build_bridge`
 ## (soalho e teto, 20 de costado — três panos, duas janelas com verga e peitoril e o filete corrido

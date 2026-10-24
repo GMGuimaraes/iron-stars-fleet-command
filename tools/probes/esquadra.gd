@@ -823,7 +823,7 @@ func _initialize() -> void:
 	_assert("a roda aperta nas duas pontas e so a roda manda no zoom",
 		is_equal_approx(aperto_topo, 1.0) and is_equal_approx(aperto_fundo, 0.0) \
 			and is_equal_approx(float(jogo.campo_zoom), 0.0),
-		"20 voltas para cima -> %.2f, 40 para baixo -> %.2f, clique esquerdo nao moveu (%.2f)" % [
+		"20 voltas para cima -> %.2f, 40 para baixo -> %.2f, o clique não mexe no zoom da ponte (%.2f)" % [
 			aperto_topo, aperto_fundo, jogo.campo_zoom])
 	_assert("o letreiro da massa e um Label: os 35 botoes de menu.gd nao se mexem",
 		jogo.massa_label is Label and String(jogo.massa_label.text).contains("MASSA"),
