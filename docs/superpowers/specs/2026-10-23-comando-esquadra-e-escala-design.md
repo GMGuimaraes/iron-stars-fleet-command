@@ -81,8 +81,8 @@ restrição já dada (nada de janela emoldurada duplicando a arte).
 `_unidade_sob_o_pixel(pixel)` projeta cada candidata com `unproject_position` e escolhe a mais
 próxima dentro de `RAIO_ESCOLHA_PX`, com desempate por distância à câmera. Duas razões para
 projeção em vez de raio-contra-plano: (a) a batalha tem `y` de verdade a partir desta fatia, e
-um plano fixo é a limitação que o README já declara em `_pontos_de_impacto` (`main.gd:3759-3781`);
-(b) os blocos não têm `Node3D` — só `pos` lógico (`esquadra.gd:149-154`) — e projetar `pos` não
+um plano fixo é a limitação que o README já declara em `_pontos_de_impacto` (`main.gd:3765-3781`);
+(b) os blocos não têm `Node3D` — só `pos` lógico (`esquadra.gd:196-201`) — e projetar `pos` não
 exige criar 240 nós, o que seria o custo que a massa existe para evitar.
 
 Candidatas: os 6 cascos aliadas de `fleet` (`main.gd:1596-1601`) mais a presa capturada que entra
@@ -93,11 +93,11 @@ exige matriz de câmera viva — é lei de janela, headless não prova (armadilh
 ### 2.3 Seleção e ordem
 
 - **Clique em aliado** seleciona o bloco (ou o casco nomeado). Clique no núcleo do esquadrão
-  com modificador seleciona os 20 blocos do esquadrão (`BLOCOS_NO_ESQUADRAO`, `esquadra.gd:50`).
+  com modificador seleciona os 20 blocos do esquadrão (`BLOCOS_NO_ESQUADRAO`, `esquadra.gd:64`).
 - **Clique em hostil** fixa `selected_target` — hoje só o dropdown faz isso (`main.gd:2091-2093`).
 - **Clique em água vazia** escreve destino. `_give_order` (`main.gd:4805-4852`) passa a tocar a
   esquadra: cada bloco recebe `destination: Vector3` e marcha até ele com o
-  `move_toward` que já existe (`esquadra.gd:310`), em vez de só seguir `centro_aliado`.
+  `move_toward` que já existe (`esquadra.gd:382`), em vez de só seguir `centro_aliado`.
 - Os **SpinBox X/Z** (`main.gd:2107-2125`, X −80..80 passo 5, Z −160..20 passo 5) ficam como
   espelho numérico do destino, atualizados pelo clique. Arrancá-los quebraria as 55 conferências
   de `tools/probes/menu.gd` sem ganho nenhum; o que muda é que deixam de ser o único caminho.
@@ -121,7 +121,7 @@ Sonda nova `tools/probes/comando.gd`, com família de dados (headless) e famíli
 7. Modo tático não muda a FOV contratada da ponte; roda em `PONTE` continua 78°→14°.
 8. Gabarito de filhos re-medido; os 35 botões de painel conferidos intactos.
 
-Contrato a reescrever no mesmo commit: a asserção `tools/probes/esquadra.gd:543-553` diz
+Contrato a reescrever no mesmo commit: a asserção `tools/probes/esquadra.gd:717-721` diz
 «clique esquerdo nao moveu» o zoom — ela continua verdadeira e continua cobrada, só passa a
 dizer «clique esquerdo nao moveu o zoom da ponte», porque o clique agora move *outra coisa*.
 
@@ -129,7 +129,7 @@ dizer «clique esquerdo nao moveu o zoom da ponte», porque o clique agora move 
 
 Hoje só a capitânia tem anisotropia (`CAPITAL_SPEED 22.0` avante contra `CAPITAL_REVERSE -0.6`,
 `main.gd:31-32`, `CAPITAL_LIFT 12.0` em `:34`) e os blocos andam a velocidade instantânea, sem
-taxa de giro (`MARCHA_DE_BLOCO 6.0 × mobilidade`, `esquadra.gd:81/309`). Cascos pesados hoje só
+taxa de giro (`MARCHA_DE_BLOCO 6.0 × mobilidade`, `esquadra.gd:109/381`). Cascos pesados hoje só
 têm fator de classe na velocidade (`CLASSES`, `main.gd:102-106`), não em aceleração nem em giro,
 e `hp`/`engines`/`weapons`/`crew` nascem todos em 100 (`main.gd:1601/1609`).
 
@@ -147,14 +147,14 @@ como estado; a palavra só aparece em prosa de README). Desenho: `escudo` + `esc
 casco, agregado por bloco; o dano morde o escudo primeiro, o escudo **não conserta** no mesmo
 ritmo do casco e tem colapso com janela de vulnerabilidade; a regeneração é constante declarada,
 não sorteio (lei da casa). Sem escudo o bloco não muda de líder nem de doutrina. Custo: toda a
-aritmética de `_dano_de_canhao` (`main.gd:3827`), `DANO_DE_BLOCO 2.2` (`esquadra.gd:85`) e as
+aritmética de `_dano_de_canhao` (`main.gd:3826`), `DANO_DE_BLOCO 2.2` (`esquadra.gd:113`) e as
 rampas de setor; e as luminâncias dos quadros de casco podem mudar de novo.
 
 ## 5. Fatia 4 — fogo por coluna, fogo amigo, alcance 3D
 
 Escolhido: só o bloco mais adiantado de cada coluna dispara, os demais ficam obstruídos, e o que
 passa bate no aliado atrás. Isso inverte uma cláusula escrita no comentário de
-`_pontos_de_impacto` (`main.gd:3759-3781`, «ignora o y de quem atira») e no README, e cobra a
+`_pontos_de_impacto` (`main.gd:3765-3781`, «ignora o y de quem atira») e no README, e cobra a
 reescrita honesta das duas coisas. Bloco e casa têm posição conhecida, então obstrução é teste
 de segmento contra a caixa do bloco — geometria decide, nenhum sorteio é chamado aqui (mesma lei
 da salva atual). Chegada por cima e por baixo e grupo vindo de outro canto entram aqui como
