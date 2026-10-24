@@ -105,6 +105,15 @@ func _montar_jogo() -> Node3D:
 	game.process_mode = Node.PROCESS_MODE_DISABLED
 	await _frames(3)
 	game._update_bridge(0.0)
+	# Precondition da fatia 3, declarada sem afrouxar nenhum número: esta sonda mede a aritmética
+	# do canhão, e com a casca de pé todo lance abaixo de 20,0 morde nela em vez de chegar a `hp`.
+	# Despido o tabuleiro, cada número daqui volta a ser o de antes, dígito a dígito — a muralha em
+	# si é cobrada por `tools/probes/escudo.gd`, com a casca armada.
+	for casca_lista in [game.fleet, game.enemies]:
+		for casca_unidade in casca_lista:
+			casca_unidade["escudo"] = 0.0
+			casca_unidade["escudo_max"] = 0.0
+			casca_unidade["escudo_cai"] = 0.0
 	return game
 
 func _alinhar(game) -> void:

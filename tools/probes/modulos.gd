@@ -419,6 +419,13 @@ func _rodar() -> void:
 		# O visado mantém os canhões cheios: a régua daqui mede o que a SALVA aliada tira do setor,
 		# e `ARMAS` não tem número a cobrar num alvo já desarmado. A retaliação hostil cai sobre a
 		# frota, que esta seção nunca lê.
+		# Precondition da fatia 3, não número afrouxado: com a casca de pé o eixo CASCO não tem casco
+		# a perder, e é exatamente isso que `tools/probes/escudo.gd` cobra em família própria. Aqui o
+		# que se mede é o endereçamento de setor, então a chapa vai ao chão antes de atirar — do mesmo
+		# jeito que se arma o canhão do visado: o instrumento declara o estado de que precisa.
+		game.enemies[0]["escudo"] = 0.0
+		game.enemies[0]["escudo_max"] = 0.0
+		game.enemies[0]["escudo_cai"] = 0.0
 		game.fogo_densidade = 0
 		game.subsystem_selector.select(indice)
 		var antes_ficha := _ficha(game.enemies[0])

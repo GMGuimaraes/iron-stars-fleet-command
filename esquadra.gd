@@ -37,6 +37,13 @@ extends RefCounted
 ## muralha, não o bloco individual, e folha de conta não toca `rng`.
 const Voo := preload("res://voo.gd")
 
+## Durabilidade da casca: o mesmo `Escudo.morder` dos casco individuais, com uma placa de
+## esquadra no lugar do emissor de linha. O bloco nasce com `escudo_max` em zero porque a muralha
+## não tem oficina flutuante por trás de cada casa — a placa segura as duas primeiras salvas de
+## casco e depois o bloco fica exposto até afundar ou vencer. Nenhum `quadro` é chamado aqui, e é
+## isso, não uma exceção na lei, que torna a regeneração impossível.
+const Escudo := preload("res://escudo.gd")
+
 ## Grade de casas do bloco. Quatro de boreste a bombordo, três camadas de altura, duas de
 ## profundidade: 24 é o que fecha o orçamento acordado (240 blocos × 24 = 5 760 instâncias) e é
 ## grosso o bastante para o atrito ser lido de longe.
@@ -221,6 +228,8 @@ func _novo_bloco(id: int, esq: int, indice: int, lado: String, pos: Vector3) -> 
 	return {"id": id, "esquadrao": esq, "formacao": indice, "lado": lado, "pos": pos,
 		"vel": Vector3.ZERO, "rumo": 0.0 if lado == "aliado" else PI, "giro": 0.0,
 		"navios": float(NAVIOS_NO_BLOCO),
+		# Placa de esquadra: `escudo_max` em zero é a forma que a lei lê como "não recomponha".
+		"escudo": Escudo.ESCUDO_DE_BLOCO, "escudo_max": 0.0, "escudo_cai": 0.0,
 		"MOTORES": 100.0, "ARMAS": 100.0, "TRIPULACAO": 100.0, "vivo": true, "presa": false,
 		"rendicao": false,
 		# Ordem da ponte: o bloco persegue o posto do esquadrão enquanto `com_destino` é falso, e
@@ -686,7 +695,11 @@ func _aplicar_golpe(alvo: Dictionary, eixo: String, dano: float) -> bool:
 		return false
 	var lado := String(alvo["lado"])
 	if eixo == "CASCO":
-		alvo["navios"] = maxf(0.0, float(alvo["navios"]) - dano * 1.4)
+		# A placa morde o dano cru, o mesmo unidade que `main.gd` usa no canhão de linha: uma salva de
+		# bloco em força cheia são 2,2 de dano, a placa é 4,4, então exatamente duas salvas passam por
+		# cima de `navios` sem encostar num navio. O transbordo é que entra no fator 1,4 de navio.
+		var transbordo := Escudo.morder(alvo, dano)
+		alvo["navios"] = maxf(0.0, float(alvo["navios"]) - transbordo * 1.4)
 		if float(alvo["navios"]) <= 0.0:
 			alvo["vivo"] = false
 			if lado == "aliado":

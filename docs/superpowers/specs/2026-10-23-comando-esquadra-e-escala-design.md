@@ -162,6 +162,39 @@ não sorteio (lei da casa). Sem escudo o bloco não muda de líder nem de doutri
 aritmética de `_dano_de_canhao` (`main.gd`, função homônima), `DANO_DE_BLOCO 2.2` (`esquadra.gd`, constante homônima) e as
 rampas de setor; e as luminâncias dos quadros de casco podem mudar de novo.
 
+**Fechada em 2026-10-24.** A lei mora numa folha própria, `res://escudo.gd` (5 597 caracteres,
+quatro constantes declaradas — `ESCUDO_DE_CASCO 20,0`, `ESCUDO_REGENERA 1,2` u/s, `ESCUDO_JANELA
+4,0` s, `ESCUDO_DE_BLOCO 4,4` — e zero gerador de sorteio). Quatro cláusulas ficaram **mais
+estreitas do que o parágrafo acima previu**, e é isso que o portão cobra agora:
+
+1. **A casca só intercepta projétil.** Dos caminhos de dano do jogo, apenas os cinco de fogo de
+   canhão passam pelo nó único `_ferir_casco`. Abalroamento (**12** de impacto → casco **88**,
+   casca **20** intacta), coroa do poço (**88 → 85**, casca intocada), o poço em si (casco **0**
+   com a casca como estava) e o golpe de subsistema (**MOTORES 92,35** com casco e casca em paz)
+   continuam pela porta velha — é a cláusula 4 do spec, agora com família de sonda própria.
+2. **A placa do bloco não se recompõe nunca.** Ela entra como `escudo_max = 0,0`, que é a própria
+   grafia da lei para «não recomponha»: **4,4 = exatamente duas salvas** de `DANO_DE_BLOCO 2,2`, e
+   a terceira afoga **3,08 navios** (o fator velho da casa, `2,2 × 1,4`).
+3. **A ponte não tem escudo**, e não é descuido: `capital_hp` é um **escalár**, não um dicionário,
+   então não há onde pendurar a chapa. Registrado como aresta aberta, não como dívida escondida.
+4. **Nenhuma arte de escudo** nesta fatia — só o texto do seletor (`CASCO 92% // ESCUDO 0%`) e a
+   linha do relatório no colapso.
+
+O que se mediu, em vez de se assumir: com a casca de pé o canhão real não arranha **um ponto** de
+casco em **5 salvas** até o colapso, a mordida fecha em **20,0000** contra o teto de 20 e a salva
+que derruba a casca escreve **1,344** de transbordo no mesmo golpe; em **12 salvas** contra o
+tabuleiro inteiro, **0 violações em 144 amostras** de casco vivo. A janela queima em relógio de
+quadro (16 quadros de 0,25 s e nenhum resíduo), a regeneração é constante nos dois lados (**1,200 u**
+em 1 s de relógio da ponte hostil, sem oficina) e os dois relógios não se emprestam número: oito
+segundos de conserto dão **+17,6** de casco e **+4,8** de casca. A inércia continuou jurada —
+**rng** e **visual_rng** intocados pelas quatro chamadas da lei e duas montadas gêmeas fechando no
+mesmo ledger de **262 bytes**, dígito a dígito.
+
+O custo real, escrito: **doze sondas** passaram a declarar na montagem um tabuleiro **sem casca**
+(uma linha por chave, nenhum número afrouxado), porque com a muralha de pé todo lance abaixo de
+20,0 mordia nela em vez de chegar a `hp`. A sonda da lei, `tools/probes/escudo.gd`, fecha com
+**55 conferências** e `quebras=0`.
+
 ## 5. Fatia 4 — fogo por coluna, fogo amigo, alcance 3D
 
 Escolhido: só o bloco mais adiantado de cada coluna dispara, os demais ficam obstruídos, e o que

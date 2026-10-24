@@ -58,6 +58,15 @@ func _initialize() -> void:
 	get_root().add_child(game)
 	await _frames(3)
 	game.paused = true
+	# Precondition da fatia 3, declarada sem afrouxar nenhum número: esta sonda mede a aritmética
+	# do canhão, e com a casca de pé todo lance abaixo de 20,0 morde nela em vez de chegar a `hp`.
+	# Despido o tabuleiro, cada número daqui volta a ser o de antes, dígito a dígito — a muralha em
+	# si é cobrada por `tools/probes/escudo.gd`, com a casca armada.
+	for casca_lista in [game.fleet, game.enemies]:
+		for casca_unidade in casca_lista:
+			casca_unidade["escudo"] = 0.0
+			casca_unidade["escudo_max"] = 0.0
+			casca_unidade["escudo_cai"] = 0.0
 	game.rng.seed = 20261020
 
 	# 1 — paridade de forças não é risco: a linha hostil continua avançando.

@@ -429,6 +429,12 @@ const Esquadra := preload("res://esquadra.gd")
 ## massa). É folha de conta, não nó de cena — estado entra, estado sai, nenhum sorteio e nenhuma
 ## escrita de cena. A ficha de cada classe mora em `CLASSES` e a da massa em `Voo.FICHA_BLOCO`.
 const Voo := preload("res://voo.gd")
+## Lei de escudo: a segunda régua antes do casco, folha de conta igual à de voo — estado entra,
+## transbordo sai, nenhum sorteio e nenhuma escrita de cena. Mordem a casca o canhão da linha, o
+## canhão da capitânia, a bateria, a aviação e o fogo hostil. Passam por cima dela o abalroamento,
+## a corona e o poço, que não são projétil, e os ataques de subsistema, que cobram o emissor e não
+## o volume blindado.
+const Escudo := preload("res://escudo.gd")
 ## As quatro marchas das ordens, em u/s de casco com motor cheio. Eram números inline na cadeia de
 ## `_update_fleet`; com a lei de voo viram a cota do envelope, e por isso precisam de nome: `re` e
 ## `traves` da ficha são frações *destes* tetos, e sem teto nomeado não há como conferir que a ré
@@ -2139,7 +2145,8 @@ func _build_fleets() -> void:
 		var z := -38.0 - (i % 2) * 5.0
 		var ship := _make_ship(Vector3(x, visual_rng.randf_range(-2, 2), z), BLUE,
 			1.1 + float(i % 3) * 0.06, "ALIADA %02d" % (i + 1), false, i, i % 4)
-		fleet.append({"node": ship, "order": "LINHA", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "repair_priority": "AUTO", "team": "friendly", "name": "ALIADA %02d" % (i + 1), "squadron": "ALFA" if i < 3 else "BETA", "classe": "CRUZADOR", "vel": Vector3.ZERO, "rumo": RUMO_ALIADO, "giro": 0.0})
+		fleet.append({"node": ship, "order": "LINHA", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "repair_priority": "AUTO", "team": "friendly", "name": "ALIADA %02d" % (i + 1), "squadron": "ALFA" if i < 3 else "BETA", "classe": "CRUZADOR", "vel": Vector3.ZERO, "rumo": RUMO_ALIADO, "giro": 0.0,
+			"escudo": Escudo.ESCUDO_DE_CASCO, "escudo_max": Escudo.ESCUDO_DE_CASCO, "escudo_cai": 0.0})
 	for i in range(6):
 		var x := (float(i) - 2.5) * 6.0
 		var z := -82.0 - (i % 2) * 7.0
@@ -2147,7 +2154,8 @@ func _build_fleets() -> void:
 		var ship := _make_ship(Vector3(x, visual_rng.randf_range(-3, 3), z), RED,
 			1.55 if is_command else 1.3, "HOSTIL %02d" % (i + 1), is_command, i + 6,
 			1 if is_command else (i + 6) % 4)
-		enemies.append({"node": ship, "order": "AVANÇAR", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "team": "enemy", "name": "CAPITÂNIA HOSTIL" if is_command else "HOSTIL %02d" % (i + 1), "squadron": "INIMIGO", "role": "COMANDO" if is_command else "LINE", "vel": Vector3.ZERO, "rumo": RUMO_HOSTIL, "giro": 0.0})
+		enemies.append({"node": ship, "order": "AVANÇAR", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "team": "enemy", "name": "CAPITÂNIA HOSTIL" if is_command else "HOSTIL %02d" % (i + 1), "squadron": "INIMIGO", "role": "COMANDO" if is_command else "LINE", "vel": Vector3.ZERO, "rumo": RUMO_HOSTIL, "giro": 0.0,
+			"escudo": Escudo.ESCUDO_DE_CASCO, "escudo_max": Escudo.ESCUDO_DE_CASCO, "escudo_cai": 0.0})
 
 ## Os quatro setores do casco, na mesma ordem e com o mesmo nome do seletor de subsistema do painel
 ## (`TRIPULAÇÃO` do seletor vira `TRIPULACAO` no nó, porque nome de nó não leva cedilha). O pedido
@@ -3913,6 +3921,21 @@ func _servo(ship: Node3D, unit: Dictionary, partida: Vector3, delta: float) -> v
 	unit["giro"] = float(unit.get("giro", 0.0))
 
 
+## O portão único de dano de casco: a casca morde primeiro e o transbordo escreve `hp`. Todo lance
+## de canhão, bateria, aviação e fogo hostil passa por aqui, e só por aqui — abalroamento, corona e
+## poço continuam escrevendo `hp` direto, porque não são projétil (cláusula 4 de `res://escudo.gd`).
+## A frase do colapso sai uma vez, no golpe que esvazia a casca, e não é reescrita no quadro
+## seguinte: o relatório é a única tela onde o escudo tem voz nesta fatia.
+func _ferir_casco(unit: Dictionary, dano: float) -> void:
+	var armada := float(unit.get("escudo", 0.0)) > 0.0 and float(unit.get("escudo_cai", 0.0)) <= 0.0
+	var transbordo := Escudo.morder(unit, dano)
+	if armada and float(unit.get("escudo", 0.0)) <= 0.0 and is_instance_valid(report_label) \
+			and not batalha_encerrada:
+		report_label.text = "ESCUDO COLAPSADO // %s fica exposta por %0.0f s." % [
+			String(unit.get("name", "casco")), Escudo.ESCUDO_JANELA]
+	unit["hp"] = maxf(0.0, float(unit["hp"]) - transbordo)
+
+
 func _update_fleet(delta: float) -> void:
 	# Ambas as frotas agem continuamente; ordens mudam comportamento, não iniciam turnos.
 	for i in range(fleet.size()):
@@ -3986,6 +4009,10 @@ func _update_fleet(delta: float) -> void:
 				ally["hp"] = minf(100.0, float(ally["hp"]) + repair_rate * 0.25)
 			if ally["crew"] < 100.0:
 				ally["crew"] = minf(100.0, float(ally["crew"]) + repair_rate * 0.2)
+		# A casca respira no relógio dela, não na fila da oficina: `REPAROS` conserta setor, o emissor
+		# de escudo se recompõe sozinho — e para de se recompor durante a janela de vulnerabilidade que
+		# o colapso abre (cláusula 2 e 3 de `res://escudo.gd`).
+		Escudo.quadro(ally, delta)
 		fleet[i] = ally
 		_tune_ship_look(ally)
 	# A escolta hostil estaciona em torno da própria capitânia, então a âncora é lida uma
@@ -4030,6 +4057,10 @@ func _update_fleet(delta: float) -> void:
 		# avanço: a batalha não migra para fora da vista da ponte.
 		foe.position.z = clampf(foe.position.z, HOSTILE_RALLY_Z, HOSTILE_ADVANCE_Z)
 		enemy["veloc"] = (foe.position - partida) / maxf(delta, 0.0001)
+		# A muralha não tem oficina, mas a cláusula 3 é da lei, não do jogador: a casca hostil se
+		# recompõe na mesma constante, no mesmo relógio. Tirar só do lado aliado faria o escudo ser um
+		# trunfo de HUD em vez de uma regra de fogo.
+		Escudo.quadro(enemy, delta)
 		_tune_ship_look(enemy)
 	# Por último o cenário e a física de contato: primeiro cada casco obedece à ordem, depois o
 	# poço puxa / a corona queima / a rocha fere, e só então o campo cobra quem atravessou quem.
@@ -4658,7 +4689,7 @@ func _detonar_missil(m: Dictionary) -> void:
 		if fator <= 0.0:
 			continue
 		var cobro := dano * fator
-		enemy["hp"] = maxf(0.0, float(enemy["hp"]) - cobro)
+		_ferir_casco(enemy, cobro)
 		missil_contagem["cascos"] = int(missil_contagem["cascos"]) + 1
 		missil_contagem["dano"] = float(missil_contagem["dano"]) + cobro
 		if float(enemy["hp"]) <= 0.0:
@@ -4812,7 +4843,7 @@ func _ferir_com_caca(c: Dictionary) -> bool:
 		return false
 	var enemy: Dictionary = enemies[atingido]
 	var cobro := float(c["dano"])
-	enemy["hp"] = maxf(0.0, float(enemy["hp"]) - cobro)
+	_ferir_casco(enemy, cobro)
 	caca_contagem["feridos"] = int(caca_contagem["feridos"]) + 1
 	caca_contagem["dano"] = float(caca_contagem["dano"]) + cobro
 	_spawn_bolt(destino, BLUE, origem, false)
@@ -5077,7 +5108,7 @@ func _resolve_volley() -> void:
 			elif subsistema == "TRIPULAÇÃO":
 				enemies[atingido]["crew"] = maxf(0.0, float(enemies[atingido]["crew"]) - por_flecha * 1.5)
 			else:
-				enemies[atingido]["hp"] = maxf(0.0, float(enemies[atingido]["hp"]) - por_flecha)
+				_ferir_casco(enemies[atingido], por_flecha)
 			if enemies[atingido]["hp"] <= 0.0:
 				_mark_wreck(enemies[atingido]["node"] as Node3D)
 				report_label.text = "ALVO DESTRUÍDO // %s neutralizado." % enemies[atingido]["name"]
@@ -5146,7 +5177,7 @@ func _resolve_volley() -> void:
 			feriram_ponte += 1
 			# Torre de linha bate casco: a capitânia não tem seletor de subsistema, porque o
 			# seletor do painel é a ordem que a ponte dá aos cascos dela, não ao próprio casco.
-			enemies[atingido]["hp"] = maxf(0.0, float(enemies[atingido]["hp"]) - por_flecha_ponte)
+			_ferir_casco(enemies[atingido], por_flecha_ponte)
 			capitania_contagem["dano"] = float(capitania_contagem["dano"]) + por_flecha_ponte
 			if float(enemies[atingido]["hp"]) <= 0.0:
 				_mark_wreck(enemies[atingido]["node"] as Node3D)
@@ -5224,7 +5255,7 @@ func _resolve_volley() -> void:
 			var dano_flecha := por_flecha
 			if String(fleet[absorvente]["order"]) == "ESCOLTAR":
 				dano_flecha *= 0.7
-			fleet[absorvente]["hp"] = maxf(0.0, float(fleet[absorvente]["hp"]) - dano_flecha)
+			_ferir_casco(fleet[absorvente], dano_flecha)
 			hostis_feriram += 1
 			feriu = true
 			if k == 0:
@@ -5883,5 +5914,12 @@ func _update_hud() -> void:
 		for i in range(enemies.size()):
 			# O casco só aparece para a ponte quando uma sonda encostou naquele hull: a
 			# linha de baixa é o estado real do contato, não uma barra de tempo.
-			var state := "CAPTURADO" if enemies[i]["order"] == "CAPTURADO" else ("CASCO %d%%" % int(enemies[i]["hp"]) if bool(enemies[i].get("seen", false)) else "NÃO IDENTIFICADO")
-			target_selector.set_item_text(i, "%s [%s]" % [enemies[i]["name"], state])
+			# O escudo vem junto porque sem ele a ponte veria "CASCO 100%" num casco cuja casca já
+			# caiu, e a janela de vulnerabilidade seria um efeito invisível.
+			var inimigo: Dictionary = enemies[i]
+			var casca := int(roundf(float(inimigo.get("escudo", 0.0))
+				/ maxf(1.0, float(inimigo.get("escudo_max", 0.0))) * 100.0))
+			var state := "CAPTURADO" if String(inimigo["order"]) == "CAPTURADO" \
+				else ("CASCO %d%% // ESCUDO %d%%" % [int(inimigo["hp"]), casca]
+					if bool(inimigo.get("seen", false)) else "NÃO IDENTIFICADO")
+			target_selector.set_item_text(i, "%s [%s]" % [String(inimigo["name"]), state])

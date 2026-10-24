@@ -180,6 +180,23 @@ func _montar_jogo() -> Node3D:
 	await _frames(3)
 	game._update_bridge(0.0)
 	game._update_hud()
+	# Precondition da fatia 3, declarada sem afrouxar nenhum número: esta sonda mede a aritmética
+	# do canhão, e com a casca de pé todo lance abaixo de 20,0 morde nela em vez de chegar a `hp`.
+	# Despido o tabuleiro, cada número daqui volta a ser o de antes, dígito a dígito — a muralha em
+	# si é cobrada por `tools/probes/escudo.gd`, com a casca armada.
+	for casca_lista in [game.fleet, game.enemies]:
+		for casca_unidade in casca_lista:
+			casca_unidade["escudo"] = 0.0
+			casca_unidade["escudo_max"] = 0.0
+			casca_unidade["escudo_cai"] = 0.0
+	# Precondition da fatia 3, mesma razão dos cascos: a placa de 4,4 do bloco morde a salva de
+	# casco antes de `navios`, então esta sonda despide a muralha na montagem. A placa é cobrada na
+	# família 12 de `tools/probes/escudo.gd`.
+	for casca_lado in ["aliado", "hostil"]:
+		for casca_bloco in game.esquadra.lista_de(casca_lado):
+			casca_bloco["escudo"] = 0.0
+			casca_bloco["escudo_max"] = 0.0
+			casca_bloco["escudo_cai"] = 0.0
 	return game
 
 func _cauda(jogo) -> Array[int]:
@@ -199,9 +216,17 @@ func _nucleos(aliada: bool) -> Array:
 			posicoes.append(Vector3((float(i) - 2.5) * 6.0, 0.0, -82.0 - float(i % 2) * 7.0))
 	return posicoes
 
+## Precondition da fatia 3, mesma razão dos cascos: a placa de 4,4 morde o lance de casco antes de
+## `navios`, então todo esquadrão desta sonda acorda despido e cada número volta a ser o de antes,
+## dígito a dígito. A placa em si é cobrada na família 12 de `tools/probes/escudo.gd`.
 func _nova_esquadra() -> Esquadra:
 	var e := Esquadra.new()
 	e.montar(_nucleos(true), _nucleos(false))
+	for lado in ["aliado", "hostil"]:
+		for bloco in e.lista_de(lado):
+			bloco["escudo"] = 0.0
+			bloco["escudo_max"] = 0.0
+			bloco["escudo_cai"] = 0.0
 	return e
 
 func _novo_mm(e: Esquadra) -> MultiMesh:
