@@ -624,6 +624,19 @@ var campo_zoom := 0.0
 ## atrito só cobra na salva — repintar 2 880 cores por quadro seria pagar duas vezes pelo mesmo
 ## número.
 var cores_da_massa_na_salva := -1
+## Terceiro canal da massa: a salva que se VÊ. Os dois corpos acima pintam navios; sem isto, o
+## fogo de 240 blocos não tem nenhum desenho e as únicas traces na tela são as flechas dos doze
+## cascos, no meio do campo — que é exatamente a queixa do comandante. UM nó, uma instância por
+## bloco, e nenhum `MeshInstance3D` por lance.
+var massa_tracos: MultiMeshInstance3D
+## Fila de lances em voo, montada na salva e lida por quadro. É cópia própria do
+## `esquadra.pares_da_ultima_salva` e não uma leitura do `MultiMesh`: em headless a leitura de
+## volta devolve o que foi escrito, não o que a tela tem, e animar a partir dela faria a sonda
+## aprovar um quadro que o visor não mostra.
+var _tracos_voando: Array[Dictionary] = []
+## Progresso do voo, 0 na boca do canhão e 1 no impacto. Ao fechar, a fila é zerada: traço
+## pendurado no quadro vira "todo mundo atirando o tempo todo", que é o avesso da salva.
+var _traco_t := 1.0
 ## Quantas estrelas o céu emprestou para a lente no último quadro. Medido pela sonda: zero em
 ## campo aberto, e o teto da conta quando o poço está montado e a proa apontada para ele.
 var estrelas_dobradas := 0
@@ -1490,6 +1503,22 @@ func _mais_proximo_vivo(lista: Array[Dictionary], chave_no: String, chave_vida: 
 
 ## ---- Esquadra de blocos: a massa em volta dos núcleos ----
 
+## Traços simultâneos: um por bloco, nos dois lados. É o teto físico da fila — 240 blocos, 240
+## lances no contato medidos em `tools/probes/esquadra.gd` família 11 — e UM nó para desenhá-los.
+const TRACOS_DA_MASSA := Esquadra.BLOCOS_NO_LADO * 2
+## Tempo de voo, em segundos. A cadência da salva é 1,6 s: 0,55 s de traço deixa um terço do ciclo
+## com fogo cruzando o campo e dois terços no escuro entre salvas. É o pulso que separa "salva" de
+## chuva contínua, e o que faz 240 lances lerem como UM momento e não como estática.
+const TRACO_DE_BLOCO_SEG := 0.55
+## Comprimento do traço em u. Um quinto da faixa de contato (40 u): curto o bastante para ler como
+## lance, longo o bastante para não sumir entre as casas de 3,2 u da própria fileira.
+const TRACO_COMPRIMENTO := 8.0
+## As duas tintas. Acima de 1,0 de propósito: sem iluminação (material `UNSHADED`) o valor passa
+## direto pelo tonemapping e é o brilho que a cena tem para chamar de disparo.
+const TRACO_ALIADO := Color(1.5, 2.0, 2.9)
+const TRACO_HOSTIL := Color(2.9, 0.95, 0.8)
+
+
 ## Monta os dois corpos da massa: UM `MultiMeshInstance3D` por time, cada um com as 2 880 casas
 ## dos seus 120 blocos, e a MESMA malha de cinco bilhetes nos dois — o que separa aliado de hostil
 ## é a cor por instância e o brilho do material, nunca uma malha nova. É a lei do céu estrelado
@@ -1505,6 +1534,7 @@ func _build_esquadras() -> void:
 	var malha := esquadra.malha_replica()
 	massa_aliada = _montar_massa("Esquadra Aliada", malha, BLUE * 0.3)
 	massa_hostil = _montar_massa("Esquadra Hostil", malha, RED * 0.3)
+	massa_tracos = _montar_tracos()
 	_remontar_esquadras()
 
 
@@ -1556,12 +1586,14 @@ func _nucleos_da_esquadra(aliada: bool) -> Array:
 func _remontar_esquadras() -> void:
 	esquadra.montar(_nucleos_da_esquadra(true), _nucleos_da_esquadra(false))
 	cores_da_massa_na_salva = -1
+	_apagar_tracos()
 	_pintar_massa(true)
 
 
 func _atualizar_esquadras(delta: float) -> void:
 	esquadra.passo(delta, _nucleos_da_esquadra(true), _nucleos_da_esquadra(false))
 	_pintar_massa(false)
+	_atualizar_tracos(delta)
 
 
 ## Pinta as transformadas sujas e, quando a salva virou, as cores. A cor não precisa de repintura
@@ -1586,6 +1618,124 @@ func _pintar_massa(forcar: bool) -> void:
 ## linha à contagem que as sondas dos doze cascos conferem.
 func _salva_da_massa() -> void:
 	esquadra.troca_salva()
+	_armar_tracos()
+
+
+## ---- Os traços da salva da massa ----
+##
+## Um `MultiMeshInstance3D` com uma instância por bloco, e nada mais. A alternativa é a que os
+## núcleos usam (`_spawn_bolt`, um nó por lance com tween próprio) aplicada a 240 blocos: 240 nós
+## por salva, 150 por segundo na cadência de 1,6 s — no Compatibility, onde a esquadra inteira foi
+## desenhada em lote justamente para isso não acontecer, seria trocar a batalha massiva por slide
+## show. Aqui o custo é UMA chamada de desenho e 240 transformadas reescritas por quadro.
+func _montar_tracos() -> MultiMeshInstance3D:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = _malha_traco()
+	mm.instance_count = TRACOS_DA_MASSA
+	var no := MultiMeshInstance3D.new()
+	no.name = "Tracos da Salva"
+	no.multimesh = mm
+	var mat := _material(Color.WHITE)
+	# Sem luz não há sombra nem especular para roubar o brilho: o traço é autoiluminado por
+	# definição, e `UNSHADED` é o que faz a cor escrita por instância chegar pura ao tonemapping.
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	no.material_override = mat
+	no.custom_aabb = AABB(Vector3(-320.0, -160.0, -780.0), Vector3(640.0, 320.0, 940.0))
+	add_child(no)
+	_apagar_tracos()
+	return no
+
+
+## Prisma de um lance. Caixa e não cone: a malha é uma só para 240 instâncias, o eixo longo é o Z
+## local (daí a base construída por produto vetorial em `_base_do_traco`) e a escala em Z faz o
+## comprimento. Doze triângulos por traço, 2 880 no pior quadro — o preço de um lance visível.
+##
+## A boca (0,55 u) é maior que a de um projétil físico porque a ponte olha o campo pelo eixo do voo:
+## um lance que anda em `z` quase não muda de tamanho na tela, e o que sobra para o pixel é a seção
+## transversa. O comprimento manda só nos lances de andar (os dois corpos têm 12 u de desnível de
+## propósito), e a régua de quantos pixels isso compra está na lei 6 de `tools/probes/massa_visivel.gd`.
+static func _malha_traco() -> BoxMesh:
+	var traco := BoxMesh.new()
+	traco.size = Vector3(0.55, 0.55, 1.0)
+	return traco
+
+
+## A base que deita o eixo Z da caixa sobre o vetor do lance. Feita à mão e não com `look_at`
+## porque a caixa é simétrica — o sinal da direção não importa, e um lance reto para cima (os dois
+## andares da muralha existem de propósito) degeneraria o `up` de um `looking_at` qualquer.
+static func _base_do_traco(dir: Vector3) -> Basis:
+	if dir.length_squared() < 0.0001:
+		return Basis.IDENTITY
+	var z := dir.normalized()
+	var x := Vector3.UP.cross(z)
+	if x.length_squared() < 0.0001:
+		x = Vector3.RIGHT
+	x = x.normalized()
+	return Basis(x, z.cross(x), z)
+
+
+## Arma a fila a partir do espelho da salva. O jitter de boca é função pura de `id` e `salva_numero`:
+## se ele sorteasse, a massa passaria a consumir o `visual_rng` dos doze cascos e a cauda de quarenta
+## sorteios que a sonda assina deixaria de ser a mesma — o mesmo motivo pelo qual os 240 lances não
+## gastam um dado de `rng`.
+func _armar_tracos() -> void:
+	_tracos_voando.clear()
+	var salva := int(esquadra.salva_numero)
+	for par in esquadra.pares_da_ultima_salva:
+		var origem: Dictionary = par["origem"]
+		var alvo: Dictionary = par["alvo"]
+		var aliado := String(par["lado"]) == "aliado"
+		var id := int(origem["id"])
+		var ang := float((id * 7 + salva * 13) % 12) / 12.0 * TAU
+		var folga := 1.0 if aliado else -1.0
+		var boca := Vector3(cos(ang) * 1.1 * folga, sin(ang) * 0.7, 0.0)
+		_tracos_voando.append({"de": (origem["pos"] as Vector3) + boca,
+			"para": alvo["pos"], "aliado": aliado})
+	_traco_t = 0.0
+	_pintar_tracos()
+
+
+## Avança o voo e devolve a fila ao nada no impacto. Não há leitura de volta: a transformada de cada
+## quadro é recomposta dos dois pontos guardados, e por isso a sonda pode conferir o que foi escrito
+## sem depender do `MultiMesh` como memória.
+func _atualizar_tracos(delta: float) -> void:
+	if _traco_t >= 1.0:
+		return
+	_traco_t = minf(1.0, _traco_t + delta / TRACO_DE_BLOCO_SEG)
+	if _traco_t >= 1.0:
+		_tracos_voando.clear()
+	_pintar_tracos()
+
+
+func _pintar_tracos() -> void:
+	if not is_instance_valid(massa_tracos) or massa_tracos.multimesh == null:
+		return
+	var mm := massa_tracos.multimesh
+	var i := 0
+	while i < TRACOS_DA_MASSA:
+		if i >= _tracos_voando.size():
+			mm.set_instance_transform(i, Transform3D(Basis.from_scale(Vector3.ZERO), Vector3.ZERO))
+			i += 1
+			continue
+		var t := _tracos_voando[i]
+		var de: Vector3 = t["de"]
+		var para: Vector3 = t["para"]
+		var base := _base_do_traco(para - de)
+		base = base.scaled(Vector3(1.0, 1.0, minf(TRACO_COMPRIMENTO, de.distance_to(para))))
+		mm.set_instance_transform(i, Transform3D(base, de.lerp(para, _traco_t)))
+		mm.set_instance_color(i, TRACO_ALIADO if bool(t["aliado"]) else TRACO_HOSTIL)
+		i += 1
+
+
+## Fecha a persiana entre partidas: os traços da batalha anterior não podem atravessar o RECOMEÇAR,
+## que é a mesma lei que manda remontar a esquadra do zero.
+func _apagar_tracos() -> void:
+	_tracos_voando.clear()
+	_traco_t = 1.0
+	_pintar_tracos()
 
 
 func _build_fleets() -> void:
@@ -4366,6 +4516,14 @@ func _resolve_volley() -> void:
 		_encerra_batalha()
 		return
 	var focus_target := _alvo_comandado()
+	# A ordem da ponte alcança a massa do mesmo jeito que alcança os doze cascos: FOGO CONCENTRADO
+	# significa "todos no mesmo alvo", e o ponto é o casco visado; em SETOR ou DISPERSO cada bloco
+	# volta à lei de linha e procura o próprio vizinho. É leitura de ORDEM, nunca de estado — o
+	# ledger da massa não pode depender de qual casco a ponte está mostrando.
+	if fogo_densidade == 0:
+		esquadra.mandar_fogo((enemies[focus_target]["node"] as Node3D).global_position)
+	else:
+		esquadra.soltar_fogo()
 	# A massa troca salvas na MESMA cadência dos núcleos, antes de a ponte escolher para onde
 	# aponta: os dois ledgers são paralelos de propósito, e um não lê o estado do outro.
 	_salva_da_massa()

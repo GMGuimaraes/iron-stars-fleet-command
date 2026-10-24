@@ -65,6 +65,22 @@ extends SceneTree
 ##     É a régua que desmente a conta de cabeça desta sessão: o campo não é comprado pelo ar entre
 ##     blocos, é comprado pelo recuo, e sem esta asserção "abrir o ar" passaria como se tivesse feito
 ##     a aproximação sozinha.
+## 11) TODO BLOCO ATIRA, E ATIRA NO SEU VIZINHO. No contato, `lancados` é o número de blocos vivos e
+##     armados dos dois lados — ninguém segura fogo porque o próprio fundo da muralha ficou fora de
+##     alcance: o alcance é lido da geometria (2 × fachada + contato + andar = 73 u), não de hábito, e
+##     a escolha de alvo é conferida par a par contra a distância mínima REAL. O fogo local espalha
+##     (muitos alvos), a ordem da ponte converge (um alvo só, o bloco mais próximo do ponto comandado,
+##     e quem não alcança não atira), e a muralha hostil continua local porque a ordem é nossa. A fila
+##     `pares_da_ultima_salva` tem de ter o tamanho exato do ledger: é ela que o desenho lê, e fila
+##     diferente de conta é tela mostrando fogo que a conta não cobrou.
+## 12) O LANCE DA MASSA TEM CANAL DE DESENHO. A queixa do comandante era de tela, não de conta: sem
+##     traço, os únicos disparos visíveis são os dos doze cascos e a salva "só acontece no centro".
+##     Aqui a lei é o CANAL: um nó `MultiMeshInstance3D` com uma instância por bloco, a fila armada
+##     do desenho igual ao ledger lance a lance, o convergir da ordem refletido nos pontos de destino
+##     (um só `para` quando a ponte concentra, muitos quando solta), o jitter de boca sem sorteio, e
+##     o pulso que apaga a fila no impacto — traço pendurado é "todo mundo atirando o tempo todo".
+##     O que ela NÃO prova é pixel: sob `--headless` o `set_instance_transform` é descartado e a
+##     leitura volta identidade, então o acender do visor mora em `massa_visivel.gd`.
 ##
 ## Uso: godot --headless --path . --quit-after 6000 -s res://tools/probes/esquadra.gd
 
@@ -88,6 +104,10 @@ const PISO_Y := 3.47
 ## Passo da grade que a sonda assinou — a malha é contínua entre esquadrões, não só dentro deles.
 const PASSO_X := 13.0
 const PASSO_Z := 7.0
+## Largura de um esquadrão no lado e altura de um andar: as duas cotas do ponto comandado da
+## família 11, que tem de cair DENTRO da muralha hostil para o teste ser de escolha, não de alcance.
+const PASSO_ESQUADRAO_X := 65.0
+const ANDAR := 6.0
 ## Ar mínimo entre os cascos mais próximos de dois blocos vizinhos do mesmo lado. Com o passo antigo
 ## de 8 × 5 isto aqui valia 0,7 u e a muralha não tinha emenda.
 const AR_MINIMO := 2.4
@@ -109,6 +129,10 @@ const CAMPO_ESPERADO := 154.0
 const FOLGA_CONTATO := 1.0
 const QUADROS := 200
 const SALVAS := 60
+## Espelhos de `main.gd` para a família 12: um traço por bloco nos dois lados, e o voo que fecha a
+## fila. Mudar o número lá sem mudar aqui quebra a asserção de propósito.
+const TRACOS_MAXIMOS := 240
+const TRACO_SEG := 0.55
 const SEMENTE_RNG := 1234567890
 const SEMENTE_VISUAL := 555
 
@@ -202,6 +226,88 @@ func _marchar_na_ponte(jogo) -> int:
 		jogo._atualizar_esquadras(1.0 / 60.0)
 		q += 1
 	return q
+
+
+## Blocos que TÊM de atirar: vivos, com arma e com navio. É o denominador da lei de engajamento --
+## contar `lancados` contra 240 seria cobrar fogo de cadáver, e cadáver não atira (família 4).
+func _armados(e: Esquadra) -> int:
+	var n := 0
+	for lado in ["aliado", "hostil"]:
+		for b in e.lista_de(lado):
+			if bool(b["vivo"]) and float(b["ARMAS"]) > 0.0 and float(b["navios"]) > 0.0:
+				n += 1
+	return n
+
+
+## A distância do bloco até o inimigo VIVO mais próximo, sem o portão de alcance: é a régua contra a
+## qual a escolha de alvo é conferida. Com o portão dentro da conta, um bloco fora de alcance sairia
+## "correto" por não atirar, e a asserção aprovaria a omissão em vez da escolha.
+static func _distancia_do_mais_proximo(bloco: Dictionary, lista: Array[Dictionary]) -> float:
+	var melhor := INF
+	for c in lista:
+		if not bool(c["vivo"]) or int(c["id"]) == int(bloco["id"]):
+			continue
+		melhor = minf(melhor, (c["pos"] as Vector3).distance_to(bloco["pos"]))
+	return melhor
+
+
+## Idem em bloco (não em número), para a lei do alvo comandado: qual é o adversário mais próximo
+## desta posição, medido sem alcance e sem portão nenhum.
+static func _bloco_mais_proximo_de(pos: Vector3, lista: Array[Dictionary]) -> Dictionary:
+	var melhor: Dictionary = {}
+	var melhor_d := INF
+	for c in lista:
+		if not bool(c["vivo"]):
+			continue
+		var d: float = (c["pos"] as Vector3).distance_to(pos)
+		if d < melhor_d:
+			melhor_d = d
+			melhor = c
+	return melhor
+
+
+## Quantos alvos distintos a salva tocou, e quantos lances tiveram os mesmos alvos do outro lado
+## (o lado é "aliado" ou "hostil"): serve para a lei "fogo local espalha, fogo comandado converge".
+func _alvos_distintos(pares: Array[Dictionary], lado: String) -> Dictionary:
+	var vistos: Dictionary = {}
+	var lancados := 0
+	for p in pares:
+		if String(p["lado"]) != lado:
+			continue
+		lancados += 1
+		vistos[int((p["alvo"] as Dictionary)["id"])] = true
+	return {"lancados": lancados, "distintos": vistos.size()}
+
+
+## Faixa de x dos pontos de uma fila de traços: é a régua de que o fogo DESENHADO varre a largura da
+## muralha, e não um feixe no meio do campo — a queixa original era de tela, e conta boa no meio
+## continuaria sendo fogo só no centro.
+static func _faixa_x_dos_pontos(fila: Array[Dictionary], chave: String) -> Dictionary:
+	var minimo := INF
+	var maximo := -INF
+	for t in fila:
+		var p: Vector3 = t[chave]
+		minimo = minf(minimo, p.x)
+		maximo = maxf(maximo, p.x)
+	return {"min": minimo, "max": maximo}
+
+
+## Quantos destinos distintos a fila do desenho carrega. Convergência comandada é UM; fogo de linha
+## é muitos. Lido da fila própria do desenho, não do ledger: é ela que a tela vai pintar.
+static func _pontos_distintos(fila: Array[Dictionary], aliado: bool) -> int:
+	var vistos: Dictionary = {}
+	for t in fila:
+		if bool(t["aliado"]) == aliado:
+			vistos[str(t["para"])] = true
+	return vistos.size()
+
+
+## Carimbo da fila inteira (origens e destinos): serve para a lei do jitter, que não pode sortear.
+static func _selo_da_fila(fila: Array[Dictionary]) -> String:
+	var partes: PackedStringArray = []
+	for t in fila:
+		partes.append("%s>%s|%s" % [str(t["de"]), str(t["para"]), str(bool(t["aliado"]))])
+	return "|".join(partes)
 
 
 func _faixa_z(e: Esquadra, lado: String) -> Dictionary:
@@ -789,6 +895,162 @@ func _initialize() -> void:
 		absf(recuo_atras - (recuo_alvo - 30.0)) < 0.01 and absf(float(t._recuo_alvo())) < 0.001,
 		"linha nossa recuada 30 u -> recuo %.1f u; avancada 60 u -> recuo %.1f u (alvo de largada %.1f u)" % [
 			recuo_atras, t._recuo_alvo(), recuo_alvo])
+
+	# ── 11. cada bloco atira, e atira no bloco inimigo mais próximo ───────────────────────────
+	# O pedido do comandante foi literal: «todas as naves atirando ao mesmo tempo, cada bloco é uma
+	# frota que age independentemente; todas devem atirar no bloco inimigo mais próximo, a menos que
+	# eu dê a ordem de mudar o alvo». Três pontas, cada uma capaz de falhar sozinha: o ENGAJAMENTO (o
+	# alcance cobre a retaguarda da própria muralha no contato?), a ESCOLHA (o alvo é o bloco mais
+	# próximo de QUEM ATIRA, não um ponto comum no centro) e a ORDEM (concentrar converge, soltar
+	# volta a espalhar). A régua de escolha é conferida contra a distância mínima REAL, lida sem
+	# portão de alcance: com o portão dentro da conta, um bloco fora de alcance sairia "correto" por
+	# não atirar, e a asserção aprovaria a omissão em vez da escolha.
+	var f := _nova_esquadra()
+	var q_fogo := _marchar_ate_contato(f, nuc_a, nuc_h)
+	var armados := _armados(f)
+	var fogo := f.troca_salva()
+	var lancados := int(fogo.get("lancados", 0))
+	_assert("no contato a muralha inteira atira: todo bloco vivo e armado encontra alvo",
+		lancados == armados,
+		"%d lancados contra %d blocos armados, %d quadros de travessia, fachada %.1f u, alcance %.1f u" % [
+			lancados, armados, q_fogo, _fachadas(f), Esquadra.ALCANCE_DE_BLOCO])
+	var fila := f.pares_da_ultima_salva
+	_assert("a fila entregue ao desenho tem o tamanho exato do ledger", fila.size() == lancados,
+		"%d pares na fila contra %d lances cobrados" % [fila.size(), lancados])
+	var fora := 0
+	var pior_desvio := 0.0
+	for par in fila:
+		var origem: Dictionary = par["origem"]
+		var atingido: Dictionary = par["alvo"]
+		var do_lado := String(origem["lado"])
+		var minimo := _distancia_do_mais_proximo(origem,
+				f.lista_de("hostil" if do_lado == "aliado" else "aliado"))
+		var alcance_lance := (atingido["pos"] as Vector3).distance_to(origem["pos"])
+		pior_desvio = maxf(pior_desvio, alcance_lance - minimo)
+		if alcance_lance - minimo > 0.0001:
+			fora += 1
+	_assert("cada bloco escolhe o inimigo mais proximo dele, nao um ponto comum",
+		fora == 0 and lancados > 0,
+		"%d lances fora do proprio minimo, maior desvio %.4f u, %d lances na salva" % [
+			fora, pior_desvio, lancados])
+	var locais := _alvos_distintos(fila, "aliado")
+	_assert("o fogo local espalha: a salva aliada toca muitos blocos, nao um",
+		int(locais["distintos"]) > 1,
+		"%d lances aliados tocando %d alvos hostis distintos" % [
+			int(locais["lancados"]), int(locais["distintos"])])
+	# A ordem da ponte: um ponto do tabuleiro que NÃO é centro de bloco nenhum, três unidades a
+	# boreste da fachada hostil. Se a escolha fosse lida do centro do tabuleiro, este comando não
+	# moveria nada -- e é exatamente assim que a asserção de baixo desmente o fogo "ao centro".
+	var fachada_h := _faixa_z(f, "hostil")
+	var ponta := _bloco_mais_proximo_de(Vector3(PASSO_ESQUADRAO_X, ANDAR,
+			float(fachada_h["max"])), f.lista_de("hostil"))
+	var alvo_ordem := (ponta["pos"] as Vector3) + Vector3(3.0, 0.0, 0.0)
+	f.mandar_fogo(alvo_ordem)
+	var armados_agora := _armados(f)
+	var concentrado := f.troca_salva()
+	var fila_ordem := f.pares_da_ultima_salva
+	var c_locais := _alvos_distintos(fila_ordem, "aliado")
+	var c_hostil := _alvos_distintos(fila_ordem, "hostil")
+	# O índice tem guarda: o texto de detalhe de `_assert` é avaliado mesmo quando a condição passa,
+	# e um `[0]` sobre fila vazia derrubava a sonda antes do veredito — que é justamente o estado
+	# dela enquanto a lei de escolha não existir.
+	var visado := -1
+	if not fila_ordem.is_empty():
+		visado = int((fila_ordem[0]["alvo"] as Dictionary)["id"])
+	_assert("concentrando fogo, todo bloco aliado em alcance aponta para o MESMO bloco",
+		int(c_locais["distintos"]) == 1 and int(c_locais["lancados"]) > 1,
+		"%d lances aliados, %d alvo; visado=%d esperado=%d no ponto (%.1f, %.1f, %.1f)" % [
+			int(c_locais["lancados"]), int(c_locais["distintos"]), visado, int(ponta["id"]),
+			alvo_ordem.x, alvo_ordem.y, alvo_ordem.z])
+	_assert("a ordem e nossa, nao do inimigo: a muralha hostil continua atirando no proprio vizinho",
+		int(c_hostil["distintos"]) > 1,
+		"%d lances hostis tocando %d alvos aliados distintos" % [
+			int(c_hostil["lancados"]), int(c_hostil["distintos"])])
+	_assert("concentrar cobra preco: bloco fora de alcance do alvo unico nao atira",
+		int(concentrado.get("lancados", 0)) < armados_agora,
+		"%d lancados concentrados contra %d blocos armados (fogo local dava %d)" % [
+			int(concentrado.get("lancados", 0)), armados_agora, lancados])
+	f.soltar_fogo()
+	var solto := f.troca_salva()
+	var s_locais := _alvos_distintos(f.pares_da_ultima_salva, "aliado")
+	_assert("soltando a ordem, o fogo volta a ser um alvo por bloco",
+		int(s_locais["distintos"]) > 1,
+		"%d lances aliados voltando a %d alvos distintos, salva numero %d" % [
+			int(s_locais["lancados"]), int(s_locais["distintos"]), int(solto.get("salva", 0))])
+	_assert("o alcance e lido da geometria das duas muralhas, nao de habito",
+		is_equal_approx(Esquadra.ALCANCE_DE_BLOCO, 2.0 * Esquadra.FACHADA_DA_MURALHA \
+				+ Esquadra.DISTANCIA_DE_CONTATO + Esquadra.PASSO_ESQUADRAO_Y),
+		"alcance %.1f u = 2 x fachada %.1f + contato %.1f + andar %.1f" % [
+			Esquadra.ALCANCE_DE_BLOCO, Esquadra.FACHADA_DA_MURALHA, Esquadra.DISTANCIA_DE_CONTATO,
+			Esquadra.PASSO_ESQUADRAO_Y])
+
+	# ── 12. o lance da massa tem canal de desenho ────────────────────────────────────────────
+	# A lei aqui é o CANAL, não o pixel: sob `--headless` o `set_instance_transform` é descartado e a
+	# leitura volta identidade, então acender o visor é pergunta de `massa_visivel.gd`. O que dá para
+	# assinar de cabeça fria é que a fila armada espelha o ledger lance a lance, que ela varre a
+	# largura da muralha (não o meio do campo), que a ordem da ponte converge também no desenho, que o
+	# jitter não sorteia e que o pulso apaga a fila no impacto.
+	var q_ponte := _marchar_na_ponte(jogo)
+	var tr_no: MultiMeshInstance3D = jogo.massa_tracos
+	var tr_mm: MultiMesh = tr_no.multimesh
+	var mat_tr: StandardMaterial3D = tr_no.material_override
+	_assert("a salva da massa e um no com uma instancia por bloco, luminoso por material",
+		is_instance_valid(tr_no) and tr_mm.instance_count == TRACOS_MAXIMOS \
+				and tr_mm.transform_format == MultiMesh.TRANSFORM_3D and tr_mm.use_colors \
+				and mat_tr.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED \
+				and mat_tr.vertex_color_use_as_albedo,
+		"%d instancias para %d blocos, unshaded + cor por instancia, travessia de %d quadros" % [
+			tr_mm.instance_count, 2 * BLOCOS_POR_LADO, q_ponte])
+	var caixas := 0
+	for filho in jogo.get_children():
+		if filho is MultiMeshInstance3D:
+			caixas += 1
+	_assert("o preco de duzentos e quarenta lances visiveis e UM no a mais na cena", caixas == 4,
+		"%d MultiMeshInstance3D na cena (ceu + dois corpos da massa + tracos)" % caixas)
+	jogo.esquadra.soltar_fogo()
+	jogo._salva_da_massa()
+	var fila_mm: Array[Dictionary] = jogo._tracos_voando
+	var ledger_mm := int(jogo.esquadra.pares_da_ultima_salva.size())
+	_assert("todo lance cobrado tem um traco e todo traco tem um lance",
+		fila_mm.size() == ledger_mm and fila_mm.size() > 0,
+		"%d tracos armados contra %d pares do ledger na salva %d" % [
+			fila_mm.size(), ledger_mm, int(jogo.esquadra.salva_numero)])
+	var destinos := _faixa_x_dos_pontos(fila_mm, "para")
+	_assert("o fogo desenhado varre a largura da muralha hostil, nao o meio do campo",
+			float(destinos["max"]) - float(destinos["min"]) > 150.0,
+			"destinos entre x %.1f e %.1f u, %.1f u de largura coberta" % [
+				destinos["min"], destinos["max"], float(destinos["max"]) - float(destinos["min"])])
+	var boca_estavel := _selo_da_fila(fila_mm)
+	jogo._armar_tracos()
+	_assert("o jitter de boca nao sorteia: rearmar a mesma fila devolve os mesmos pontos",
+		boca_estavel == _selo_da_fila(jogo._tracos_voando),
+		"%d tracos rearmados com selo identico de %d caracteres" % [
+			jogo._tracos_voando.size(), boca_estavel.length()])
+	var fachada_j := _faixa_z(jogo.esquadra, "hostil")
+	var visado_j := _bloco_mais_proximo_de(Vector3(PASSO_ESQUADRAO_X, ANDAR,
+			float(fachada_j["max"])), jogo.esquadra.lista_de("hostil"))
+	jogo.esquadra.mandar_fogo((visado_j["pos"] as Vector3) + Vector3(3.0, 0.0, 0.0))
+	jogo._salva_da_massa()
+	_assert("concentrando pela ponte, o desenho converge: um destino so para a muralha aliada",
+		_pontos_distintos(jogo._tracos_voando, true) == 1 \
+				and int(jogo._tracos_voando.size()) > 1,
+		"%d tracos aliados, %d destino; o hostil segue com %d" % [
+			int(jogo._tracos_voando.size()), _pontos_distintos(jogo._tracos_voando, true),
+			_pontos_distintos(jogo._tracos_voando, false)])
+	jogo.esquadra.soltar_fogo()
+	jogo._salva_da_massa()
+	_assert("soltando a ordem, o desenho volta a ter um rumo por bloco",
+		_pontos_distintos(jogo._tracos_voando, true) > 1,
+		"%d tracos aliados espalhados em %d destinos" % [
+			int(jogo._tracos_voando.size()), _pontos_distintos(jogo._tracos_voando, true)])
+	jogo._atualizar_tracos(TRACO_SEG + 0.1)
+	_assert("o traco morre no impacto: sem salva nova nao ha lance novo no quadro",
+		jogo._tracos_voando.is_empty() and float(jogo._traco_t) >= 1.0,
+		"fila zerada apos %.2f s de voo, progresso %.2f" % [TRACO_SEG, float(jogo._traco_t)])
+	jogo._atualizar_tracos(1.0)
+	_assert("quadro escuro nao rearma sozinho: o pulso nao vira chuva continua",
+		jogo._tracos_voando.is_empty() and float(jogo._traco_t) >= 1.0,
+		"um segundo depois, %d tracos na fila" % jogo._tracos_voando.size())
 
 	print("SONDA-ESQUADRA: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for nota in notes:

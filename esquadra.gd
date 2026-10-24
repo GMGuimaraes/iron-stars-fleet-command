@@ -111,14 +111,22 @@ const MARCHA_DE_BLOCO := 6.0
 ## do golpe de um casco de linha: vinte blocos equivalem a ~4 cascos de linha de fogo, e a
 ## contagem da massa chega ao mesmo fim da contagem dos núcleos em dezenas de salvas, não em duas.
 const DANO_DE_BLOCO := 2.2
-## Alcance de linha de batalha. É o que faz o atrito ser LOCAL: só a faixa que encosta a faixa do
-## outro lado queima, e o bloco de retaguarda continua com as vinte casas — a vista que separa
-## "batalha massiva" de "todo mundo morrendo junto".
-const ALCANCE_DE_BLOCO := 60.0
 ## Distância de FACHADA em que a muralha hostil para de avançar. Tem de ser maior que zero para
-## bloco nenhum atravessar bloco, e menor que `ALCANCE_DE_BLOCO` para a frente queimar enquanto a
-## retaguarda continua inteira. É o freio da aproximação, não uma ordem do jogador.
+## bloco nenhum atravessar bloco, e o `ALCANCE_DE_BLOCO` é lido A PARTIR dela: a régua da geometria
+## amarra os dois números, então mover o contato move o alcance e a muralha inteira continua
+## atirando. É o freio da aproximação, não uma ordem do jogador.
 const DISTANCIA_DE_CONTATO := 40.0
+## Alcance de linha de batalha, LIDO DA GEOMETRIA DAS DUAS MURALHAS e não de hábito: no contato, o
+## centro de uma muralha fica a `2 × FACHADA_DA_MURALHA + DISTANCIA_DE_CONTATO` = 61,0 u do centro
+## da outra, e a retaguarda — a fileira mais afastada — herda exatamente essa conta. Um andar de
+## desnível (`PASSO_ESQUADRAO_Y`, a segunda dimensão do lado) soma-se a ela quando o bloco só tem
+## inimigo vivo no andar de cima, e é o teto honesto da régua: 73,0 u.
+##
+## Com o número de hábito, 60,0 u, a retaguarda ficava FORA do próprio alcance no contato: 60 dos
+## 240 blocos armados não achavam alvo, e a tela perdia um quarto do fogo — exatamente a queixa de
+## "não parece que todas as naves atiram ao mesmo tempo". Medido em `tools/probes/esquadra.gd`,
+## família 11: 180 lances contra 240 blocos armados.
+const ALCANCE_DE_BLOCO := 2.0 * FACHADA_DA_MURALHA + DISTANCIA_DE_CONTATO + PASSO_ESQUADRAO_Y
 ## Campo que a muralha hostil cruza na largada, em unidades de tabuleiro: para trás do centro dos
 ## próprios núcleos, ela nasce a esta distância e anda até o contato a `MARCHA_DE_BLOCO`. Com 130 u
 ## de recuo, a fachada começa a 154,0 u da nossa (medido em `tools/probes/esquadra.gd`, família 10)
@@ -155,6 +163,17 @@ var presas := 0
 ## Quantos blocos cruzaram para o outro lado NA SALVA que acabou de resolver: é o que
 ## `troca_salva` devolve, e é lido depois de `_prencher_rendicoes` consumir as marcas.
 var _rendidas_na_ultima_salva := 0
+## A fila de fogo da última salva, no formato que o desenho lê: `{"origem": Vector3, "alvo":
+## Vector3, "lado": String}` por lance. É espelho do ledger, não uma segunda conta: se o tamanho
+## divergir de `lancados`, a tela está mostrando fogo que a conta não cobrou -- ou escondendo fogo
+## que cobrou. Quem escreve é `troca_salva`, e quem lê é `_armar_tracos_da_massa` em `main.gd`.
+var pares_da_ultima_salva: Array[Dictionary] = []
+## Ordem do comandante sobre a massa: quando a ponte concentra fogo, os blocos aliados largam o
+## próprio vizinho e apontam todos para o bloco hostil mais próximo desta posição. É a única leitura
+## que a massa faz do jogo dos doze cascos, e é leitura de ORDEM, nunca de estado: nenhum `hp`,
+## nenhum índice de frota, nenhum sorteio entra aqui.
+var fogo_concentrado := false
+var alvo_comandado := Vector3.ZERO
 ## Quantas casas cada `MultiMesh` tem de fato escritas. A rendição encolhe uma lista, e a cauda que
 ## ela pintou fica órfã: sem este registro os vinte e quatro transformados do bloco que partiu
 ## continuariam no ar, um bloco fantasma pendurado na tela do lado que o perdeu. Sobrevive de
@@ -305,6 +324,11 @@ func montar(nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 	perdas_aliadas = 0
 	perdas_hostis = 0
 	presas = 0
+	# A ordem da ponte não herda de partida nenhuma, e a fila do desenho morre com a batalha velha:
+	# remonta sem isto seria a tela mostrar lances de blocos que já não existem.
+	fogo_concentrado = false
+	alvo_comandado = Vector3.ZERO
+	pares_da_ultima_salva = []
 	centro_aliado = _centro_de(nucleos_aliados)
 	centro_hostil = _centro_de(nucleos_hostis)
 	recuo_hostil = -float(CAMPO_DE_APROXIMACAO)
@@ -412,6 +436,51 @@ static func _mais_proximo(bloco: Dictionary, lista: Array[Dictionary]) -> Dictio
 	return melhor
 
 
+## O bloco vivo mais próximo de uma POSICAO, sem portão de alcance. É a leitura da ordem: o
+## comandante aponta um ponto do tabuleiro e a massa escolhe o adversário daquele ponto — quem
+## decide o alvo é a posição comandada, nunca a posição de quem atira.
+static func _vizinho_de(pos: Vector3, lista: Array[Dictionary]) -> Dictionary:
+	var melhor: Dictionary = {}
+	var melhor_d := INF
+	for c in lista:
+		if not bool(c["vivo"]):
+			continue
+		var d: float = (c["pos"] as Vector3).distance_to(pos)
+		if d < melhor_d:
+			melhor_d = d
+			melhor = c
+	return melhor
+
+
+## A lei de escolha do alvo. Regime de linha: cada bloco é uma frota e atira no próprio vizinho, e
+## é isto que espalha a salva pela muralha inteira em vez de convergir para o centro do campo.
+## Regime comandado — só nosso, só aliado: a ordem da ponte vale para todos os blocos, o alvo é o
+## MESMO (`visado`, resolvido uma única vez por salva), e o preço é a retaguarda: quem não alcança
+## o alvo único fica com as portas fechadas. A ordem é lida como ORDEM, nunca como estado dos doze
+## cascos, senão o ledger da massa passaria a depender do painel da ponte.
+static func _alvo_do_bloco(bloco: Dictionary, alvos: Array[Dictionary],
+		visado: Dictionary, comandado: bool) -> Dictionary:
+	if not comandado:
+		return _mais_proximo(bloco, alvos)
+	if visado.is_empty():
+		return {}
+	if (visado["pos"] as Vector3).distance_to(bloco["pos"]) > ALCANCE_DE_BLOCO:
+		return {}
+	return visado
+
+
+## Ordem da ponte: a massa aliada larga o próprio vizinho e concentra no bloco hostil mais próximo
+## desta posição. `soltar_fogo` devolve a esquadra ao regime de linha, um alvo por bloco.
+func mandar_fogo(posicao: Vector3) -> void:
+	fogo_concentrado = true
+	alvo_comandado = posicao
+
+
+func soltar_fogo() -> void:
+	fogo_concentrado = false
+	alvo_comandado = Vector3.ZERO
+
+
 ## A troca de salvas da massa. Fecha o ledger do bloco sem encostar no ledger dos doze cascos: a
 ## contagem que as sondas dos núcleos assinam não ganha uma linha, e é por isso que a massa é um
 ## segundo corpo no tabuleiro, não um multiplicador dos doze canhões que já existem.
@@ -427,12 +496,20 @@ func troca_salva() -> Dictionary:
 	var pares: Array[Dictionary] = []
 	for lado in ["aliado", "hostil"]:
 		var alvos := lista_de("hostil" if lado == "aliado" else "aliado")
+		# A ordem da ponte alcança só a nossa muralha; a hostil continua com a lei de linha e por
+		# isso o comando do jogador nunca muda o que o inimigo escolhe.
+		var comandado: bool = (String(lado) == "aliado") and fogo_concentrado
+		var visado := _vizinho_de(alvo_comandado, alvos) if comandado else {}
 		for b in lista_de(lado):
 			if not bool(b["vivo"]) or float(b["ARMAS"]) <= 0.0 or float(b["navios"]) <= 0.0:
 				continue
-			var alvo := _mais_proximo(b, alvos)
+			var alvo := _alvo_do_bloco(b, alvos, visado, comandado)
 			if not alvo.is_empty():
-				pares.append({"origem": b, "alvo": alvo})
+				pares.append({"origem": b, "alvo": alvo, "lado": lado})
+	# Espelho para o desenho: a mesma fila, na mesma ordem, com o lado de quem atira. É o único
+	# canal que a tela tem para saber de onde para onde saiu cada lance da massa, e ela não pode
+	# divergir do ledger nem por um par — `massa_visivel.gd` cobra os dois tamanhos iguais.
+	pares_da_ultima_salva = pares
 	for par in pares:
 		lancados += 1
 		var origem: Dictionary = par["origem"]

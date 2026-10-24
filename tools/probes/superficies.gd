@@ -47,11 +47,12 @@ const CHAPA_MEDIA_MAX := 1.0
 ## leitura de recurso, não de dúvida — 64 amostras já não perdem um bloco de 16 px.
 const AMOSTRA := 8
 ## Gabarito de uma montagem nova SEM cenário, medido nesta rodada em três montadas seguidas: 7 de
-## ambiente (WorldEnvironment, dois sóis, três malhas do fundo, o MultiMesh das estrelas) + DOIS
-## corpos da esquadra de blocos (um `MultiMeshInstance3D` por lado) + ponte + doze cascos +
-## CanvasLayer + PonteSonora = 24. O 25 que `tools/probes/geoide.gd` lê é esta mesma árvore com o
-## `cenario_root` do cenário montado, que é filho único e entra um por cenário.
-const FILHOS_DO_JOGO := 24
+## ambiente (WorldEnvironment, dois sóis, três malhas do fundo, o MultiMesh das estrelas) + TRÊS
+## nós da esquadra de blocos (dois `MultiMeshInstance3D` de casco, um por lado, mais o dos traços da
+## salva) + ponte + doze cascos + CanvasLayer + PonteSonora = 25. O 26 que `tools/probes/geoide.gd`
+## lê é esta mesma árvore com o `cenario_root` do cenário montado, que é filho único e entra um por
+## cenário.
+const FILHOS_DO_JOGO := 25
 ## Ponte montada SEM cenário: 125 filhos, inventariados um a um por posição nesta rodada. O gabarito
 ## é a medida, não uma soma esperada, e ela fecha com a partição por construtor: 72 do `_build_bridge`
 ## (soalho e teto, 20 de costado — três panos, duas janelas com verga e peitoril e o filete corrido

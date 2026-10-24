@@ -39,9 +39,18 @@ extends SceneTree
 ##    variou de 3,9 a 11,9 entre rodadas, o que faria um portão reprovar por barulho. Trinta e duas
 ##    acomoda a variação e ainda quebra alto se a esquadra deixar de ser lote. "Dois draw calls",
 ##    como prometiam os cabeçalhos antigos, é falso.
+## 6) A SALVA É DESENHADA NO QUADRO INTEIRO, NÃO NO MEIO DO CAMPO. O ledger de
+##    `tools/probes/esquadra.gd` família 12 prova contabilidade; o que falta provar é pixel, e pixel
+##    só existe aqui. A ponte olha o campo pelo eixo do voo, então um lance que anda em `z` quase não
+##    muda de tamanho na tela: o que a lente vê é uma fila de pontos que encolhem, não um risco
+##    comprido. A régua é coluna por coluna — o MAIOR ganho de luminância entre o quadro com o nó dos
+##    traços ligado e o MESMO quadro congelado com ele desligado, a salva parada em 45% do voo. Vinte
+##    lances no centro acendem um punhado de colunas no meio; duzentos e quarentas acendem uma faixa
+##    larga, e as duas situações não se confundem nem por ruído. O preço continua sendo UM nó: as
+##    primitivas do quadro sobem com a salva no ar e as chamadas de desenho, não.
 ##
 ## Uso (janela real, sem --headless):
-##   godot --path . --quit-after 4000 -s res://tools/probes/massa_visivel.gd
+##   godot --path . --quit-after 6000 -s res://tools/probes/massa_visivel.gd
 
 const Esquadra := preload("res://esquadra.gd")
 
@@ -78,6 +87,34 @@ const TETO_MS := 8.0
 ## Compatibility fizer). Trinta e duas é o teto que acomoda essa variação e ainda quebra alto se a
 ## massa deixar de ser lote.
 const DESENHOS_TETO := 32.0
+## ---- Leis da salva desenhada (lei 6) ----
+## Grade da varredura, em pixels. Um traço de 0,55 u a 60 u da lente tem poucos pixels de boca e a
+## varredura não pode amostrar mais grosso que isso sem perder lance.
+const PASSO_VARREDURA := 2
+## Ganho de luminância que conta como pixel de traço. O céu estrelado, sozinho, não chega aqui: os
+## dois quadros da régua são o MESMO tabuleiro congelado, com um nó ligado ou desligado.
+const PISTA_MINIMA := 0.03
+## Fração da largura do visor que os lances têm de varrer. É o número que responde à queixa: fogo só
+## no centro deixa as bordas escuras e a varredura cai para um terço do quadro. O teto natural não é
+## 1,0: o painel do holograma cobre o terço esquerdo da janela, e a régua mede o que o comandante vê.
+const TRACO_VARREDURA_MIN := 0.45
+## Fração das colunas varridas que precisa estar acesa. Cada traço cobre uma ou duas colunas da
+## grade e os blocos de uma mesma vertical se sobrepõem em x, então o teto natural é bem abaixo de
+## um por bloco; dez por cento é dezenas de lances lendo no quadro.
+const TRACO_COLUNAS_MIN := 0.10
+## Onde estacionar o voo para a foto: 45% é o meio do campo, longe das duas bocas e do impacto.
+const TRACO_T_DE_LEITURA := 0.45
+## Distância da leitura, em u atrás do centro da muralha aliada. É a pose da ponte, não um drone:
+## ver a asserção do enquadramento.
+const DISTANCIA_DA_LEITURA := 60.0
+## Teto de chamadas de desenho dos duzentos e quarentas traços. Um nó por lance cobraria 240; em
+## lote o que se paga é uma passada, mais o que o tonemapping quiser.
+const TRACOS_DESENHOS_TETO := 12.0
+## Primitivas mínimas que o nó dos traços acrescenta ao quadro: 240 instâncias de doze triângulos
+## cada, com folga. É o nó submetido ao renderizador, não o pixel — o pixel é a lei de cima.
+const TRACO_PRIM_MIN := 2400.0
+## Quantos segundos de marcha a sonda pode simular antes de desistir de chegar ao alcance.
+const MARCHA_MAXIMA := 120
 
 var breaks := 0
 var notes: Array[String] = []
@@ -217,6 +254,49 @@ func _media_luz(img: Image) -> float:
 func _salvar(img: Image, nome: String) -> void:
 	var caminho := OUT + nome + ".png"
 	img.save_png(caminho)
+
+## Vão de z entre as duas fachadas: a frente aliada mais adiantada contra a frente hostil mais
+## adiantada. É o que a marcha precisa fechar antes de a salva ter com quem falar.
+static func _vao_das_fachadas(e) -> float:
+	var aliado := INF
+	var hostil := -INF
+	for b in e.lista_de("aliado"):
+		if bool(b["vivo"]):
+			aliado = minf(aliado, float((b["pos"] as Vector3).z))
+	for b in e.lista_de("hostil"):
+		if bool(b["vivo"]):
+			hostil = maxf(hostil, float((b["pos"] as Vector3).z))
+	if aliado == INF or hostil == -INF:
+		return INF
+	return aliado - hostil
+
+## A régua da salva: coluna por coluna, o maior ganho de luminância entre o quadro com traços e o
+## quadro sem. Devolve quantas colunas acenderam e a faixa de x que elas cobrem, em fração do visor.
+func _varredura(com: Image, sem: Image) -> Dictionary:
+	var largura := com.get_width()
+	var altura := com.get_height()
+	var colunas := 0
+	var total := 0
+	var primeira := -1
+	var ultima := -1
+	var pico := 0.0
+	for x in range(0, largura, PASSO_VARREDURA):
+		total += 1
+		var melhor := 0.0
+		for y in range(0, altura, PASSO_VARREDURA):
+			var ganho := _luz(com, Vector2(x, y)) - _luz(sem, Vector2(x, y))
+			melhor = maxf(melhor, ganho)
+		pico = maxf(pico, melhor)
+		if melhor >= PISTA_MINIMA:
+			colunas += 1
+			if primeira < 0:
+				primeira = x
+			ultima = x
+	var varredura := 0.0
+	if primeira >= 0:
+		varredura = float(ultima - primeira) / float(maxi(largura - 1, 1))
+	return {"colunas": colunas, "total": total, "varredura": varredura, "pico": pico,
+		"primeira": primeira, "ultima": ultima}
 
 func _initialize() -> void:
 	print("SONDA-MASSA-VISIVEL: comecando")
@@ -391,10 +471,79 @@ func _initialize() -> void:
 				boca_largo, graus_largo, boca_fechado, graus_fechado,
 				largo.get_width(), largo.get_height()])
 
+	# ── 3. a salva desenhada: o quadro em que a muralha inteira atira ──────────────────────────
+	# O portão tem de ser preparado, não assumido. No primeiro quadro as fachadas estão a 130 u uma
+	# da outra e o alcance de 73 u não alcança nada: armar salva em campo vazio devolve zero pares e
+	# um quadro escuro, e escuro por falta de alvo é indistinguível de escuro por traço invisível.
+	# Então a sonda remonta a esquadra, anda as muralhas com `passo` (que marcha e não atira, não
+	# gasta um casco) até o vão caber no alcance, arma a salva à mão e congela o voo em 45%.
+	jogo._remontar_esquadras()
+	var andados := 0
+	while andados < MARCHA_MAXIMA:
+		if _vao_das_fachadas(jogo.esquadra) <= Esquadra.DISTANCIA_DE_CONTATO + 1.0:
+			break
+		jogo._atualizar_esquadras(1.0)
+		andados += 1
+	var vao_final := _vao_das_fachadas(jogo.esquadra)
+	# A leitura é feita da pose da ponte, não de um drone. Medido nesta rodada: a 133 u de recuo o
+	# campo inteiro cabe no visor, cada bloco vira um ponto de dois pixels e a régua de colunas acha
+	# quatro — ela aprovaria um fogo invisível só por estar longe. A 60 u, que é a distância a que o
+	# comandante vê a muralha na partida, o traço de 0,55 u mede de três a seis pixels e é essa a
+	# tela que as leis abaixo cobram. O deslocamento fixo entre o rig e a lente é descontado porque a
+	# posição que manda no enquadramento é a da câmara, não a do nó.
+	var desloc: Vector3 = cam.global_position - (jogo.bridge_rig as Node3D).global_position
+	jogo.bridge_rig.rotation = Vector3.ZERO
+	jogo.bridge_rig.global_position = (jogo.esquadra.centro_aliado as Vector3 \
+		+ Vector3(0.0, 6.0, DISTANCIA_DA_LEITURA)) - desloc
+	jogo.campo_zoom = 0.0
+	jogo._update_bridge(0.0)
+	jogo._salva_da_massa()
+	jogo._traco_t = TRACO_T_DE_LEITURA
+	jogo._pintar_tracos()
+	await _frames(4)
+	var com_tracos := get_root().get_texture().get_image()
+	_salvar(com_tracos, "salva_voando")
+	var lances := int(jogo.esquadra.pares_da_ultima_salva.size())
+	var caros := await _medir_quadros(QUADROS_FPS)
+	jogo.massa_tracos.visible = false
+	await _frames(3)
+	var sem_tracos := get_root().get_texture().get_image()
+	_salvar(sem_tracos, "salva_apagada")
+	var baratos := await _medir_quadros(QUADROS_FPS)
+	jogo.massa_tracos.visible = true
+	var fogo := _varredura(com_tracos, sem_tracos)
+	var custo_primitivas := float(caros["primitivas"]) - float(baratos["primitivas"])
+	var custo_desenhos_traco := float(caros["desenhos"]) - float(baratos["desenhos"])
+	_assert("a marcha chegou ao alcance: sem par no ledger não ha o que desenhar",
+		lances >= 200,
+		"%d lances no ledger depois de %d s de marcha, vão das fachadas %.1f u contra alcance %.1f u"
+		% [lances, andados, vao_final, Esquadra.ALCANCE_DE_BLOCO])
+	_assert("apagar o nó dos traços apaga pixels: a salva está desenhada, nao apenas contada",
+		float(fogo["colunas"]) >= float(fogo["total"]) * TRACO_COLUNAS_MIN
+			and fogo["pico"] >= PISTA_MINIMA,
+		"%d de %d colunas varridas acendem (%.1f%% do quadro), pico de ganho %.3f contra piso %.2f"
+		% [fogo["colunas"], fogo["total"], 100.0 * float(fogo["colunas"]) / float(fogo["total"]),
+			fogo["pico"], PISTA_MINIMA])
+	_assert("o fogo varre a largura do visor, nao so o meio do campo",
+		fogo["varredura"] >= TRACO_VARREDURA_MIN,
+		"aceso de x=%d a x=%d num quadro de %d px (%.0f%% da largura), %d lances no ledger"
+		% [fogo["primeira"], fogo["ultima"], com_tracos.get_width(),
+			100.0 * float(fogo["varredura"]), lances])
+	_assert("o nó dos traços é submetido ao renderizador com a salva no ar",
+		custo_primitivas >= TRACO_PRIM_MIN,
+		("%.0f primitivas por quadro com a salva no ar contra %.0f apagada (%+.0f por quadro, "
+		+ "piso %.0f = 240 caixas de 12 triângulos)") % [caros["primitivas"],
+			baratos["primitivas"], custo_primitivas, TRACO_PRIM_MIN])
+	_assert("o preco de duzentos e quarentas lances no ar e uma passada de desenho",
+		custo_desenhos_traco >= 0.0 and custo_desenhos_traco <= TRACOS_DESENHOS_TETO,
+		("%.1f chamadas por quadro com a salva no ar contra %.1f com ela apagada; um nó por lance "
+		+ "custaria 240") % [caros["desenhos"], baratos["desenhos"]])
+
 	print("SONDA-MASSA-VISIVEL: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for nota in notes:
 		print(nota)
-	print("SONDA-MASSA-VISIVEL: quadros salvos em %s (massa_largo, massa_zoom, massa_apagada)" % OUT)
+	print(("SONDA-MASSA-VISIVEL: quadros salvos em %s (massa_largo, massa_zoom, massa_apagada, "
+		+ "salva_voando, salva_apagada)") % OUT)
 	quit(1 if breaks > 0 else 0)
 
 static func img_boca_min(img: Image) -> float:
