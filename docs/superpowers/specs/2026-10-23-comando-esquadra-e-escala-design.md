@@ -140,6 +140,18 @@ Custo: `movimento_tomado` vira integração em vez de `move_toward`, e isso move
 "formação custa tempo de locomoção" e o tempo de cada salva. Teste: A/B de tempo até o destino
 por classe, giro limitado (nada de rotar 180° em um quadro), e a ré medindo menos que a proa.
 
+**Fechada em 2026-10-24.** A lei mora em `res://voo.gd` (142 linhas, sete funções puras) e o
+estado é `vel`/`rumo`/`giro` por unidade. Os três testes pedidos existem e são medidos: o tempo
+até o destino por classe (cruzador **120 quadros** contra encouraçado **300** na mesma marcha
+contratada, e meia-volta **235 quadros = 3,92 s** contra **8,93 s** de encouraçado), o giro limitado (nenhum quadro gira mais que
+`giro_maximo × delta` — **0,013333 rad** contra **0,013333** do teto) e a ré menor que a proa
+(**72,07 / 34,41 / 19,52 u** nos três eixos em seiscentos quadros, estado estacionário
+**8,0000 / 3,6000 / 2,0000 u/s**). O custo profetizado venceu como profetizado: a formação de
+48,62 u passou de 61 para **79 quadros** e a travessia da massa de **19,0 s** para **20,2 s**
+(1 210 quadros) — números que as sondas de `formacao.gd` (46 conferências) e `esquadra.gd`
+agora contam em vez de assumir. A inércia continua jurada: **1 210 quadros** deixam `rng` e
+`visual_rng` byte a byte intactos e **0** dos 12 cascos tiveram `hp` escrito pela lei.
+
 ## 4. Fatia 3 — escudo com durabilidade
 
 Não existe nenhuma camada além de `hp` no jogo (zero ocorrência de `shield`/`escudo`/`armadura`

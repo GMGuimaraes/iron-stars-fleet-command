@@ -167,6 +167,11 @@ func _initialize() -> void:
 	var fugitiva: Node3D = game.enemies[4]["node"]
 	var morta: Node3D = game.enemies[1]["node"]
 	var z_morta := morta.position.z
+	# A muralha agora chega ao fundo de ré em poucos quadros (ré de casco, não de roteiro), e no
+	# quadro desta medida a linha de reunião já estava consumida: um casco colado em z = -92 não pode
+	# afastar mais, e a régua leria o fundo do mapa em vez da ordem. Se põe a fuga no meio do campo
+	# de retirada antes de medir um quadro — a seção 10 continua provando o fundo por fora.
+	fugitiva.position = Vector3(fugitiva.position.x, fugitiva.position.y, -70.0)
 	var z_antes := fugitiva.position.z
 	game._update_fleet(1.0)
 	_assert("recuo afasta do jogador", fugitiva.position.z < z_antes,

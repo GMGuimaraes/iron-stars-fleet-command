@@ -36,6 +36,11 @@ const DIAMETRO_CASCO := 4.8
 const AGRUPAR_RAIO := 5.5
 const DISPERSAR_RAIO := 16.5
 const VELOCIDADE_MOVER := 8.0
+## Espelhos das constantes de `main.gd` que esta sonda lê: a marcha da linha de batalha, a
+## aceleração do cruzador (régua do arranque) e a folga de passo derivada em `tools/probes/voo.gd`.
+const MARCHA_DE_LINHA := 1.2
+const ACELERACAO_CRUZADOR := 4.0
+const FOLGA_PASSO := 0.00003
 const PASSO := 0.1
 
 const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "ARMAMENTO", "REPAROS",
@@ -79,13 +84,19 @@ func _espalhar(game) -> void:
 			(float(i) - 2.5) * 24.0, 0.0, -40.0 + float(i % 2) * 30.0)
 
 func _zerar(game) -> void:
-	for list in [game.fleet, game.enemies]:
+	for side in ["aliado", "hostil"]:
+		var list = game.fleet if side == "aliado" else game.enemies
 		for unit in list:
 			unit["hp"] = 100.0
 			unit["engines"] = 100.0
 			unit["weapons"] = 100.0
 			unit["crew"] = 100.0
 			unit["veloc"] = Vector3.ZERO
+			# Estado da lei, não só do cenário: sem zerar `vel`, a medição herdaria o embalo da
+			# família anterior e o quadro medido não seria o quadro que a ordem abriu.
+			unit["vel"] = Vector3.ZERO
+			unit["rumo"] = 0.0 if side == "aliado" else PI
+			unit["giro"] = 0.0
 
 func _navega(game, quadros: int, com_colisao: bool) -> void:
 	for i in range(quadros):
@@ -116,6 +127,23 @@ func _faltam(game, i: int) -> float:
 	if not unit.has("destination"):
 		return INF
 	return node.position.distance_to(unit["destination"])
+
+## Um quadro da lei medido como deslocamento real do nó — o passo do casco, não a redução de rota,
+## que o timão ainda não alinhado desconta.
+func _passo_de(game, i: int) -> float:
+	var node: Node3D = game.fleet[i]["node"]
+	var partida: Vector3 = node.position
+	game._update_fleet(PASSO)
+	return partida.distance_to(node.position)
+
+
+## Maior passo de um casco em `quadros` de trânsito: a marcha cravada da classe, lida no regime
+## permanente. A rampa fica fora por construção — ela só pode dar passo menor.
+func _passo_max(game, i: int, quadros: int) -> float:
+	var maior := _passo_de(game, i)
+	for q in range(quadros - 1):
+		maior = maxf(maior, _passo_de(game, i))
+	return maior
 
 ## Botões de comando de um corpo de grupo (os cabeçalhos não contam: são do corpo de cima).
 func _botoes(game, nome: String) -> Array[Button]:
@@ -356,12 +384,7 @@ func _initialize() -> void:
 			iguais += 1
 	_assert("a ordem não teletransporta ninguém", iguais == 6,
 		"%d/6 cascos parados no quadro da ordem" % iguais)
-	var passo_real := 0.0
-	var partida := (game.fleet[0]["node"] as Node3D).position
-	game._update_fleet(PASSO)
-	passo_real = partida.distance_to((game.fleet[0]["node"] as Node3D).position)
-	_assert("um quadro de motor anda 0,80 u no dispersar", _igual(passo_real, 0.8, 0.0001),
-		"%.4f u no quadro" % passo_real)
+	var passo_max := 0.0
 	_navega(game, 20, false)
 	var em_transito := 0
 	for i in range(6):
@@ -369,7 +392,13 @@ func _initialize() -> void:
 			em_transito += 1
 	_assert("vinte quadros depois ainda há quem esteja a caminho", em_transito == 6,
 		"%d/6 em trânsito" % em_transito)
-	_navega(game, 180, false)
+	passo_max = _passo_max(game, 0, 120)
+	# A régua é o maior passo do trânsito, não o quadro um: o quadro um é a rampa da classe
+	# (aceleracao x delta = 0,040 u) e mediria o arranque em vez da marcha do motor.
+	_assert("a marcha do dispersar é a do motor: 0,80 u por quadro",
+		_igual(passo_max, VELOCIDADE_MOVER * PASSO, FOLGA_PASSO),
+		"%.5f u de maior passo contra %.5f contratados" % [passo_max, VELOCIDADE_MOVER * PASSO])
+	_navega(game, 61, false)
 	var no_posto := 0
 	var pior_fim := 0.0
 	for i in range(6):
@@ -441,18 +470,25 @@ func _initialize() -> void:
 			centro_alfa.x, centro_alfa.z])
 	game.selection_scope = "FROTA"
 
-	# 14 — Ordem nova desliga o destino velho: o timão é a ordem, não a presença do número.
+	# 14 — Ordem nova desliga o destino velho: o timão é a ordem, não a presença do número. Com a lei
+	# de voo, desligar tem dois tempos — primeiro o casco ancora o empuxo lateral da ordem anterior na
+	# própria aceleração (0,4 u/s por quadro), depois anda a marcha da linha. Medir o quadro um
+	# mediria a inércia da ordem velha, não a obediência à nova.
 	game._give_order("AVANÇAR")
 	var adiante := (game.fleet[0]["node"] as Node3D).position
-	var z_antes := adiante.z
-	var x_antes := adiante.x
 	_assert("a nova ordem reescreve a ordem da unidade",
 		String(game.fleet[0]["order"]) == "AVANÇAR", str(game.fleet[0]["order"]))
-	game._update_fleet(PASSO)
+	_navega(game, 60, false)
+	var antes_linha := (game.fleet[0]["node"] as Node3D).position
+	_navega(game, 10, false)
 	var depois := (game.fleet[0]["node"] as Node3D).position
+	var z_da_linha := MARCHA_DE_LINHA * 10.0 * PASSO
 	_assert("com a ordem trocada o destino velho fica guardado",
-		absf(depois.z - (z_antes - 0.12)) < 0.0001 and _igual(depois.x, x_antes, 0.0001),
-		"z %.4f -> %.4f (avançar) com x parado" % [z_antes, depois.z])
+		_igual(antes_linha.z - depois.z, z_da_linha, FOLGA_PASSO)
+			and _igual(depois.x, antes_linha.x, FOLGA_PASSO),
+		"z %.4f -> %.4f em 10 quadros (%.4f u/quadro contra %.4f da linha) com x parado (%.6f)" % [
+			antes_linha.z, depois.z, (antes_linha.z - depois.z) / 10.0, MARCHA_DE_LINHA * PASSO,
+			depois.x - antes_linha.x])
 
 	# 15 — Seleção unitária: um casco não tem anel, tem o próprio centro. Divide por zero na
 	# mesma fórmula que os seis passam.
@@ -464,8 +500,8 @@ func _initialize() -> void:
 	var solo: Dictionary = game.fleet[1]
 	var corpo_solo: Node3D = game.fleet[1]["node"]
 	# Centro de uma seleção de um casco é o próprio casco — o destino tem de ser onde ele já está,
-	# e não o Vector3(2,5, -38) que a sonda chutou na primeira rodada (a seção 14 já tinha movido o
-	# casco 0,12 u para ré, e um número cravado aqui mediria a sonda, não o jogo).
+	# e não o Vector3(2,5, -38) que a sonda chutou na primeira rodada (a seção 14 já tinha andado o
+	# casco para ré com a marcha da linha, e um número cravado aqui mediria a sonda, não o jogo).
 	_assert("a ordem unitária fecha em destino único",
 		solo.has("destination") and (solo["destination"] as Vector3) == corpo_solo.position,
 		"destino %s sobre o casco %s" % [str(solo.get("destination")), str(corpo_solo.position)])

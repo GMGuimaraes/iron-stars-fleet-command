@@ -99,10 +99,19 @@ const FOGO_LETAL := 3.2
 ## linha). O porta-aviões faz o mesmo negócio na outra ponta: vende 0,6 do canhão para pôr três
 ## agulhas no ar. Por isso as duas escadas são reversíveis dígito a dígito: descer um degrau devolve
 ## exatamente o quadro de antes, sem que ninguém precise guardar um "antes".
+## Cada degrau da escada também é uma ficha de voo (fatia 2): `aceleracao` em u/s², `giro_maximo` em
+## rad/s de timão, e `traves` / `re` como fração do teto do próprio casco, sempre `re < traves < proa`.
+## O peso paga nos dois primeiros eixos — o encouraçado leva 5,0 s para alcançar a marcha e 8,9 s para
+## virar de bordo, contra 2,0 s e 3,9 s do cruzador — e paga nos dois últimos: ré de 20% e través de
+## 35% da marcha, onde o cruzador tem 25% e 45%. A escada continua reversível dígito a dígito: estes
+## quatro números não compram casco novo nem tiram casco velho, só tiram o instantâneo do manobrar.
 const CLASSES := {
-	"CRUZADOR": {"nome": "cruzador", "armas": 1.0, "velocidade": 1.0, "missoes": 0, "cacas": 0},
-	"BATALHA": {"nome": "encouraçado", "armas": 0.6, "velocidade": 0.6, "missoes": 2, "cacas": 0},
-	"PORTAAVIOES": {"nome": "porta-aviões", "armas": 0.4, "velocidade": 0.75, "missoes": 0, "cacas": 3},
+	"CRUZADOR": {"nome": "cruzador", "armas": 1.0, "velocidade": 1.0, "missoes": 0, "cacas": 0,
+		"aceleracao": 4.0, "giro_maximo": 0.8, "traves": 0.45, "re": 0.25},
+	"BATALHA": {"nome": "encouraçado", "armas": 0.6, "velocidade": 0.6, "missoes": 2, "cacas": 0,
+		"aceleracao": 1.6, "giro_maximo": 0.35, "traves": 0.35, "re": 0.2},
+	"PORTAAVIOES": {"nome": "porta-aviões", "armas": 0.4, "velocidade": 0.75, "missoes": 0,
+		"cacas": 3, "aceleracao": 2.0, "giro_maximo": 0.5, "traves": 0.4, "re": 0.22},
 }
 ## Teto da escada de encouraçados: quatro dos seis cascos do cadastro. Converter a linha inteira
 ## deixaria a esquadra sem escolta e sem reserva, e uma frota de casco lento que não alcança o
@@ -416,6 +425,26 @@ const RigTripulante := preload("res://tripulante_rig.gd")
 ## e os dois `MultiMeshInstance3D` da ponte são a única geometria dela. Nada que ela faz toca
 ## `rng`: a prova é `tools/probes/esquadra.gd`.
 const Esquadra := preload("res://esquadra.gd")
+## Lei de voo: o quadro de integração que todo corpo obedece (casco de linha, hostil e bloco da
+## massa). É folha de conta, não nó de cena — estado entra, estado sai, nenhum sorteio e nenhuma
+## escrita de cena. A ficha de cada classe mora em `CLASSES` e a da massa em `Voo.FICHA_BLOCO`.
+const Voo := preload("res://voo.gd")
+## As quatro marchas das ordens, em u/s de casco com motor cheio. Eram números inline na cadeia de
+## `_update_fleet`; com a lei de voo viram a cota do envelope, e por isso precisam de nome: `re` e
+## `traves` da ficha são frações *destes* tetos, e sem teto nomeado não há como conferir que a ré
+## custa menos que a proa. `MARCHA_DE_NAVEGACAO` é a marcha de quem persegue um posto (clique,
+## formação, dispersão) e é também o teto contra o qual a ré é medida — fundo de máquina a ré rende
+## `re × 8,0`, ou seja 2,0 u/s num cruzador e 1,6 num encouraçado. `MARCHA_DE_LINHA` e
+## `MARCHA_HOSTIL_DE_LINHA` são o passo de muralha: a linha anda, não corre.
+const MARCHA_DE_NAVEGACAO := 8.0
+const MARCHA_DE_ABORDAGEM := 2.2
+const MARCHA_DE_LINHA := 1.2
+const MARCHA_HOSTIL_DE_LINHA := 0.85
+## O rumo de cada lado da linha: a frota aliada olha para -z (para dentro do campo) e a muralha
+## hostil olha para +z (para fora dela, de frente para o jogador). É atitude de nascença, não ordem:
+## quem nasce com o rumo trocado leva a meia-volta no tempo do próprio timão.
+const RUMO_ALIADO := 0.0
+const RUMO_HOSTIL := PI
 ## Os dois degraus do zoom de campo. `PONTE_FOV` é o número com que a câmara nasce (78°, a sala
 ## inteira no quadro); `CAMPO_FOV` é o teleobjetivo que faz uma casa de 1,6 u ocupar meia tela a
 ## 40 u. O zoom fecha a FOV da MESMA câmara filha: nenhuma câmera nova, nenhuma sala nova, o
@@ -2110,7 +2139,7 @@ func _build_fleets() -> void:
 		var z := -38.0 - (i % 2) * 5.0
 		var ship := _make_ship(Vector3(x, visual_rng.randf_range(-2, 2), z), BLUE,
 			1.1 + float(i % 3) * 0.06, "ALIADA %02d" % (i + 1), false, i, i % 4)
-		fleet.append({"node": ship, "order": "LINHA", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "repair_priority": "AUTO", "team": "friendly", "name": "ALIADA %02d" % (i + 1), "squadron": "ALFA" if i < 3 else "BETA", "classe": "CRUZADOR"})
+		fleet.append({"node": ship, "order": "LINHA", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "repair_priority": "AUTO", "team": "friendly", "name": "ALIADA %02d" % (i + 1), "squadron": "ALFA" if i < 3 else "BETA", "classe": "CRUZADOR", "vel": Vector3.ZERO, "rumo": RUMO_ALIADO, "giro": 0.0})
 	for i in range(6):
 		var x := (float(i) - 2.5) * 6.0
 		var z := -82.0 - (i % 2) * 7.0
@@ -2118,7 +2147,7 @@ func _build_fleets() -> void:
 		var ship := _make_ship(Vector3(x, visual_rng.randf_range(-3, 3), z), RED,
 			1.55 if is_command else 1.3, "HOSTIL %02d" % (i + 1), is_command, i + 6,
 			1 if is_command else (i + 6) % 4)
-		enemies.append({"node": ship, "order": "AVANÇAR", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "team": "enemy", "name": "CAPITÂNIA HOSTIL" if is_command else "HOSTIL %02d" % (i + 1), "squadron": "INIMIGO", "role": "COMANDO" if is_command else "LINE"})
+		enemies.append({"node": ship, "order": "AVANÇAR", "hp": 100.0, "max_hp": 100.0, "engines": 100.0, "weapons": 100.0, "crew": 100.0, "repair": 0.0, "team": "enemy", "name": "CAPITÂNIA HOSTIL" if is_command else "HOSTIL %02d" % (i + 1), "squadron": "INIMIGO", "role": "COMANDO" if is_command else "LINE", "vel": Vector3.ZERO, "rumo": RUMO_HOSTIL, "giro": 0.0})
 
 ## Os quatro setores do casco, na mesma ordem e com o mesmo nome do seletor de subsistema do painel
 ## (`TRIPULAÇÃO` do seletor vira `TRIPULACAO` no nó, porque nome de nó não leva cedilha). O pedido
@@ -3833,6 +3862,57 @@ func _update_capital_ship(delta: float) -> void:
 	bridge_rig.position.z = clampf(bridge_rig.position.z, MAP_Z_FAR, MAP_Z_NEAR)
 	capital_velocity = (bridge_rig.position - anterior) / maxf(delta, 0.0001)
 
+## Ficha de voo do casco, lida da classe. O hostil não tem degrau de bateria declarado, então
+## `_classe_de` dele devolve CRUZADOR e ele voa no envelope de cruzador — é o piso honesto: sem
+## classe, sem peso, e a sonda que mede anisotropia lê o mesmo número que a ponte obedece.
+func _ficha_de_voo(unit: Dictionary) -> Dictionary:
+	var origem: Dictionary = CLASSES[_classe_de(unit)]
+	return {"aceleracao": float(origem["aceleracao"]), "giro_maximo": float(origem["giro_maximo"]),
+		"traves": float(origem["traves"]), "re": float(origem["re"])}
+
+
+## Um quadro da lei gravado no dicionário e no nó. `vel` é o empuxo que a lei integra; `veloc` é a
+## diferença real do quadro, escrita logo abaixo, porque o cenário e a colisão ainda empurram casco
+## por fora e uma velocidade inventada por dentro mentiria sobre o que aconteceu na tela.
+func _gravar_voo(ship: Node3D, unit: Dictionary, voo: Dictionary) -> void:
+	ship.position = voo["pos"] as Vector3
+	unit["vel"] = voo["vel"]
+	unit["rumo"] = voo["rumo"]
+	unit["giro"] = voo["giro"]
+
+
+## Ordem de navegação: o casco vai até o posto pela lei — gira no timão, arranca na `aceleracao` da
+## classe, freia na chegada e pousa em cima do destino. É o caminho de tudo que tem posto absoluto:
+## clique, formação, dispersar, agrupar, abordar.
+func _pilotar(ship: Node3D, unit: Dictionary, posto: Vector3, teto: float, delta: float) -> void:
+	var voo := Voo.marchar(ship.position, unit.get("vel", Vector3.ZERO) as Vector3,
+		float(unit.get("rumo", RUMO_ALIADO)), posto, delta, teto, _ficha_de_voo(unit))
+	_gravar_voo(ship, unit, voo)
+
+
+## Empuxo com curso comandado, para as ordens que não têm destino absoluto: a linha de batalha pede
+## uma direção e uma marcha, e a lei decide quanto disso o envelope do casco entrega — o fundo de
+## máquina a ré rende `re` do teto, não o teto. `rumo_alvo` é a atitude da linha: perder a fachada do
+## inimigo é o que faz um casco desviado para través ter de se recompor antes de voltar a avançar.
+func _empuxar(ship: Node3D, unit: Dictionary, vetor: Vector3, rumo_alvo: float, teto: float,
+		delta: float) -> void:
+	var voo := Voo.quadro(ship.position, unit.get("vel", Vector3.ZERO) as Vector3,
+		float(unit.get("rumo", RUMO_ALIADO)), vetor, rumo_alvo, delta, teto, _ficha_de_voo(unit))
+	_gravar_voo(ship, unit, voo)
+
+
+## Contabilidade dos três servos de eixo (escolta, reserva, reconhecimento): eles escrevem posição
+## direto porque são geografia de formação, não navegação — não têm um posto em três dimensões a
+## perseguir, têm uma coordenada para segurar. A lei entra neles só para o casco continuar com estado
+## de voo finito, e o empuxo declarado passa a ser a própria passada do quadro, que é o máximo que se
+## pode afirmar sobre um servo sem inércia.
+func _servo(ship: Node3D, unit: Dictionary, partida: Vector3, delta: float) -> void:
+	var real := (ship.position - partida) / maxf(delta, 0.0001)
+	unit["vel"] = real
+	unit["rumo"] = float(unit.get("rumo", RUMO_ALIADO))
+	unit["giro"] = float(unit.get("giro", 0.0))
+
+
 func _update_fleet(delta: float) -> void:
 	# Ambas as frotas agem continuamente; ordens mudam comportamento, não iniciam turnos.
 	for i in range(fleet.size()):
@@ -3847,27 +3927,42 @@ func _update_fleet(delta: float) -> void:
 		# nenhum teleporta. A diferença entre eles é só a geometria do posto, não a execução.
 		var ordem := String(ally["order"])
 		if (ordem == "MOVER" or ordem == "DISPERSAR" or ordem == "AGRUPAR") and ally.has("destination"):
-			ship.position = ship.position.move_toward(ally["destination"], delta * 8.0 * mobility)
-		elif ally["order"] == "AVANÇAR":
-			ship.position.z -= delta * 1.2 * mobility
-		elif ally["order"] == "RECUAR":
-			ship.position.z += delta * 1.3 * mobility
-		elif ally["order"] == "ESCOLTAR":
+			_pilotar(ship, ally, ally["destination"] as Vector3,
+				MARCHA_DE_NAVEGACAO * mobility, delta)
+		elif ordem == "AVANÇAR":
+			_empuxar(ship, ally, Vector3(0.0, 0.0, -MARCHA_DE_LINHA * mobility), RUMO_ALIADO,
+				MARCHA_DE_LINHA * mobility, delta)
+		elif ordem == "RECUAR":
+			# Fundo de máquina a ré: o comando pede a marcha cheia da linha para trás e o envelope da
+			# classe devolve `re` dela — 2,0 u/s num cruzador, 1,6 num encouraçado. Sair da linha custa
+			# o preço do próprio casco, e é por isso que RECUAR não tem mais um número solto.
+			_empuxar(ship, ally, Vector3(0.0, 0.0, MARCHA_DE_NAVEGACAO * mobility), RUMO_ALIADO,
+				MARCHA_DE_NAVEGACAO * mobility, delta)
+		elif ordem == "ESCOLTAR":
 			var protect_position := Vector3.ZERO
 			if protected_unit_index >= 0 and protected_unit_index < fleet.size():
 				protect_position = (fleet[protected_unit_index]["node"] as Node3D).position
 			var escort_destination := protect_position + Vector3((float(i) - 2.5) * FORMATION_STEP, 0, 8.0 if protected_unit_index >= 0 else -12.0)
 			ship.position = ship.position.lerp(escort_destination, minf(1.0, delta * 0.35 * mobility))
-		elif ally["order"] == "RESERVA":
+			_servo(ship, ally, partida, delta)
+		elif ordem == "RESERVA":
 			# Os dois ramos fixos escalam pela mesma marcha: se a reserva e o reconhecimento
 			# ignorassem a classe, um encouraçado fugiria do inimigo à velocidade de um cruzador e
 			# o preço da bateria só seria pago na linha de manobra.
 			ship.position.z = move_toward(ship.position.z, -48.0, delta * 0.8 * mobility)
-		elif ally["order"] == "RECONHECER":
+			_servo(ship, ally, partida, delta)
+		elif ordem == "RECONHECER":
 			ship.position.x = move_toward(ship.position.x, (float(i) - 2.5) * 9.0, delta * 1.8 * mobility)
-		elif ally["order"] == "ABORDAR" and selected_target < enemies.size() and enemies[selected_target]["hp"] > 0.0:
+			_servo(ship, ally, partida, delta)
+		elif ordem == "ABORDAR" and selected_target < enemies.size() and enemies[selected_target]["hp"] > 0.0:
 			var target: Node3D = enemies[selected_target]["node"]
-			ship.position = ship.position.move_toward(target.position + Vector3((float(i) - 2.5) * 2.0, 0, 8.0), delta * 2.2 * mobility)
+			_pilotar(ship, ally, target.position + Vector3((float(i) - 2.5) * 2.0, 0, 8.0),
+				MARCHA_DE_ABORDAGEM * mobility, delta)
+		else:
+			# Ordem que não descreve navegação (LINHA, ATACAR, CAPTURADO): leme neutro, empuxo zero.
+			# O casco que vinha em marcha desliga a máquina e para no tempo da própria aceleração —
+			# inércia é isso. A lei velha congelava o casco no quadro em que a ordem trocava.
+			_empuxar(ship, ally, Vector3.ZERO, NAN, 0.0, delta)
 		# Velocidade real do quadro, medida por diferença de posição: é o que o abalroamento lê
 		# para separar encostar de bater, sem inventar um sorteio de impacto.
 		ally["veloc"] = (ship.position - partida) / maxf(delta, 0.0001)
@@ -3905,14 +4000,32 @@ func _update_fleet(delta: float) -> void:
 			continue
 		var mobility: float = 0.25 + float(enemy["engines"]) / 100.0 * 0.75
 		var partida := foe.position
-		if enemy["order"] == "AVANÇAR":
-			foe.position.z += delta * 0.85 * mobility
-		elif enemy["order"] == "RECUAR":
-			foe.position.z -= delta * 0.45 * mobility
-		elif enemy["order"] == "ESCOLTAR":
+		var ordem_hostil := String(enemy["order"])
+		if ordem_hostil == "AVANÇAR":
+			# O muro de avanço é limite de comando, não de posição: chegada à linha de engajamento, a
+			# muralha desliga a máquina em vez de empurrar contra parede — senão o `veloc` reportado
+			# seria a marcha de um casco parado. O `clampf` abaixo continua, mas só pega quem escreve
+			# posição por fora (sonda, cenário, abalroamento).
+			var avanca := foe.position.z < HOSTILE_ADVANCE_Z
+			_empuxar(foe, enemy, Vector3(0.0, 0.0, MARCHA_HOSTIL_DE_LINHA * mobility if avanca else 0.0),
+				RUMO_HOSTIL, MARCHA_HOSTIL_DE_LINHA * mobility, delta)
+		elif ordem_hostil == "RECUAR":
+			# Fundo de máquina a ré, como na linha aliada: o comando pede a marcha cheia para trás e o
+			# `re` da ficha devolve a fração. Uma muralha que debanda corre a ré, e a ré é o que ela tem.
+			# A linha de reunião é o mesmo portão do muro de avanço, do outro lado: encostado no fundo,
+			# o casco desliga a ré em vez de empurrar contra a linha — senão o `vel` da lei ficaria
+			# armado a 2 u/s num casco que a posição diz estar parado, e a próxima ordem nasceria
+			# desse embalo falso.
+			var recua := foe.position.z > HOSTILE_RALLY_Z
+			_empuxar(foe, enemy, Vector3(0.0, 0.0, -MARCHA_DE_NAVEGACAO * mobility if recua else 0.0),
+				RUMO_HOSTIL, MARCHA_DE_NAVEGACAO * mobility, delta)
+		elif ordem_hostil == "ESCOLTAR":
 			# Posto alternado pela IA (-3 / +3): duas escoltas no mesmo ponto se tapariam.
 			var side: float = float(enemy.get("escort_offset", 3.0))
 			foe.position = foe.position.move_toward(hostile_anchor + Vector3(side, 0.0, 7.0), delta * 1.1 * mobility)
+			_servo(foe, enemy, partida, delta)
+		else:
+			_empuxar(foe, enemy, Vector3.ZERO, NAN, 0.0, delta)
 		# Qualquer que seja a ordem, o casco hostil fica entre a linha de reunião e a de
 		# avanço: a batalha não migra para fora da vista da ponte.
 		foe.position.z = clampf(foe.position.z, HOSTILE_RALLY_Z, HOSTILE_ADVANCE_Z)

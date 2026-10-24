@@ -11,9 +11,15 @@ extends SceneTree
 ##    obedecer, e o anel é a que mais fácil escorrega nisso conforme o número de cascos cresce.
 ## 2) O CENTRO é lido dos cascos vivos, não do cadastro: quem manobrou até z = -150 forma em
 ##    z = -150. É isto que faz a mesa holográfica ser o campo em vez de uma foto antiga dele.
-## 3) O TEMPO é a manobra: um quadro de motor anda exatamente `8,0 * mobilidade * delta`, o casco
-##    ainda está em trânsito depois de vinte quadros, e chega. Motor ferido chega mais tarde por
-##    fórmula, não por sorteio — nenhum `rng` é tocado por ordem nem por deslocamento.
+## 3) O TEMPO é a manobra, e a manobra tem lei: o primeiro quadro anda `aceleracao × delta²`
+##    (0,040 u), a marcha cravada de `8,0 × mobilidade` (0,800 u por quadro de 0,1 s) só vem depois
+##    da rampa E de o casco ter virado o timão até o posto — nos dezenove quadros do giro o passo
+##    ainda é 0,736, porque o empuxo se resolve nos eixos do casco e perde o cosseno. Motor ferido
+##    anda a marcha dele por fórmula, não por sorteio: 0,320 contra 0,800, razão exata de 0,400, com
+##    o eixo pinado em 20 porque a oficina repara 1,32 por segundo e uma janela de doze segundos
+##    sararia o motor antes do fim da medição. Nenhum `rng` é tocado por ordem nem por deslocamento.
+##    O instantâneo morreu: um quadro de cadastro não é uma travessia — a linha de 48,62 u fecha em
+##    79 quadros (7,9 s), e não nos 61 (6,1 s) que a marcha instantânea cobraria.
 ## 4) O PAINEL é o trânsito, não só a chegada: no meio do trajeto o blip bate com `_holo_de` da
 ##    posição real do nó, casco por casco.
 ##
@@ -26,6 +32,13 @@ const FORMATION_STEP := 5.5
 const DIAMETRO_CASCO := 4.8
 const VELOCIDADE_MOVER := 8.0
 const PASSO := 0.1
+## Espelho de `CLASSES["CRUZADOR"]["aceleracao"]`: é a régua do arranque, e a instância do jogo não
+## alcança as constantes do script (mesmo motivo de `VELOCIDADE_MOVER` acima).
+const ACELERACAO_CRUZADOR := 4.0
+## Folga de passo, derivada e não chutada: a maior coordenada deste tabuleiro é ~60 u, um float32
+## nessa ordem vale ~7,2e-6 por dígito, e a diferença de duas posições come dois dígitos. 3e-5 é a
+## mesma régua de `tools/probes/voo.gd` (lá as coordenadas chegam a 205 u).
+const FOLGA_PASSO := 0.00003
 
 var breaks := 0
 var notes: Array[String] = []
@@ -75,13 +88,19 @@ func _espalhar(game) -> void:
 			(float(i) - 2.5) * 24.0, 0.0, -40.0 + float(i % 2) * 30.0)
 
 func _zerar(game) -> void:
-	for list in [game.fleet, game.enemies]:
-		for unit in list:
+	for side in [["aliado", game.fleet], ["hostil", game.enemies]]:
+		for unit in side[1]:
 			unit["hp"] = 100.0
 			unit["engines"] = 100.0
 			unit["weapons"] = 100.0
 			unit["crew"] = 100.0
 			unit["veloc"] = Vector3.ZERO
+			# O estado da lei, não só o do cenário: sem zerar `vel`, a medição do arranque herdados o
+			# embalo da família anterior e o primeiro quadro não seria um arranque. `rumo` volta à
+			# atitude de largada de cada lado (a nossa para -z, a muralha para +z).
+			unit["vel"] = Vector3.ZERO
+			unit["rumo"] = 0.0 if String(side[0]) == "aliado" else PI
+			unit["giro"] = 0.0
 
 func _navega(game, quadros: int, com_colisao: bool) -> void:
 	for i in range(quadros):
@@ -102,6 +121,60 @@ func _faltam(game, i: int) -> float:
 	if not unit.has("destination"):
 		return INF
 	return node.position.distance_to(unit["destination"])
+
+## Pior rota entre os cascos que ainda têm ordem de navegar — é o relógio da travessia: a linha
+## só fecha quando o último casco encosta no posto.
+func _pior_rota(game) -> float:
+	var pior := 0.0
+	for i in range(game.fleet.size()):
+		if String(game.fleet[i]["order"]) != "MOVER":
+			continue
+		pior = maxf(pior, _faltam(game, i))
+	return pior
+
+## Um quadro da lei medido como deslocamento real do nó — o passo do casco, não a redução de rota,
+## que o timão ainda não alinhado desconta.
+func _passo_de(game, i: int) -> float:
+	var node: Node3D = game.fleet[i]["node"]
+	var partida: Vector3 = node.position
+	game._update_fleet(PASSO)
+	return partida.distance_to(node.position)
+
+
+## Maior passo de um casco em `quadros` de trânsito, medido cru (deslocamento do nó) e pela lei
+## (`vel × delta`), com quantos quadros tiveram casco a menos de `2 × HULL_RADIUS` de outro e a
+## menor distância entre cascos do trânsito. `_update_fleet` termina em `_aplicar_cenario` +
+## `_resolve_collisions`, que também escrevem posição — por isso o `lei` ao lado do `cru`: quando os
+## dois batem, o número veio da lei de voo e não da separação. `feridos` pino do motor quadro a
+## quadro é o controle que deixa a janela medir a marcha de um motor FERIDO, não a de um motor sarado
+## no meio do trânsito (`main.gd:3969-3988` repara a 1,32 por segundo em AUTO, e doze segundos de
+## janela bastariam para um motor a 20 subir a 35).
+func _medir(game, a: int, b: int, quadros: int, feridos: Dictionary = {}) -> Dictionary:
+	var r: Dictionary = {"cru_a": 0.0, "cru_b": 0.0, "lei_a": 0.0, "lei_b": 0.0,
+		"apertados": 0, "menor": INF}
+	for q in range(quadros):
+		for idx in feridos:
+			game.fleet[int(idx)]["engines"] = float(feridos[idx])
+		var na: Node3D = game.fleet[a]["node"]
+		var nb: Node3D = game.fleet[b]["node"]
+		var pa: Vector3 = na.position
+		var pb: Vector3 = nb.position
+		game._update_fleet(PASSO)
+		r["cru_a"] = maxf(float(r["cru_a"]), pa.distance_to(na.position))
+		r["cru_b"] = maxf(float(r["cru_b"]), pb.distance_to(nb.position))
+		r["lei_a"] = maxf(float(r["lei_a"]), (game.fleet[a]["vel"] as Vector3).length() * PASSO)
+		r["lei_b"] = maxf(float(r["lei_b"]), (game.fleet[b]["vel"] as Vector3).length() * PASSO)
+		var aperto := false
+		for i in range(game.fleet.size()):
+			for j in range(i + 1, game.fleet.size()):
+				var d: float = (game.fleet[i]["node"] as Node3D).position.distance_to(
+					(game.fleet[j]["node"] as Node3D).position)
+				r["menor"] = minf(float(r["menor"]), d)
+				if d < 4.8:
+					aperto = true
+		if aperto:
+			r["apertados"] = int(r["apertados"]) + 1
+	return r
 
 func _montar_jogo() -> Node3D:
 	var game: Node3D = (load("res://main.tscn") as PackedScene).instantiate()
@@ -295,21 +368,42 @@ func _initialize() -> void:
 	_assert("ordem recusada não reescreve o painel", String(game.formation) == "LINHA",
 		"formation continua %s depois de uma ordem sem destinatário" % String(game.formation))
 
-	# 13 — O tempo é a manobra: um quadro de motor anda exatos 0,8; vinte quadros não chegam;
-	# cento e vinte chegam. Tudo por aritmética de deslocamento, sem tolerância de sorteio.
+	# 13 — O tempo é a manobra, e a manobra tem lei: o primeiro quadro anda a aceleração do casco
+	# (0,040 u), a marcha cravada de 0,800 u só chega depois da rampa, vinte quadros ainda deixam
+	# travessia e cento e vinte fecham o posto. Tudo por aritmética de voo, sem tolerância de sorteio.
 	_espalhar(game)
 	_zerar(game)
 	game.selection_scope = "FROTA"
 	game._set_formation("LINHA")
-	var partida := _faltam(game, 0)
-	game._update_fleet(PASSO)
-	_assert("um quadro anda exatamente a marcha do motor",
-		_igual(partida - _faltam(game, 0), VELOCIDADE_MOVER * PASSO, 0.0001),
-		"percorreu %.4f, marcha %.1f" % [partida - _faltam(game, 0), VELOCIDADE_MOVER * PASSO])
-	_navega(game, 19, false)
+	var rota := _faltam(game, 0)
+	var passo_um := _passo_de(game, 0)
+	_assert("o arranque tem tempo: o primeiro quadro anda aceleracao x delta",
+		_igual(passo_um, ACELERACAO_CRUZADOR * PASSO * PASSO, FOLGA_PASSO),
+		"%.5f u no quadro um contra %.5f da rampa; sem lei seria %.3f" % [passo_um,
+			ACELERACAO_CRUZADOR * PASSO * PASSO, VELOCIDADE_MOVER * PASSO])
+	var med := _medir(game, 0, 1, 19)
+	var passo_giro := maxf(float(med["cru_a"]), passo_um)
+	# O timão é limitado, e é ele que segura a marcha: o posto fica a ~90° da atitude de largada, o
+	# leme vira 0,8 rad/s, e enquanto o nariz não aponta o destino o empuxo comandado se resolve no
+	# eixo do casco e perde o cosseno. Medir o teto nos dezenove quadros do turno mediria o leme, não
+	# o motor — e passar por cima dele é a régua que aceita rotação instantânea.
+	_assert("no virar do timao o passo fica abaixo da marcha cravada: o giro e limitado",
+		passo_giro < VELOCIDADE_MOVER * PASSO - FOLGA_PASSO and float(med["apertados"]) == 0.0,
+		"maior passo dos dezenove quadros %.5f contra %.5f do teto, menor par entre cascos %.3f" % [
+			passo_giro, VELOCIDADE_MOVER * PASSO, float(med["menor"])])
 	_assert("depois de vinte quadros ainda há travessia", _faltam(game, 0) > 20.0,
 		"faltam %.2f unidades de rota" % _faltam(game, 0))
-	_navega(game, 100, false)
+	var med2 := _medir(game, 0, 1, 100)
+	var passo_max := maxf(passo_giro, float(med2["cru_a"]))
+	# Alinhado o casco, a marcha cravada é a do cadastro: 8,0 × mobilidade e o passo do quadro é
+	# `teto × delta`. O `cru` e o `lei` baterem é o que diz que o número veio da lei e não da
+	# separação de cascos nem do poço do cenário, que também escrevem posição.
+	_assert("a marcha cravada é a do motor: 8,0 x mobilidade",
+		_igual(passo_max, VELOCIDADE_MOVER * PASSO, FOLGA_PASSO) \
+			and _igual(float(med2["cru_a"]), float(med2["lei_a"]), FOLGA_PASSO),
+		"maior passo %.5f (lei %.5f) contra %.5f do teto, rota %.2f u, %d quadros apertados, menor par %.3f" % [
+			passo_max, float(med2["lei_a"]), VELOCIDADE_MOVER * PASSO, rota, int(med2["apertados"]),
+			float(med2["menor"])])
 	var chegaram := 0
 	var pior := 0.0
 	for i in range(game.fleet.size()):
@@ -320,22 +414,46 @@ func _initialize() -> void:
 			chegaram += 1
 	_assert("o casco chega ao posto", chegaram == 6 and pior < 0.001,
 		"%d/6 no posto, pior resíduo %.5f" % [chegaram, pior])
+	# O preço da rampa pago em quadro, não em prosa: a marcha instantânea fecharia 48,62 u em 61
+	# quadros, e o que a lei entrega é uma travessia mais longa porque os primeiros quadros andam
+	# pouco (arranque) e os do timão andam 0,736. Contar até o último casco encostar é a única forma
+	# de o README poder dizer quanto tempo a ordem custa.
+	_espalhar(game)
+	_zerar(game)
+	game._set_formation("LINHA")
+	var quadros_da_linha := 0
+	while quadros_da_linha < 300 and _pior_rota(game) >= 0.001:
+		quadros_da_linha += 1
+		game._update_fleet(PASSO)
+	_assert("a travessia da linha custa mais que a marcha instantânea",
+		quadros_da_linha > 61 and quadros_da_linha < 300,
+		"%d quadros (%.1f s) para fechar %.2f u de rota; sem rampa seriam 61" % [
+			quadros_da_linha, quadros_da_linha * PASSO, rota])
 
-	# 14 — Quem tem motor ferido anda na velocidade do motor, não na do roteiro.
+	# 14 — Quem tem motor ferido anda na velocidade do motor, não na do roteiro: 0,32 u por quadro
+	# com motor a 20% contra 0,80 do cheio, no regime permanente. A rampa é da classe e por isso os
+	# dois cascos andariam iguais no primeiro quadro (0,040) — medir o quadro um mediria a rampa,
+	# não o motor. E o motor tem de ser segurado FERIDO durante a janela inteira: a tripulação repara
+	# o eixo a 1,32 por segundo em AUTO, doze segundos de trânsito bastariam para ele subir de 20 a
+	# 35 e a razão medida não seria a do motor, seria a da oficina.
 	_espalhar(game)
 	_zerar(game)
 	game._set_formation("COLUNA")
 	game.fleet[1]["engines"] = 20.0
-	var rota_1: float = _faltam(game, 1)
-	var rota_0: float = _faltam(game, 0)
-	game._update_fleet(PASSO)
-	var andado_1 := rota_1 - _faltam(game, 1)
-	var andado_0 := rota_0 - _faltam(game, 0)
 	# mobilidade = 0,25 + motores/100 * 0,75 -> 0,40 com motor a 20; 1,00 com motor cheio.
-	_assert("motor ferido anda a marcha dele", _igual(andado_1, VELOCIDADE_MOVER * PASSO * 0.4, 0.0001),
-		"andou %.4f contra %.4f do motor cheio" % [andado_1, andado_0])
+	var medidos: Dictionary = _medir(game, 0, 1, 120, {1: 20.0})
+	var cheio := float(medidos["cru_a"])
+	var ferido := float(medidos["cru_b"])
+	_assert("motor cheio anda a marcha do cadastro",
+		_igual(cheio, VELOCIDADE_MOVER * PASSO, FOLGA_PASSO),
+		"cru %.5f, lei %.5f por quadro" % [cheio, float(medidos["lei_a"])])
+	_assert("motor ferido anda a marcha dele",
+		_igual(ferido, VELOCIDADE_MOVER * PASSO * 0.4, FOLGA_PASSO),
+		"cru %.5f, lei %.5f contra %.5f do cheio - %d quadros apertados, menor par %.3f" % [
+			ferido, float(medidos["lei_b"]), cheio, int(medidos["apertados"]),
+			float(medidos["menor"])])
 	_assert("a razão das marchas é a razão dos motores",
-		_igual(andado_1 / andado_0, 0.4, 0.0001), "%.3f" % (andado_1 / andado_0))
+		_igual(ferido / cheio, 0.4, 0.0001), "%.3f" % (ferido / cheio))
 
 	# 15 — Locomoção não sorteia: duzentos quadros de deslocamento não tocam no rng.
 	var rng_rota: int = game.rng.state

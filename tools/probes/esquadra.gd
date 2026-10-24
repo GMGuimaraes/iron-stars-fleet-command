@@ -44,11 +44,15 @@ extends SceneTree
 ##    ganha uma linha: nenhum `hp` de casco é escrito pela massa. A família confere também que a massa
 ##    QUEIMOU nesse intervalo, porque inércia medida sobre troca vazia não prova nada.
 ## 8) PARADO E INTEIRO NÃO CUSTA ESCRITA. A segunda pintura sem movimento devolve zero blocos
-##    tocados; com um quadro de marcha devolve os duzentos e quarenta, e em duzentos quadros de
-##    marcha devolve quarenta e oito mil. O portão é essa CONTA, que é determinística. O relógio é
-##    impresso como medida, não como lei: a mesma máquina deu 761, 918 e 1 287 ms para os mesmos
-##    duzentos quadros em três rodadas seguidas — com ±35 % de ruído, nenhum número de `ms` pode
-##    ser assinado aqui, e a asserção antiga (`custo_ms >= 0.0`) não podia reprovar nada.
+##    tocados; com um quadro de marcha devolve os duzentos e quarenta. Desde a fatia 2 a CONTA de
+##    duzentos quadros deixou de ser 48 000: o portão de pintura só regrava quem andou mais de
+##    0,01 u, e o bloco em arranque anda `a × delta²` = 0,0008 u no quadro um. O portão passou a ser
+##    o regime — nenhum lado escreve mais de um por bloco por quadro, e do primeiro quadro pleno
+##    (medido: 13) em diante os duzentos e quarenta pagam todo quadro, sem buraco no meio do
+##    caminho. Medido: 23 070 + 23 160 escritas contra 24 000 de teto por lado. O relógio é impresso
+##    como medida, não como lei: a mesma máquina deu 761, 918 e 1 287 ms para os mesmos duzentos
+##    quadros em três rodadas seguidas — com ±35 % de ruído, nenhum número de `ms` pode ser assinado
+##    aqui, e a asserção antiga (`custo_ms >= 0.0`) não podia reprovar nada.
 ## 9) A PONTE MOSTRA A MASSA E A RODA DÁ ZOOM. Dois nós `MultiMeshInstance3D` na cena, malha única
 ##    compartilhada, a caixa crua lida da própria malha (3,647 x 1,07 x 5,0) fechando a boca em
 ##    0,912 u dentro da casa de 3,2 — 2,288 u de costura no costado e 1,95 u de proa a popa, lidos do
@@ -58,10 +62,14 @@ extends SceneTree
 ##    desenho autorgada cobrindo o campo, a roda levando a FOV de 78° a 14° com aperto nas duas
 ##    pontas, e o letreiro da massa sendo `Label` — os 35 botões de `menu.gd` não se mexem.
 ## 10) A LARGADA TEM CAMPO E ELE É CRUZADO MARCHANDO. As duas fachadas nascem a 154,0 u uma da outra e
-##     fecham exatamente em `DISTANCIA_DE_CONTATO` (40 u) sob `MARCHA_DE_BLOCO`: o maior deslocamento
-##     de um bloco em um quadro é o passo da marcha, o vão nunca fica abaixo do contato, e a travessia
-##     leva 19,0 s de tela. O recuo tem prova contrafactual — com a estação em zero a grade sozinha
-##     deixa 24,0 u de fachada a fachada, MENOS que o próprio contato e longe de qualquer travessia.
+##     fecham no `DISTANCIA_DE_CONTATO` (40 u) sob a lei da massa: o bloco arranca a `a × delta²`
+##     (0,00084 u no quadro um), anda meio teto no quadro 60 e teto cheio no quadro 120, e o maior
+##     deslocamento de um quadro em todo o trânsito é esse teto — 0,1000 u. Campo cruzado acima disso
+##     não é aproximação, é teleporte. Os 113,0 u custaram 1 210 quadros (20,2 s de tela) e são
+##     MEDIDA impressa, não régua: com rampa de 2,0 s e freio de chegada em `raiz(2 · a · d)` a
+##     travessia deixou de ser 114 ÷ 0,1. O recuo tem prova contrafactual — com a estação em zero a
+##     grade sozinha deixa 24,0 u de fachada a fachada, MENOS que o próprio contato e longe de
+##     qualquer travessia.
 ##     É a régua que desmente a conta de cabeça desta sessão: o campo não é comprado pelo ar entre
 ##     blocos, é comprado pelo recuo, e sem esta asserção "abrir o ar" passaria como se tivesse feito
 ##     a aproximação sozinha.
@@ -85,6 +93,9 @@ extends SceneTree
 ## Uso: godot --headless --path . --quit-after 6000 -s res://tools/probes/esquadra.gd
 
 const Esquadra := preload("res://esquadra.gd")
+## A ficha da massa é a régua do arranque e do freio: sem ela, as duas réguas abaixo teriam de ser
+## números chutados pela sonda em vez de lidos da lei que o jogo aplica.
+const Voo := preload("res://voo.gd")
 
 ## Espelhos das constantes de `main.gd` e `esquadra.gd`: a instância do jogo é não tipada, e mudar o
 ## número lá sem mudar aqui quebra a asserção de propósito.
@@ -115,17 +126,28 @@ const PONTE_FOV_LARGO := 78.0
 const PONTE_FOV_FECHADO := 14.0
 ## Folga de coordenada: a grade é contagem exata, mas `move_toward` deixa resto de ponto flutuante.
 const FOLGA := 0.1
-## A travessia: 114,0 u de marcha (154,0 − 40,0) a 6 u/s chegam ao contato em 1.140 quadros. 600 é
-## "no meio do campo"; 1.200 é a conta já fechada, com folga. O teto de um quadro é o passo da
-## marcha — campo cruzado de salto não é aproximação, é teleporte.
-const QUADROS_A_MEIO := 600
-const QUADROS_DA_TRAVESSIA := 1200
+## A travessia: 114,0 u de marcha (154,0 − 40,0) separam as duas fachadas. Desde a fatia 2 o
+## caminho não é mais percorrido a passo cravado: o bloco arranca na `aceleracao` da ficha da massa
+## (3,0 u/s², 2,0 s até os 6,0 u/s = 120 quadros) e freia nos últimos 6,0 u (`raiz(2 · a · d)`),
+## então a conta de quadros deixou de ser divisão e passou a ser medida — o laço roda até o contato e
+## imprime o tempo que custou, como já faz com o relógio da família 11. 1.500 é o teto de iteração,
+## não uma régua. O teto de um QUADRO continua sendo o passo da marcha: campo cruzado de salto não é
+## aproximação, é teleporte.
+const QUADROS_DA_TRAVESSIA := 1500
 const SALTO_MAXIMO := Esquadra.MARCHA_DE_BLOCO / 60.0
+## Passo do primeiro quadro de um bloco, derivado da ficha: `vel` anda `a × delta` (0,05 u/s) e a
+## posição anda `vel × delta`. É a digital do arranque — sem lei, o quadro um já daria 0,1000 u.
+const PASSO_DO_ARRANQUE := float(Voo.FICHA_BLOCO["aceleracao"]) / 3600.0
+## Folga de passo: a maior coordenada deste tabuleiro é ~154 u, onde um float32 vale ~1,9e-5 u por
+## dígito e a diferença de duas posições come dois dígitos. É a mesma folga de
+## `tools/probes/voo.gd`, para as duas sondas lerem passo com a mesma régua.
+const FOLGA_PASSO := 0.00003
 ## Campo lido na largada, de fachada a fachada: os 130 u de recuo mais os 45 u de separação dos doze
 ## núcleos, menos o braço de cada muralha até sua fileira frontal (2 × 10,5 u de centro de casco).
 ## Conta que a família 10 mede e o README cita — é a régua do "espaço a ser cruzado".
 const CAMPO_ESPERADO := 154.0
-## Tolerância da fachada: a marcha fecha em `move_toward` e o centro de casa não é régua exata.
+## Tolerância da fachada: é a resolução da leitura (centro do casco da última fileira, medido entre
+## duas muralhas de doze núcleos), não folga de marcha — o pouso da lei grava o posto exato.
 const FOLGA_CONTATO := 1.0
 const QUADROS := 200
 const SALVAS := 60
@@ -717,18 +739,34 @@ func _initialize() -> void:
 	# escrever, e o número medido seria o de uma frota ancorada, não o de uma batalha em marcha.
 	var custo_quadros := 0.0
 	var escritas := 0
+	var escritas_aliado := 0
+	var escritas_hostil := 0
+	var quadro_pleno := -1
+	var paros_depois := 0
 	var inicio_ms := Time.get_ticks_msec()
 	var w := 0
 	while w < QUADROS:
 		# O avanço vem ANTES do passo: com o primeiro quadro no mesmo pé da monta, a esquadra aliada
-		# já está colada no próprio posto, nenhum bloco se move, e a régua devolve 47 880 em vez de
-		# 48 000 — que é a contagem correta de uma frota que patinou um quadro, não de uma em marcha.
+		# já está colada no próprio posto, nenhum bloco se move, e a régua lê o vazio em vez de ler
+		# a marcha.
 		custo_quadros -= 0.05
 		var nuc_movidos: Array = []
 		for n in nuc_a:
 			nuc_movidos.append((n as Vector3) + Vector3(0.0, 0.0, custo_quadros))
 		p.passo(1.0 / 60.0, nuc_movidos, nuc_h)
-		escritas += p.pintar(mm_p, "aliado", false) + p.pintar(mm_q, "hostil", false)
+		var tocou_a := p.pintar(mm_p, "aliado", false)
+		var tocou_h := p.pintar(mm_q, "hostil", false)
+		escritas += tocou_a + tocou_h
+		escritas_aliado += tocou_a
+		escritas_hostil += tocou_h
+		# O primeiro quadro em que a marcha paga os duzentos e quarenta é o fim da rampa: antes dele
+		# o passo do bloco é menor que a folga de pintura (`esquadra.gd` só regrava quem andou mais
+		# de 0,01 u), então um quadro de arranque baratinho é a lei funcionando, não uma frota parada.
+		if tocou_a == BLOCOS_POR_LADO and tocou_h == BLOCOS_POR_LADO:
+			if quadro_pleno < 0:
+				quadro_pleno = w + 1
+		elif quadro_pleno > 0:
+			paros_depois += 1
 		w += 1
 	var custo_ms := float(Time.get_ticks_msec() - inicio_ms)
 	var casas_por_quadro := 2 * INSTANCIAS_POR_LADO
@@ -736,14 +774,25 @@ func _initialize() -> void:
 	# O relógio saiu do portão, não do log. Três rodadas do MESMO código nesta máquina fecharam os
 	# mesmos duzentos quadros em 761, 918 e 1 287 ms — ±35 % de ruído, com um `godot.exe` pendurado
 	# de outra sessão comendo núcleo — e a asserção antiga (`custo_ms >= 0.0`) não podia reprovar
-	# nada. O que é determinístico é a conta de escritas: marcha em curso tem de repintar os
-	# duzentos e quarenta blocos em todo quadro, e é isso que a lei cobra. O `ms` continua impresso,
-	# como medida, com o intervalo das rodadas escrito no README.
-	_assert("%d quadros de marcha repintam os duzentos e quarenta blocos, sem excecao" % QUADROS,
-		escritas == QUADROS * 2 * BLOCOS_POR_LADO,
-			"%d escritas de bloco contra %d esperadas; %.3f ms por quadro (%d ms no total, %d casas/ms) - relógio impresso, nao portado" % [
-				escritas, QUADROS * 2 * BLOCOS_POR_LADO, custo_ms / float(QUADROS), int(custo_ms),
-				int(casas_ms)])
+	# nada. O que é determinístico é a conta de escritas, e ela mudou de forma com a lei: um bloco
+	# que anda menos de 0,01 u num quadro não regrava, então os primeiros quadros do arranque são
+	# baratos por construção. O portão passa a ser o regime, não a soma: nenhum dos dois lados pode
+	# escrever mais que um por bloco por quadro, e a partir do primeiro quadro pleno a marcha paga
+	# os duzentos e quarenta em todo quadro, sem buraco no meio do caminho.
+	_assert("nenhum lado escreve mais que um por bloco em um quadro",
+		escritas_aliado <= QUADROS * BLOCOS_POR_LADO \
+			and escritas_hostil <= QUADROS * BLOCOS_POR_LADO,
+			"%d + %d escritas contra %d de teto por lado" % [escritas_aliado, escritas_hostil,
+				QUADROS * BLOCOS_POR_LADO])
+	_assert("do quadro %d em diante a marcha repinte os duzentos e quarenta blocos todo quadro" % quadro_pleno,
+		quadro_pleno > 0 and quadro_pleno <= int(Esquadra.MARCHA_DE_BLOCO
+			/ float(Voo.FICHA_BLOCO["aceleracao"]) * 60.0) and paros_depois == 0,
+			"primeiro quadro pleno %d (rampa de %d quadros), %d quadros parcos depois dele, %d escritas no total" % [
+				quadro_pleno, int(Esquadra.MARCHA_DE_BLOCO / float(Voo.FICHA_BLOCO["aceleracao"]) * 60.0),
+				paros_depois, escritas])
+	_assert("%.3f ms por quadro de massa - medida impressa, nao portada" % (custo_ms / float(QUADROS)),
+		true, "%d ms nos %d quadros, %d casas/ms; %d escritas de bloco contra %d de teto" % [
+			int(custo_ms), QUADROS, int(casas_ms), escritas, QUADROS * 2 * BLOCOS_POR_LADO])
 
 	# ── 9. a ponte mostra a massa e a roda da zoom ──────────────────────────────────────────
 	var no_a: MultiMeshInstance3D = jogo.massa_aliada
@@ -848,38 +897,60 @@ func _initialize() -> void:
 			and absf(recuo_largada + float(Esquadra.CAMPO_DE_APROXIMACAO)) < 0.001,
 		"fachada a fachada em %.1f u na largada, com a muralha hostil a %.0f u dos proprios nucleos" % [
 			fachada, recuo_largada])
+	# O laço agora PARA no contato: desde a fatia 2 o tempo de travessia não é mais 114 ÷ 0,1, porque
+	# a rampa de 2,0 s come 6,0 u dos primeiros 120 quadros e o freio de chegada limita a marcha nos
+	# últimos `teto²/(2a)` = 6,0 u. O que continua sendo régua é o passo de UM quadro, medido no
+	# bloco, e o tempo que a travessia custa é medida impressa — como o relógio da família 11.
 	var salto_max := 0.0
 	var menor_fachada := fachada
-	var fachada_meio := 0.0
+	var passo_1 := 0.0
+	var passo_60 := 0.0
+	var passo_120 := 0.0
+	var quadro_do_teto := -1
 	var mf := 0
-	while mf < QUADROS_DA_TRAVESSIA:
+	while mf < QUADROS_DA_TRAVESSIA and menor_fachada > Esquadra.DISTANCIA_DE_CONTATO + FOLGA_CONTATO:
 		var antes: Array = []
 		for b in t.lista_de("hostil"):
 			antes.append(b["pos"])
 		t.passo(1.0 / 60.0, nuc_a, nuc_h)
+		mf += 1
 		var ki := 0
 		for b in t.lista_de("hostil"):
-			salto_max = maxf(salto_max, (b["pos"] as Vector3).distance_to(antes[ki] as Vector3))
+			var passo := (b["pos"] as Vector3).distance_to(antes[ki] as Vector3)
+			salto_max = maxf(salto_max, passo)
+			# O bloco 0 é o da fileira: é dele que se lê a rampa, porque é o único que nunca teve
+			# razão para mudar de curso no meio da travessia.
+			if ki == 0:
+				if mf == 1:
+					passo_1 = passo
+				elif mf == 60:
+					passo_60 = passo
+				elif mf == 120:
+					passo_120 = passo
+				if quadro_do_teto < 0 and passo >= SALTO_MAXIMO - FOLGA_PASSO:
+					quadro_do_teto = mf
 			ki += 1
 		menor_fachada = minf(menor_fachada, _fachadas(t))
-		if mf == QUADROS_A_MEIO:
-			fachada_meio = _fachadas(t)
-		mf += 1
-	var segundos := float(QUADROS_DA_TRAVESSIA) / 60.0
 	_assert("a marcha nao salta: o maior deslocamento de um bloco em um quadro e o passo da marcha",
-		salto_max <= SALTO_MAXIMO + 0.0001,
-		"%d quadros de travessia (~%.0f s de tela): maior passo de um bloco em %.4f u, teto %.4f u" % [
-			QUADROS_DA_TRAVESSIA, segundos, salto_max, SALTO_MAXIMO])
-	_assert("dez segundos de campo custam dez segundos de marcha: nao ha ease nem salto",
-		absf((fachada - fachada_meio) - float(QUADROS_A_MEIO) * SALTO_MAXIMO) < 1.0 \
-			and fachada_meio > Esquadra.DISTANCIA_DE_CONTATO,
-		"apos %d quadros (%.0f s) a fachada anda %.1f u e ainda ha %.1f u por cruzar" % [
-			QUADROS_A_MEIO, float(QUADROS_A_MEIO) / 60.0, fachada - fachada_meio, fachada_meio])
+		salto_max <= SALTO_MAXIMO + FOLGA_PASSO,
+		"%d quadros (%.1f s de tela) para cruzar as %.1f u: maior passo de um bloco em %.4f u, teto %.4f u" % [
+			mf, float(mf) / 60.0, fachada - menor_fachada, salto_max, SALTO_MAXIMO])
+	# A rampa é lei, não desenho: `vel` anda `a × delta` por quadro e a posição anda `vel × delta`,
+	# então o quadro 1 vale `a × delta²`, o 60 meia marcha e o 120 a marcha inteira. Três pontos e o
+	# instante em que a reta para de crescer: sem a lei, o quadro um já daria o passo do teto.
+	_assert("o arranque da massa e linear e dura 2,0 s: a x delta² no quadro 1, meio teto no 60, teto no 120",
+		absf(passo_1 - PASSO_DO_ARRANQUE) < FOLGA_PASSO \
+			and absf(passo_60 - SALTO_MAXIMO * 0.5) < FOLGA_PASSO \
+			and absf(passo_120 - SALTO_MAXIMO) < FOLGA_PASSO and quadro_do_teto == 120,
+		"quadro 1 anda %.5f u (arranque %.5f), quadro 60 anda %.5f u (meio teto %.5f), quadro 120 anda %.5f u, teto em %d" % [
+			passo_1, PASSO_DO_ARRANQUE, passo_60,
+			SALTO_MAXIMO * 0.5, passo_120, quadro_do_teto])
 	_assert("a travessia para no contato: nunca encosta, nunca atravessa",
-		absf(_fachadas(t) - Esquadra.DISTANCIA_DE_CONTATO) < FOLGA_CONTATO \
-			and menor_fachada >= Esquadra.DISTANCIA_DE_CONTATO - FOLGA_CONTATO,
-		"fachada final %.1f u (minima vista %.1f u, contato %.0f u, alcance %.0f u)" % [
-			_fachadas(t), menor_fachada, Esquadra.DISTANCIA_DE_CONTATO, Esquadra.ALCANCE_DE_BLOCO])
+			absf(_fachadas(t) - Esquadra.DISTANCIA_DE_CONTATO) < FOLGA_CONTATO \
+				and menor_fachada >= Esquadra.DISTANCIA_DE_CONTATO - FOLGA_CONTATO,
+		"fachada final %.1f u em %d quadros (minima vista %.1f u, contato %.0f u, alcance %.0f u)" % [
+			_fachadas(t), mf, menor_fachada, Esquadra.DISTANCIA_DE_CONTATO,
+			Esquadra.ALCANCE_DE_BLOCO])
 	# A estacao segue a linha: a muralha hostil recua com a nossa se a nossa recuar, e para nos
 	# proprios nucleos se a nossa avancar demais — `minf(0, ...)` é o teto dela.
 	var nuc_atras: Array = []

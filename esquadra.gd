@@ -32,6 +32,11 @@ extends RefCounted
 ## qualquer travessia. É o recuo que compra os 154 u da largada, e a asserção contrafactual
 ## (`tools/probes/esquadra.gd`, família 2) é o que impede a grade de ser creditada por eles.
 
+## Lei de voo: cada bloco anda por integração (`vel` + `rumo` + `giro`), não por resolução de
+## posição. A ficha é uma só para os 240 blocos — `Voo.FICHA_BLOCO` — porque o que manobra é a
+## muralha, não o bloco individual, e folha de conta não toca `rng`.
+const Voo := preload("res://voo.gd")
+
 ## Grade de casas do bloco. Quatro de boreste a bombordo, três camadas de altura, duas de
 ## profundidade: 24 é o que fecha o orçamento acordado (240 blocos × 24 = 5 760 instâncias) e é
 ## grosso o bastante para o atrito ser lido de longe.
@@ -214,7 +219,8 @@ static func posto_no_lado(esq: int, indice: int, ancora: Vector3) -> Vector3:
 
 func _novo_bloco(id: int, esq: int, indice: int, lado: String, pos: Vector3) -> Dictionary:
 	return {"id": id, "esquadrao": esq, "formacao": indice, "lado": lado, "pos": pos,
-		"vel": Vector3.ZERO, "rumo": 0.0, "navios": float(NAVIOS_NO_BLOCO),
+		"vel": Vector3.ZERO, "rumo": 0.0 if lado == "aliado" else PI, "giro": 0.0,
+		"navios": float(NAVIOS_NO_BLOCO),
 		"MOTORES": 100.0, "ARMAS": 100.0, "TRIPULACAO": 100.0, "vivo": true, "presa": false,
 		"rendicao": false,
 		# Ordem da ponte: o bloco persegue o posto do esquadrão enquanto `com_destino` é falso, e
@@ -393,10 +399,11 @@ static func casas_vivas(bloco: Dictionary) -> int:
 
 
 ## Um quadro de massa: cada bloco persegue o posto do seu esquadrão, e o posto persegue a estação do
-## lado. `move_toward`, nunca teleportar — é a mesma lei que faz as formações dos doze cascos levarem
-## tempo de locomoção, e é ela que faz o campo de aproximação ser cruzado em ~19 s de marcha em vez
-## de resolvido de uma vez: a estação da muralha hostil apenas segue a nossa linha, quem anda até
-## ela são os blocos, a `MARCHA_DE_BLOCO`.
+## lado. Integração pela `Voo.marchar`, nunca teleportar — é a mesma lei que faz as formações dos doze
+## cascos levarem tempo de locomoção, e é ela que faz o campo de aproximação ser cruzado marchando em
+## vez de resolvido de uma vez: a estação da muralha hostil apenas segue a nossa linha, quem anda até
+## ela são os blocos, a `MARCHA_DE_BLOCO` alcançada em ~2 s de ramp (3,0 u/s² para 6,0 u/s) e pouso
+## gravado exato dentro de `Voo.CAPTURA_DE_POUSO`.
 func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 	centro_aliado = _centro_de(nucleos_aliados)
 	centro_hostil = _centro_de(nucleos_hostis)
@@ -408,17 +415,17 @@ func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 			var posto := posto_no_lado(int(b["esquadrao"]), int(b["formacao"]), estacao(lado))
 			# Ordem da ponte ganha do posto de formação: o bloco com destino escrito anda até o
 			# ponto que o comandante apontou e segura lá, em vez de ser puxado de volta pela
-			# estação. `move_toward` é o mesmo de sempre, então o destino não teleporta nada.
+			# estação. Mesma lei para os dois casos, então nem o posto nem o destino teleportam.
 			if bool(b["com_destino"]):
 				posto = b["destino"] as Vector3
 			var partida: Vector3 = b["pos"]
 			var marcha := MARCHA_DE_BLOCO * (0.35 + float(b["MOTORES"]) / 100.0 * 0.65)
-			b["pos"] = (b["pos"] as Vector3).move_toward(posto, delta * marcha)
-			b["vel"] = ((b["pos"] as Vector3) - partida) / maxf(delta, 0.0001)
-			# Rumo só com deslocamento real: parado, o bloco segura o último ângulo em vez de
-			# virar 90° para olhar o próprio eixo nulo.
-			if (b["vel"] as Vector3).length_squared() > 0.0004:
-				b["rumo"] = atan2(b["vel"].x, -b["vel"].z)
+			var voo := Voo.marchar(partida, b["vel"] as Vector3, float(b["rumo"]), posto,
+				delta, marcha, Voo.FICHA_BLOCO)
+			b["pos"] = voo["pos"]
+			b["vel"] = voo["vel"]
+			b["rumo"] = voo["rumo"]
+			b["giro"] = voo["giro"]
 	_reparar(delta)
 
 
