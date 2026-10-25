@@ -48,8 +48,8 @@ extends SceneTree
 ##    duzentos quadros deixou de ser 48 000: o portão de pintura só regrava quem andou mais de
 ##    0,01 u, e o bloco em arranque anda `a × delta²` = 0,0008 u no quadro um. O portão passou a ser
 ##    o regime — nenhum lado escreve mais de um por bloco por quadro, e do primeiro quadro pleno
-##    (medido: 13) em diante os duzentos e quarenta pagam todo quadro, sem buraco no meio do
-##    caminho. Medido: 23 070 + 23 160 escritas contra 24 000 de teto por lado. O relógio é impresso
+##    (medido: 4) em diante os duzentos e quarenta pagam todo quadro, sem buraco no meio do
+##    caminho. Medido: 23 160 + 23 160 escritas contra 24 000 de teto por lado. O relógio é impresso
 ##    como medida, não como lei: a mesma máquina deu 761, 918 e 1 287 ms para os mesmos duzentos
 ##    quadros em três rodadas seguidas — com ±35 % de ruído, nenhum número de `ms` pode ser assinado
 ##    aqui, e a asserção antiga (`custo_ms >= 0.0`) não podia reprovar nada.
@@ -73,14 +73,18 @@ extends SceneTree
 ##     É a régua que desmente a conta de cabeça desta sessão: o campo não é comprado pelo ar entre
 ##     blocos, é comprado pelo recuo, e sem esta asserção "abrir o ar" passaria como se tivesse feito
 ##     a aproximação sozinha.
-## 11) TODO BLOCO ATIRA, E ATIRA NO SEU VIZINHO. No contato, `lancados` é o número de blocos vivos e
-##     armados dos dois lados — ninguém segura fogo porque o próprio fundo da muralha ficou fora de
-##     alcance: o alcance é lido da geometria (2 × fachada + contato + andar = 73 u), não de hábito, e
-##     a escolha de alvo é conferida par a par contra a distância mínima REAL. O fogo local espalha
-##     (muitos alvos), a ordem da ponte converge (um alvo só, o bloco mais próximo do ponto comandado,
-##     e quem não alcança não atira), e a muralha hostil continua local porque a ordem é nossa. A fila
-##     `pares_da_ultima_salva` tem de ter o tamanho exato do ledger: é ela que o desenho lê, e fila
-##     diferente de conta é tela mostrando fogo que a conta não cobrou.
+## 11) A CONTA DO TIRO FECHA COM O CORREDOR. No contato, o ledger é lido como `lancados +
+##     obstruidos == armados`: dos duzentos e quarenta blocos vivos e armados dos dois lados, sessenta
+##     cobram fogo e cento e oitenta ficam com a boca tapada pelo próprio aliado da frente — a muralha
+##     tem quatro blocos amarrados em `z` e só o mais adiantado tem vante limpo. A asserção antiga
+##     («todo bloco atira, ninguém segura fogo porque o fundo da muralha ficou fora de alcance») media
+##     a lei de antes e é impressa aqui como contrafactual, não como régua. O alcance continua lido da
+##     geometria (2 × fachada + contato + andar = 73 u), não de hábito, e a escolha de alvo é conferida
+##     par a par contra a distância mínima REAL. O fogo local espalha (muitos alvos), a ordem da ponte
+##     converge (um alvo só, o bloco mais próximo do ponto comandado, e quem não alcança não atira), e
+##     a muralha hostil continua local porque a ordem é nossa. A fila `pares_da_ultima_salva` tem de
+##     ter o tamanho exato do ledger: é ela que o desenho lê, e fila diferente de conta é tela mostrando
+##     fogo que a conta não cobrou.
 ## 12) O LANCE DA MASSA TEM CANAL DE DESENHO, UM POR CASCO PINTADO. A queixa do comandante era de
 ##     tela, não de conta: com um traço por bloco, vinte e quatro naves cobravam fogo e a tela mostrava
 ##     um cano só por paralelepípedo. Desde aqui o cano É o casco desenhado — um lance por casa viva,
@@ -98,6 +102,17 @@ extends SceneTree
 ##     a distância de formação e o ar da família 2 continuam os mesmos números de antes. Em `z` a
 ##     deriva não entra de propósito: é o eixo do contato, e a fachada que as famílias 2 e 10 assinam é
 ##     medida centro a centro. Quem recebe destino da ponte para no ponto e não balançar em volta dele.
+## 14) O CORREDOR É GEOMETRIA, DADO NENHUM. A família 14 martela as três cláusulas da fatia 4:
+##     obstrução no lado de quem atira (a caixa aliada MAIS ADIANTE que a entrada na caixa do visado
+##     engole o lance — 180 das 240 bocas), absorção no lado de quem recebe (paga a PRIMEIRA caixa do
+##     corredor, não a que a proximidade apontou: na salva comandada o visado é o bloco 120 e quem paga
+##     é o 125, 6 `rebatidos`), e a laje contra laje sem sorteio — duas montadas gemeas fecham os
+##     mesmos 60/180/0 na mesma ordem de pares. O `y` é arma de leitura: com a caixa rasa nos dois
+##     eixos horizontais, o mesmo lance parava no bloco 195; com a caixa de três andares, para no 125,
+##     que é quem o ledger cobrou. O custo é impresso: 240 leituras de caixa e 5 760 leituras de casa
+##     por salva, nenhum dado chamado, e a cauda de `rng`/`visual_rng` atravessa as sessenta salvas
+##     igual à semente cravada. O que a família NÃO prova é pixel — o corredor aceso no visor mora em
+##     `massa_visivel.gd`.
 ##
 ## Uso: godot --headless --path . --quit-after 6000 -s res://tools/probes/esquadra.gd
 
@@ -569,6 +584,154 @@ func _fachadas(e: Esquadra) -> float:
 static func _ar_entre(pa: Vector3, pb: Vector3) -> float:
 	return maxf(absf(pa.x - pb.x) - PISO_X,
 		maxf(absf(pa.z - pb.z) - PISO_Z, absf(pa.y - pb.y) - PISO_Y))
+
+	# ---- Regua da familia 14: o corredor da fatia 4, conferido por conta propria ----
+
+## O teste de laje escrito pela sonda, sobre caixas lidas de `caixa_do_bloco`. Nao e copia com
+## outro nome: e a ponta que pega indice de lista trocado, `exceto` esquecido e INF lido como
+## zero -- tres erros que dariam o MESMO total de lances com pares diferentes.
+static func _laje(intervalo: Array, o: float, d: float, lo: float, largura: float) -> Array:
+	var t0: float = intervalo[0]
+	var t1: float = intervalo[1]
+	var hi := lo + largura
+	if absf(d) <= 1e-9:
+		if o < lo or o > hi:
+			return [1.0, 0.0]
+		return intervalo
+	var entra := (lo - o) / d
+	var sai := (hi - o) / d
+	if entra > sai:
+		var guarda := entra
+		entra = sai
+		sai = guarda
+	return [maxf(t0, entra), minf(t1, sai)]
+
+
+static func _t_entrada(origem: Vector3, trecho: Vector3, caixa: AABB) -> float:
+	if caixa.size.x < 0.0 or caixa.size.y < 0.0 or caixa.size.z < 0.0:
+		return INF
+	var fundo := caixa.position
+	var t: Array = [0.0, 1.0]
+	t = _laje(t, origem.x, trecho.x, fundo.x, caixa.size.x)
+	t = _laje(t, origem.y, trecho.y, fundo.y, caixa.size.y)
+	t = _laje(t, origem.z, trecho.z, fundo.z, caixa.size.z)
+	if float(t[0]) > float(t[1]):
+		return INF
+	return float(t[0])
+
+
+## A escolha da sonda, sem o codigo da esquadra: o bloco vivo mais proximo que caiba no alcance,
+## empate decidido por indice de lista (o `<` estrito). Devolve o bloco e o indice dele.
+static func _alvo_da_sonda(bloco: Dictionary, alvos: Array[Dictionary]) -> Dictionary:
+	var melhor: Dictionary = {}
+	var indice := -1
+	var melhor_d := INF
+	for i in range(alvos.size()):
+		var c: Dictionary = alvos[i]
+		if not bool(c["vivo"]):
+			continue
+		var d: float = (c["pos"] as Vector3).distance_to(bloco["pos"])
+		if d < melhor_d and d <= Esquadra.ALCANCE_DE_BLOCO:
+			melhor_d = d
+			melhor = c
+			indice = i
+	return {"alvo": melhor, "i": indice}
+
+
+## Caixa esticada ate cobrir os dois andares: e a conta de DOIS EIXOS (boreste e profundidade),
+## a que o paragrafo 5 do programa derruba. Com ela o ar vertical de 8,53 u entre andares deixa
+## de existir, e qualquer lance que mude de andar e parado pela fileira da frente.
+static func _caixa_rasa(caixa: AABB) -> AABB:
+	return AABB(Vector3(caixa.position.x, -40.0, caixa.position.z),
+		Vector3(caixa.size.x, 80.0, caixa.size.z))
+
+
+static func _primeira_caixa(origem: Vector3, trecho: Vector3, caixas: Array,
+		exceto: int) -> Dictionary:
+	var melhor := -1
+	var melhor_t := INF
+	for i in range(caixas.size()):
+		if i == exceto:
+			continue
+		var t := _t_entrada(origem, trecho, caixas[i])
+		if t < melhor_t:
+			melhor_t = t
+			melhor = i
+	return {"i": melhor, "t": melhor_t}
+
+
+## A conta da sonda, bloco a bloco, sobre o retrato que a salva vai ler: refaz a escolha, refaz
+## o corte nas duas margens e devolve o elenco que dispara, o pagador de cada lance e os tres
+## contadores que o ledger tambem devolve.
+static func _conta_do_corredor(e: Esquadra) -> Dictionary:
+	var caixas := {"aliado": e._caixas_de("aliado"), "hostil": e._caixas_de("hostil")}
+	var dispara: Array[int] = []
+	var paga: Dictionary = {}
+	var tapados := 0
+	var rebatidos := 0
+	for lado in ["aliado", "hostil"]:
+		var outro := "hostil" if lado == "aliado" else "aliado"
+		var lista: Array[Dictionary] = e.lista_de(lado)
+		var alvos: Array[Dictionary] = e.lista_de(outro)
+		for i in range(lista.size()):
+			var b: Dictionary = lista[i]
+			if not bool(b["vivo"]) or float(b["ARMAS"]) <= 0.0 or float(b["navios"]) <= 0.0:
+				continue
+			var escolhido := _alvo_da_sonda(b, alvos)
+			var alvo: Dictionary = escolhido["alvo"]
+			if alvo.is_empty():
+				continue
+			var origem: Vector3 = b["pos"]
+			var trecho: Vector3 = (alvo["pos"] as Vector3) - origem
+			var t_alvo := _t_entrada(origem, trecho, (caixas[outro] as Array)[int(escolhido["i"])])
+			if t_alvo == INF:
+				t_alvo = 1.0
+			var na_frente := _primeira_caixa(origem, trecho, caixas[lado], i)
+			var bate := _primeira_caixa(origem, trecho, caixas[outro], -1)
+			var limpo: bool = (int(na_frente["i"]) == -1 or float(na_frente["t"]) >= t_alvo) \
+					and int(bate["i"]) != -1 and float(bate["t"]) <= 1.0
+			if not limpo:
+				tapados += 1
+				continue
+			dispara.append(int(b["id"]))
+			paga[int(b["id"])] = int((alvos[int(bate["i"])] as Dictionary)["id"])
+			if int(bate["i"]) != int(escolhido["i"]):
+				rebatidos += 1
+	return {"dispara": dispara, "paga": paga, "lancados": dispara.size(),
+		"tapados": tapados, "rebatidos": rebatidos}
+
+
+## Coluna de boreste-andar: blocos a menos de 3,0 u um do outro em boreste e em altura. As
+## colunas tem 13,0 u de passo, os andares 12,0 u, e a deriva de custodia desloca no maximo
+## 0,6/0,45 u -- a tolerancia e um quarto do menor passo. Lida da POSICAO, nao do indice de
+## formacao: se a grade mentir para a coluna, e a familia 14 que pega.
+static func _colunas_de(lista: Array[Dictionary]) -> Array:
+	var grupos: Array = []
+	for b in lista:
+		if not bool(b["vivo"]) or float(b["ARMAS"]) <= 0.0 or float(b["navios"]) <= 0.0:
+			continue
+		var p: Vector3 = b["pos"]
+		var grupo: Dictionary = {}
+		for g in grupos:
+			var gp: Vector3 = g["pos"]
+			if absf(gp.x - p.x) < 3.0 and absf(gp.y - p.y) < 3.0:
+				grupo = g
+				break
+		if grupo.is_empty():
+			grupo = {"pos": p, "membros": []}
+			grupos.append(grupo)
+		(grupo["membros"] as Array).append(b)
+	return grupos
+
+
+## Quem tem vante limpo na coluna: o aliado olha para -z (menor z na frente), o hostil para +z.
+static func _mais_frente(a: Dictionary, b: Dictionary, aliada: bool) -> bool:
+	var za: float = (a["pos"] as Vector3).z
+	var zb: float = (b["pos"] as Vector3).z
+	if aliada:
+		return za < zb
+	return za > zb
+
 
 func _initialize() -> void:
 	print("SONDA-ESQUADRA: comecando")
@@ -1263,10 +1426,20 @@ func _initialize() -> void:
 	var armados := _armados(f)
 	var fogo := f.troca_salva()
 	var lancados := int(fogo.get("lancados", 0))
-	_assert("no contato a muralha inteira atira: todo bloco vivo e armado encontra alvo",
-		lancados == armados,
-		"%d lancados contra %d blocos armados, %d quadros de travessia, fachada %.1f u, alcance %.1f u" % [
-			lancados, armados, q_fogo, _fachadas(f), Esquadra.ALCANCE_DE_BLOCO])
+	# A precondition da fatia 4, declarada sem afrouxar nenhuma conta: o paragrafo 5 do programa
+	# INVERTE a frase antiga. O alvo continua sendo o mais proximo (a lei de escolha nao mudou um
+	# digito), mas entra na salva quem tem VANTE LIMPO, e quem tem o proprio aliado na frente fica
+	# com a boca de fogo tapada. A regua velha nao desapareceu: volta como
+	# `lancados + obstruidos == armados` -- ou dispara ou e tapado, e nada se perde no meio -- com o
+	# numero de antes impresso no detalhe, para ninguem ler sessenta como "a muralha esqueceu de
+	# atirar".
+	_assert("no contato a muralha atira por coluna: todo bloco vivo e armado ou dispara ou e tapado pelo proprio aliado",
+		lancados + int(fogo.get("obstruidos", 0)) == armados and lancados > 0 \
+				and int(fogo.get("obstruidos", 0)) > 0,
+			"%d lancados + %d tapados pelo corredor = %d blocos armados, %d quadros de travessia, " % [
+				lancados, int(fogo.get("obstruidos", 0)), armados, q_fogo] \
+			+ "fachada %.1f u, alcance %.1f u (a lei de antes cobrava os mesmos %d como lancados)" % [
+				_fachadas(f), Esquadra.ALCANCE_DE_BLOCO, armados])
 	var fila := f.pares_da_ultima_salva
 	_assert("a fila entregue ao desenho tem o tamanho exato do ledger", fila.size() == lancados,
 		"%d pares na fila contra %d lances cobrados" % [fila.size(), lancados])
@@ -1422,7 +1595,7 @@ func _initialize() -> void:
 		_selo_da_fila(conc_j) == _selo_da_fila(jogo._tracos_voando) \
 				and _blocos_alvo_distintos(conc_j, true) == 1 \
 				and _pontos_distintos(conc_j, true) > 1,
-		"%d tracos aliados sobre %d bloco visado, repartidos em %d casco de destino" % [
+		"%d tracos na fila dos dois lados, %d bloco visado de quem atira aliado, repartidos em %d casco de destino" % [
 			int(conc_j.size()), _blocos_alvo_distintos(conc_j, true),
 			_pontos_distintos(conc_j, true)])
 	jogo.esquadra.soltar_fogo()
@@ -1431,7 +1604,7 @@ func _initialize() -> void:
 	_assert("soltando a ordem, o desenho volta a ter um bloco visado por bloco que atira",
 		_selo_da_fila(conc_s) == _selo_da_fila(jogo._tracos_voando) \
 				and _blocos_alvo_distintos(conc_s, true) > 1,
-		"%d tracos aliados espalhados sobre %d blocos visados" % [
+		"%d tracos na fila dos dois lados, %d blocos visados de quem atira aliado" % [
 			int(conc_s.size()), _blocos_alvo_distintos(conc_s, true)])
 	jogo._tracos_escritas = 0
 	jogo._armar_tracos()
@@ -1616,6 +1789,238 @@ func _initialize() -> void:
 				rad_to_deg(pior_proa), rad_to_deg(pior_proa_h), rad_to_deg(degrau_do_leme)] \
 				+ "graus (um degrau do leme do bloco); o curso que o residuo mandaria seria %.1f graus" % [
 					rad_to_deg(pior_residuo)])
+
+	# ── 14. o corredor: a fileira da frente atira, e o que passa bate em quem esta atras ────────
+	# A fatia 4 troca o portao do lance: de "esta no alcance?" para "tem vante limpo?". Quatro pontas,
+	# cada uma capaz de falhar sozinha:
+	# * A CAIXA. Sem ela nenhuma das outras e lida, e ela tem de sair do MESMO volume que a tela
+	#   pinta: o piso assinado da grade (10,52 x 3,47 x 4,45 u) contra a caixa das casas vivas.
+	# * A CONTA. A sonda refaz o corte bloco a bloco com laje escrita em casa (laje, nao esfera: com
+	#   esfera de raio 5,26 os vizinhos de boreste, a 2,48 u de ar, parariam lances que passam por
+	#   fora de todo casco desenhado) e confere elenco, silencio e PAGADOR contra o ledger.
+	# * A COLUNA. A consequencia visivel: nas trinta colunas de boreste-andar de cada lado, fileiras a
+	#   7,0 u com 4,45 u de casco, so a frente tem vante limpo. Cobra o conjunto EXATO das frentes --
+	#   nem uma a mais (um bloco do meio atirando por cima do proprio aliado e o buraco na lei), nem
+	#   uma a menos (uma frente calada sem corpo na frente e o ledger comendo fogo).
+	# * A FRESTA. O "bate no aliado atras" do paragrafo 5, montado a regua: existe alvo comandado cujo
+	#   lance cruza os 8,53 u de ar entre os dois andares, passa por fora da primeira caixa inimiga e
+	#   cobra de quem esta atras dela. Com a conta de DOIS EIXOS o mesmo lance morre na frente -- e e
+	#   isso que prova que o y nao e enfeite no alcance da massa.
+	var e_cor := _nova_esquadra()
+	_marchar_ate_contato(e_cor, _nucleos(true), _nucleos(false))
+	var ca_a: Array[Dictionary] = e_cor.lista_de("aliado")
+	var ca_h: Array[Dictionary] = e_cor.lista_de("hostil")
+	var b_cheio: Dictionary = ca_a[0]
+	var cx_cheio := e_cor.caixa_do_bloco(b_cheio)
+	_assert("a caixa do bloco cheio e o piso assinado da grade, nos tres eixos",
+		absf(cx_cheio.size.x - PISO_X) <= 0.02 and absf(cx_cheio.size.y - PISO_Y) <= 0.02 \
+				and absf(cx_cheio.size.z - PISO_Z) <= 0.02,
+			"caixa lida %.3f x %.3f x %.3f u contra pisos %.2f / %.2f / %.2f u, em %d casas, " % [
+				cx_cheio.size.x, cx_cheio.size.y, cx_cheio.size.z, PISO_X, PISO_Y, PISO_Z,
+				Esquadra.casas_vivas(b_cheio)] \
+			+ "rumo %.1f graus (a caixa e o volume dos cascos pintados, nao uma vontade)" % [
+				rad_to_deg(float(b_cheio["rumo"]))])
+	var b_meio: Dictionary = ca_a[1]
+	var navios_cheios := float(b_meio["navios"])
+	b_meio["navios"] = float(NAVIOS_NO_BLOCO) * 0.5
+	var cx_meio := e_cor.caixa_do_bloco(b_meio)
+	var casas_meio := Esquadra.casas_vivas(b_meio)
+	b_meio["navios"] = navios_cheios
+	var b_morto: Dictionary = ca_a[2]
+	b_morto["vivo"] = false
+	var cx_morto := e_cor.caixa_do_bloco(b_morto)
+	b_morto["vivo"] = true
+	_assert("a caixa segue a lotacao: meio bloco perde o topo, morto nao tapa lance nenhum",
+		casas_meio == 12 and absf(cx_meio.size.y - (PISO_Y - Esquadra.PASSO_CASA_Y)) <= 0.02 \
+				and cx_morto.size.x < 0.0 and cx_morto.size.y < 0.0 and cx_morto.size.z < 0.0,
+			"meio bloco: %d casas e %.3f u de altura contra %.3f u do cheio (fecha o topo, nao esburaca o " % [
+				casas_meio, cx_meio.size.y, cx_cheio.size.y] \
+			+ "meio); morto: size %.1f, que e o 'nao existe' do AABB" % [cx_morto.size.x])
+	var leituras := 0
+	for lado14a in ["aliado", "hostil"]:
+		for b14a in e_cor.lista_de(lado14a):
+			leituras += Esquadra.casas_vivas(b14a)
+	var conta14 := _conta_do_corredor(e_cor)
+	var salva14 := e_cor.troca_salva()
+	var lancados14 := int(salva14.get("lancados", 0))
+	var tapados14 := int(salva14.get("obstruidos", 0))
+	var rebatidos14 := int(salva14.get("rebatidos", 0))
+	var id_que_dispara: Dictionary = {}
+	var dispara_conta: Array = conta14["dispara"]
+	var paga_conta: Dictionary = conta14["paga"]
+	var pagadores_trocados := 0
+	for par14 in e_cor.pares_da_ultima_salva:
+		var oid14 := int((par14["origem"] as Dictionary)["id"])
+		id_que_dispara[oid14] = true
+		if int(paga_conta.get(oid14, -1)) != int((par14["bate"] as Dictionary)["id"]):
+			pagadores_trocados += 1
+	var divergencias := pagadores_trocados
+	for did14 in dispara_conta:
+		if not id_que_dispara.has(did14):
+			divergencias += 1
+	for oid15 in id_que_dispara:
+		if not dispara_conta.has(oid15):
+			divergencias += 1
+	_assert("o corredor da sonda e o corredor da esquadra: mesmo lance, mesmo silencio, mesmo pagador",
+		divergencias == 0 and int(conta14["lancados"]) == lancados14 \
+				and int(conta14["tapados"]) == tapados14 and int(conta14["rebatidos"]) == rebatidos14,
+			"esquadra: %d lancados, %d tapados, %d rebatidos. sonda: %d, %d, %d, sobre %d blocos " % [
+				lancados14, tapados14, rebatidos14, int(conta14["lancados"]), int(conta14["tapados"]),
+				int(conta14["rebatidos"]), _armados(e_cor)] \
+			+ "armados, com %d divergencias de elenco ou de pagador" % divergencias)
+	var colunas_a := _colunas_de(ca_a)
+	var colunas_h := _colunas_de(ca_h)
+	var frente_calada := 0
+	var costa_disparando := 0
+	var fundos: Array[int] = []
+	for lado14b in ["aliado", "hostil"]:
+		var aliada14 := String(lado14b) == "aliado"
+		var colunas_lado: Array = colunas_a if aliada14 else colunas_h
+		for g14 in colunas_lado:
+			var membros: Array = g14["membros"]
+			fundos.append(membros.size())
+			var ponta14: Dictionary = membros[0]
+			for m14 in membros:
+				if _mais_frente(m14 as Dictionary, ponta14, aliada14):
+					ponta14 = m14 as Dictionary
+			for m15 in membros:
+				var dispara14 := id_que_dispara.has(int((m15 as Dictionary)["id"]))
+				if (m15 as Dictionary) == ponta14 and not dispara14:
+					frente_calada += 1
+				if (m15 as Dictionary) != ponta14 and dispara14:
+					costa_disparando += 1
+	_assert("a lei da coluna e exata: uma boca de fogo por coluna de boreste-andar, sempre a da frente",
+		frente_calada == 0 and costa_disparando == 0 \
+				and colunas_a.size() + colunas_h.size() == 2 * BLOCOS_POR_LADO / Esquadra.LINHAS_NO_ESQUADRAO \
+				and fundos.min() == Esquadra.LINHAS_NO_ESQUADRAO \
+				and fundos.max() == Esquadra.LINHAS_NO_ESQUADRAO,
+			"%d colunas lidas (%d aliadas + %d hostis), todas de %d blocos de fundo, %d lances na salva, " % [
+				colunas_a.size() + colunas_h.size(), colunas_a.size(), colunas_h.size(),
+				fundos.min(), lancados14] \
+			+ "%d fileiras da frente caladas sem corpo na frente e %d blocos de tras atirando por cima " % [
+				frente_calada, costa_disparando] \
+			+ "do proprio aliado")
+
+	# A fresta montada a regua: o atirador e a frente da coluna aliada mais a boreste, e o alvo e o
+	# primeiro bloco hostil vivo e em alcance cuja primeira caixa na linha NAO e ele mesmo. A busca e
+	# por indice de lista, sem sorteio, e o ledger e cobrado sobre o caso que ela escolheu.
+	var e_fresta := _nova_esquadra()
+	_marchar_ate_contato(e_fresta, _nucleos(true), _nucleos(false))
+	var fl_h: Array[Dictionary] = e_fresta.lista_de("hostil")
+	var cx_fresta: Array = e_fresta._caixas_de("hostil")
+	var grupo_x0: Dictionary = {}
+	var menor_x := INF
+	for g15 in _colunas_de(e_fresta.lista_de("aliado")):
+		if (g15["pos"] as Vector3).x < menor_x:
+			menor_x = (g15["pos"] as Vector3).x
+			grupo_x0 = g15
+	var atirador: Dictionary = {}
+	if not grupo_x0.is_empty():
+		for m16 in (grupo_x0["membros"] as Array):
+			if atirador.is_empty() or _mais_frente(m16 as Dictionary, atirador, true):
+				atirador = m16 as Dictionary
+	var fresta_h := -1
+	var fresta_bate := -1
+	if not atirador.is_empty():
+		var origem14: Vector3 = atirador["pos"]
+		for h14 in range(fl_h.size()):
+			var vivo14: Dictionary = fl_h[h14]
+			if not bool(vivo14["vivo"]):
+				continue
+			if (vivo14["pos"] as Vector3).distance_to(origem14) > Esquadra.ALCANCE_DE_BLOCO:
+				continue
+			var trecho14: Vector3 = (vivo14["pos"] as Vector3) - origem14
+			var primeira14 := _primeira_caixa(origem14, trecho14, cx_fresta, -1)
+			if int(primeira14["i"]) != -1 and int(primeira14["i"]) != h14 \
+					and float(primeira14["t"]) <= 1.0:
+				fresta_h = h14
+				fresta_bate = int(primeira14["i"])
+				break
+	var salva15: Dictionary = {}
+	var alvo_pelo_ledger := -1
+	var paga_pelo_ledger := -1
+	var cobrados_errados := 0
+	var intactos_movidos := 0
+	var rasa_bate := -1
+	var alvo_id14 := -1
+	var bate_id14 := -1
+	var y_alvo14 := 0.0
+	var y_bate14 := 0.0
+	if fresta_h >= 0 and fresta_bate >= 0:
+		alvo_id14 = int(fl_h[fresta_h]["id"])
+		bate_id14 = int(fl_h[fresta_bate]["id"])
+		y_alvo14 = (fl_h[fresta_h]["pos"] as Vector3).y
+		y_bate14 = (fl_h[fresta_bate]["pos"] as Vector3).y
+		e_fresta.mandar_fogo(fl_h[fresta_h]["pos"] as Vector3)
+		var antes14: Dictionary = {}
+		for hb14 in fl_h:
+			antes14[int(hb14["id"])] = float(hb14["navios"]) + float(hb14["MOTORES"]) \
+					+ float(hb14["ARMAS"]) + float(hb14["TRIPULACAO"])
+		salva15 = e_fresta.troca_salva()
+		var pagos14: Dictionary = {}
+		for par15 in e_fresta.pares_da_ultima_salva:
+			pagos14[int((par15["bate"] as Dictionary)["id"])] = true
+			if int((par15["origem"] as Dictionary)["id"]) == int(atirador["id"]):
+				alvo_pelo_ledger = int((par15["alvo"] as Dictionary)["id"])
+				paga_pelo_ledger = int((par15["bate"] as Dictionary)["id"])
+		for hb15 in fl_h:
+			var era14 := float(antes14.get(int(hb15["id"]), -1.0))
+			var agora14 := float(hb15["navios"]) + float(hb15["MOTORES"]) + float(hb15["ARMAS"]) \
+					+ float(hb15["TRIPULACAO"])
+			if era14 < 0.0:
+				continue
+			if pagos14.has(int(hb15["id"])) and agora14 >= era14:
+				cobrados_errados += 1
+			if not pagos14.has(int(hb15["id"])) and agora14 != era14:
+				intactos_movidos += 1
+		var origem15: Vector3 = atirador["pos"]
+		var trecho15: Vector3 = (fl_h[fresta_h]["pos"] as Vector3) - origem15
+		var rasa_t := INF
+		for k14 in range(cx_fresta.size()):
+			var tr14 := _t_entrada(origem15, trecho15, _caixa_rasa(cx_fresta[k14]))
+			if tr14 < rasa_t:
+				rasa_t = tr14
+				rasa_bate = k14
+	_assert("a fresta existe: ha ordem da ponte cujo lance passa por fora da frente e cobra de quem esta atras",
+		fresta_h >= 0 and fresta_bate != fresta_h and alvo_pelo_ledger == alvo_id14 \
+				and paga_pelo_ledger == bate_id14 and int(salva15.get("rebatidos", 0)) > 0,
+			"visado id %d no andar y=%.2f, pagador id %d no andar y=%.2f, %d rebatidos na salva comandada, " % [
+				alvo_id14, y_alvo14, bate_id14, y_bate14, int(salva15.get("rebatidos", 0))] \
+			+ "alvo lido do ledger=%d e pagador=%d (busca da sonda: indice %d, que e o %d da lista)" % [
+				alvo_pelo_ledger, paga_pelo_ledger, fresta_h, fresta_bate])
+	_assert("quem paga e a caixa interceptada, nao a apontada: o ledger cobra o pagador e mais ninguem",
+		fresta_h >= 0 and cobrados_errados == 0 and intactos_movidos == 0,
+			"%d pagadores cobrados sem perder estado e %d hostis fora do elenco de pagadores que mudaram " % [
+				cobrados_errados, intactos_movidos] \
+			+ "de estado, sobre %d blocos hostis lidos antes e depois da salva" % fl_h.size())
+	_assert("o y e arma do alcance: a conta de dois eixos parava o mesmo lance na fileira da frente",
+		fresta_h >= 0 and rasa_bate >= 0 and rasa_bate != fresta_bate,
+			"com a caixa rasa (andares colados, a lei que o paragrafo 5 derruba) o primeiro corpo na " \
+			+ "linha e o bloco %d; com a caixa de verdade e o bloco %d, que e quem o ledger cobrou" % [
+				int(fl_h[rasa_bate]["id"]) if rasa_bate >= 0 else -1, bate_id14])
+	var gemea_a := _nova_esquadra()
+	var gemea_b := _nova_esquadra()
+	_marchar_ate_contato(gemea_a, _nucleos(true), _nucleos(false))
+	_marchar_ate_contato(gemea_b, _nucleos(true), _nucleos(false))
+	var s_a := gemea_a.troca_salva()
+	var s_b := gemea_b.troca_salva()
+	var ids_a: Array[int] = []
+	var ids_b: Array[int] = []
+	for pa14 in gemea_a.pares_da_ultima_salva:
+		ids_a.append(int((pa14["origem"] as Dictionary)["id"]))
+	for pb14 in gemea_b.pares_da_ultima_salva:
+		ids_b.append(int((pb14["origem"] as Dictionary)["id"]))
+	_assert("o corredor e geometria pura: custo em leituras de casa e duas montadas gemeas iguais",
+		leituras == 2 * BLOCOS_POR_LADO * CASAS and ids_a == ids_b \
+				and int(s_a.get("lancados", 0)) == int(s_b.get("lancados", 0)) \
+				and int(s_a.get("obstruidos", 0)) == int(s_b.get("obstruidos", 0)) \
+				and int(s_a.get("rebatidos", 0)) == int(s_b.get("rebatidos", 0)),
+			"a salva le %d caixas e %d leituras de casa (2 x %d blocos x %d casas) sem um dado sorteado; " % [
+				2 * BLOCOS_POR_LADO, leituras, BLOCOS_POR_LADO, CASAS] \
+			+ "gemeas: %d/%d/%d contra %d/%d/%d lancados-tapados-rebatidos, %d pares na mesma ordem" % [
+				int(s_a.get("lancados", 0)), int(s_a.get("obstruidos", 0)), int(s_a.get("rebatidos", 0)),
+				int(s_b.get("lancados", 0)), int(s_b.get("obstruidos", 0)), int(s_b.get("rebatidos", 0)),
+				ids_a.size()])
 
 	print("SONDA-ESQUADRA: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for nota in notes:

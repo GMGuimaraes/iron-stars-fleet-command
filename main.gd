@@ -4439,12 +4439,14 @@ func _apply_hostile_tactics() -> void:
 	if previous != hostile_posture and is_instance_valid(report_label):
 		report_label.text = "INTELIGÊNCIA // " + tactical_note
 
-## Os pontos de impacto de uma salva. O disco é o plano da mesa de batalha — lateral e profundidade
-## a partir da mira, nunca vertical: as esquadras vivem em y ≈ 0, então um leque aberto para cima
-## jogaria metade da salva num lugar onde não existe casco nenhum. É o mesmo plano do anel desenhado
-## na mesa holográfica, e é por isso que o alcance é geometricamente honesto. Os fracos vão do
-## centro até a borda e o ângulo sai do índice do casco no ouro ângulo — geometria decide a
-## esparrama, nenhum sorteio é chamado aqui.
+## Os pontos de impacto de uma salva da LINHA. O disco é o plano da mesa de batalha — lateral e
+## profundidade a partir da mira, nunca vertical: os doze cascos vivem em y ≈ 0, então um leque
+## aberto para cima jogaria metade da salva num lugar onde não existe casco nenhum. É o mesmo plano
+## do anel desenhado na mesa holográfica, e é por isso que o alcance é geometricamente honesto. Os
+## fracos vão do centro até a borda e o ângulo sai do índice do casco no ouro ângulo — geometria
+## decide a esparrama, nenhum sorteio é chamado aqui. A muralha não passa por aqui, e a cláusula do
+## «nunca vertical» vale só para ela: os blocos empilham três andares e a salva da massa resolve
+## caixa contra caixa nos três eixos (`Esquadra.troca_salva`), onde o `y` é arma de alcance.
 func _pontos_de_impacto(origem: Vector3, alvo: Vector3, no_casco: int, densidade: int) -> Array[Vector3]:
 	var direcao := alvo - origem
 	if direcao.length_squared() < 0.0001:

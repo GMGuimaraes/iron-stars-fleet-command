@@ -190,6 +190,15 @@ var centro_hostil := Vector3.ZERO
 ## Quem caminha são os BLOCOS, a `MARCHA_DE_BLOCO`, até o posto que esta estação dita: o recuo é
 ## alvo, teleporte de corpo não há.
 var recuo_hostil := 0.0
+## ---- A caixa que para um lance (fatia 4) ----
+## meia-caixa da malha de uma réplica, escalada. Lida do próprio `ArrayMesh`, não cravada na
+## calculadora: é a mesma malha que `pintar` escreve no `MultiMesh`, então a caixa que decide a
+## obstrução e o casco que o olho vê têm de ser o mesmo corpo por construção.
+var _meia_casco := Vector3.ZERO
+## salva em curso: caixas dos dois lados, indexadas pela posição na lista do lado. Recalculadas
+## uma vez por salva (não por par) porque é o único jeito de a varredura custar
+## `BLOCOS_NO_LADO` caixas e não `BLOCOS_NO_LADO²`.
+var _caixas := {"aliado": [], "hostil": []}
 var salva_numero := 0
 var perdas_aliadas := 0
 var perdas_hostis := 0
@@ -443,6 +452,84 @@ static func casas_vivas(bloco: Dictionary) -> int:
 	if frac <= 0.0:
 		return 0
 	return maxi(1, int(ceilf(frac * float(CASAS))))
+
+
+## ---- Linha de visada da massa ----
+
+## A caixa de um bloco: o volume dos cascos VIVOS, na atitude do bloco, mais a meia-caixa da malha.
+## É lida casa a casa porque a ordem das casas fecha o TOPO antes do meio (`casa_local`): um bloco
+## que perdeu um terço da lotação perde também a cobertura que dava a quem está atrás dele, e é
+## isso que faz a escudeira ralada abrir corredor para a fileira seguinte. Sem navio, sem caixa:
+## `size` negativo é o "não existe" do `AABB`, e `_entrada_na_caixa` recusa volume assim.
+func caixa_do_bloco(bloco: Dictionary) -> AABB:
+	var casas := casas_vivas(bloco)
+	if casas <= 0 or not bool(bloco["vivo"]):
+		return AABB(Vector3.ZERO, Vector3(-1.0, -1.0, -1.0))
+	if _meia_casco == Vector3.ZERO:
+		_meia_casco = malha_replica().get_aabb().size * 0.5 * ESCALA_REPLICA
+	var rot := Basis.from_euler(Vector3(0.0, float(bloco["rumo"]), 0.0))
+	var minimo := Vector3.ONE * 1e9
+	var maximo := Vector3.ONE * -1e9
+	for c in range(casas):
+		var local: Vector3 = rot * casa_local(c)
+		minimo = Vector3(
+			minf(minimo.x, local.x - _meia_casco.x),
+			minf(minimo.y, local.y - _meia_casco.y),
+			minf(minimo.z, local.z - _meia_casco.z))
+		maximo = Vector3(
+			maxf(maximo.x, local.x + _meia_casco.x),
+			maxf(maximo.y, local.y + _meia_casco.y),
+			maxf(maximo.z, local.z + _meia_casco.z))
+	var centro: Vector3 = bloco["pos"]
+	return AABB(centro + minimo, maximo - minimo)
+
+
+## Em que ponto do trecho `origem → origem+trecho` a linha entra na caixa. Devolve INF quando a
+## linha passa fora, e 0 quando a origem já está dentro dela. Método das lajes (slab): o corredor
+## de um bloco é uma caixa, não uma esfera — com a esfera de `raio = 5,26` os vizinhos de boreste,
+## a 2,48 u de ar, parariam lances que passam por fora de todo casco desenhado.
+static func _entrada_na_caixa(origem: Vector3, trecho: Vector3, caixa: AABB) -> float:
+	if caixa.size.x < 0.0 or caixa.size.y < 0.0 or caixa.size.z < 0.0:
+		return INF
+	var t0 := 0.0
+	var t1 := 1.0
+	for e in range(3):
+		var o: float = origem[e]
+		var d: float = trecho[e]
+		var lo: float = caixa.position[e]
+		var hi: float = lo + caixa.size[e]
+		if absf(d) < 1e-9:
+			if o < lo or o > hi:
+				return INF
+			continue
+		var a := (lo - o) / d
+		var b := (hi - o) / d
+		if a > b:
+			var troca := a
+			a = b
+			b = troca
+		t0 = maxf(t0, a)
+		t1 = minf(t1, b)
+		if t0 > t1:
+			return INF
+	return t0
+
+
+## A caixa mais à frente na linha de um lance, dentro de uma lista. Devolve o índice do bloco e o
+## `t` da entrada; índice -1 quando nada atravessa o corredor antes do fim do trecho. Ordem de
+## lista decide empate, nunca sorteio: a mesma montada gemea fecha o mesmo par.
+func _absorvedor(origem: Vector3, trecho: Vector3, lado: String, exceto: int) -> Dictionary:
+	var caixas: Array = _caixas[lado]
+	var melhor := -1
+	var melhor_t := INF
+	for i in range(caixas.size()):
+		if i == exceto:
+			continue
+		var t := _entrada_na_caixa(origem, trecho, caixas[i])
+		if t < melhor_t:
+			melhor_t = t
+			melhor = i
+	return {"i": melhor, "t": melhor_t}
 
 
 ## Um quadro de massa: cada bloco persegue o posto do seu esquadrão, e o posto persegue a estação do
@@ -703,28 +790,71 @@ func com_destino() -> int:
 ## A troca de salvas da massa. Fecha o ledger do bloco sem encostar no ledger dos doze cascos: a
 ## contagem que as sondas dos núcleos assinam não ganha uma linha, e é por isso que a massa é um
 ## segundo corpo no tabuleiro, não um multiplicador dos doze canhões que já existem.
+##
+## A partir da fatia 4 a salva também atravessa um CORREDOR, e a geometria decide quem atira:
+## * `obstruidos` — um lance que tem a caixa de um Aliado na frente antes de alcançar o alvo visado
+##   não sai. É a lei da coluna: numa fileira de quatro blocos amarrados em z a 7,0 u centro a
+##   centro, com 4,45 u de casco, só o mais adiantado tem vante limpo, e os três de trás ficam com
+##   a boca de fogo tapada pelo aliado. Bloco ralado perde o topo, e com o topo perde a cobertura —
+##   a escudeira que afileira de novo quando a frente afunda é a mesma caixa, lida casa a casa.
+## * `rebatidos` — o golpe é pago na PRIMEIRA caixa do lado visado que a linha atravessa, não na
+##   que o sorteio de proximidade apontou. É o «o que passa bate no aliado atrás» do pedido: um
+##   lance que chega por cima ou por baixo do primeiro bloco — os dois andares têm 3,47 u de caixa
+##   em 12,0 u de passo — entra pela fresta e acerta a fileira de trás da própria muralha inimiga.
+## Nenhum dos dois canais sorteia: é laje contra laje, e duas montadas gemeas fecham os mesmos
+## três dígitos de `obstruidos` e `rebatidos`.
 func troca_salva() -> Dictionary:
 	salva_numero += 1
 	var lancados := 0
 	var feridos := 0
 	var afundados := 0
 	var rendidos := 0
+	var obstruidos := 0
+	var rebatidos := 0
 	# Os dois lados atiram sobre o retrato do QUADRO ANTERIOR: se o aliado resolvesse primeiro,
 	# o hostil devolveria fogo contra uma massa que já encolheu, e a ordem do laço mudaria o
 	# resultado. `destinos` é a fila de pares lida antes de qualquer escrita.
+	_caixas["aliado"] = _caixas_de("aliado")
+	_caixas["hostil"] = _caixas_de("hostil")
 	var pares: Array[Dictionary] = []
 	for lado in ["aliado", "hostil"]:
-		var alvos := lista_de("hostil" if lado == "aliado" else "aliado")
+		var outro := "hostil" if lado == "aliado" else "aliado"
+		var alvos := lista_de(outro)
 		# A ordem da ponte alcança só a nossa muralha; a hostil continua com a lei de linha e por
 		# isso o comando do jogador nunca muda o que o inimigo escolhe.
 		var comandado: bool = (String(lado) == "aliado") and fogo_concentrado
 		var visado := _vizinho_de(alvo_comandado, alvos) if comandado else {}
-		for b in lista_de(lado):
+		var lista := lista_de(lado)
+		for i in range(lista.size()):
+			var b: Dictionary = lista[i]
 			if not bool(b["vivo"]) or float(b["ARMAS"]) <= 0.0 or float(b["navios"]) <= 0.0:
 				continue
 			var alvo := _alvo_do_bloco(b, alvos, visado, comandado)
-			if not alvo.is_empty():
-				pares.append({"origem": b, "alvo": alvo, "lado": lado})
+			if alvo.is_empty():
+				continue
+			var j := alvos.find(alvo)
+			var origem: Vector3 = b["pos"]
+			var trecho: Vector3 = (alvo["pos"] as Vector3) - origem
+			# Onde a linha entra na caixa do bloco visado. É o marco contra o qual o aliado da
+			# frente é medido: um corpo nosso MAIS ADIANTE que esse ponto tapa o lance; um corpo
+			# nosso atrás do alvo não tem nada a ver com ele.
+			var t_alvo := _entrada_na_caixa(origem, trecho, (_caixas[outro] as Array)[j])
+			if t_alvo == INF:
+				t_alvo = 1.0
+			var na_frente := _absorvedor(origem, trecho, String(lado), i)
+			if na_frente["i"] != -1 and float(na_frente["t"]) < t_alvo:
+				obstruidos += 1
+				continue
+			# Primeira caixa do lado visado no corredor: pode ser o bloco apontado pela
+			# proximidade, pode ser o que está na frente dele — e se for outro, é ele que paga.
+			var bate := _absorvedor(origem, trecho, outro, -1)
+			var k := int(bate["i"])
+			if k == -1 or float(bate["t"]) > 1.0:
+				obstruidos += 1
+				continue
+			if k != j:
+				rebatidos += 1
+			pares.append({"origem": b, "alvo": alvo, "bate": alvos[k], "lado": lado})
 	# Espelho para o desenho: a mesma fila, na mesma ordem, com o lado de quem atira. É o único
 	# canal que a tela tem para saber de onde para onde saiu cada lance da massa, e ela não pode
 	# divergir do ledger nem por um par — `massa_visivel.gd` cobra os dois tamanhos iguais.
@@ -732,12 +862,12 @@ func troca_salva() -> Dictionary:
 	for par in pares:
 		lancados += 1
 		var origem: Dictionary = par["origem"]
-		var alvo: Dictionary = par["alvo"]
+		var bate: Dictionary = par["bate"]
 		var dano := DANO_DE_BLOCO * (float(origem["navios"]) / float(NAVIOS_NO_BLOCO)) \
 			* (0.25 + float(origem["ARMAS"]) / 100.0 * 0.75)
 		var eixo: String = SETORES_DA_SALVA[
 			(int(origem["id"]) + salva_numero) % SETORES_DA_SALVA.size()]
-		if _aplicar_golpe(alvo, eixo, dano):
+		if _aplicar_golpe(bate, eixo, dano):
 			afundados += 1
 		else:
 			feridos += 1
@@ -746,7 +876,18 @@ func troca_salva() -> Dictionary:
 	_prencher_rendicoes()
 	rendidos = _rendidas_na_ultima_salva
 	return {"lancados": lancados, "feridos": feridos, "afundados": afundados,
-		"rendidos": rendidos, "salva": salva_numero}
+		"rendidos": rendidos, "obstruidos": obstruidos, "rebatidos": rebatidos,
+		"salva": salva_numero}
+
+
+## As caixas de um lado, na ordem da lista e uma vez por salva. Bloco morto entra com caixa vazia
+## de propósito: a lista é o índice, e um buraco no meio dela desalinharia o `i` de quem atira com
+## a própria caixa.
+func _caixas_de(lado: String) -> Array:
+	var out: Array = []
+	for b in lista_de(lado):
+		out.append(caixa_do_bloco(b))
+	return out
 
 
 ## A fila do desenho: um LANCE POR CASA viva de cada bloco que atirou. É a leitura visual da
@@ -761,7 +902,9 @@ func tiros_da_salva() -> Array[Dictionary]:
 	var tiros: Array[Dictionary] = []
 	for par in pares_da_ultima_salva:
 		var origem: Dictionary = par["origem"]
-		var alvo: Dictionary = par["alvo"]
+		# O desenho segue o ledger, não a intenção: quem recebe o traço é o bloco que a caixa dele
+		# interceptou no corredor, que pode ser o da frente do visado ou a fileira atrás dele.
+		var alvo: Dictionary = par["bate"]
 		var casas := casas_vivas(origem)
 		# Bloco que afundou nesta mesma salva tem casa zero; o lance dele existe e tem de ir a algum
 		# lugar, senão a fila deixaria de espelhar o ledger.

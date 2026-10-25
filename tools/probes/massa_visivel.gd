@@ -48,10 +48,12 @@ extends SceneTree
 ##    muda de tamanho na tela: o que a lente vê é uma fila de pontos que encolhem, não um risco
 ##    comprido. A régua é coluna por coluna — o MAIOR ganho de luminância entre o quadro com o nó dos
 ##    traços ligado e o MESMO quadro congelado com ele desligado, a salva parada em 0,45 s do pulso.
-##    Vinte e quatro canos por bloco acendem 5 760 pixels de boca, e o que se cobra é a largura da
-##    faixa varrida e a densidade de colunas acesas: um punhado de traços no centro deixa as bordas
-##    escuras, e as duas situações não se confundem nem por ruído. O preço continua sendo UM nó: as
-##    primitivas do quadro sobem com a salva no ar e as chamadas de desenho, não.
+##    Desde a fatia 4, o corredor decide quem acende: vinte e quatro canos por bloco, dos sessenta
+##    blocos que a frente da coluna deixa atirar, põem 1 440 bocas no ar (o lote continua tendo 5 760
+##    slots). O que se cobra é a largura da faixa varrida e a densidade de colunas acesas: um punhado
+##    de traços no centro deixa as bordas escuras, e as duas situações não se confundem nem por ruído.
+##    O preço continua sendo UM nó: as primitivas do quadro sobem com a salva no ar e as chamadas de
+##    desenho, não.
 ##
 ## Uso (janela real, sem --headless):
 ##   godot --path . --quit-after 6000 -s res://tools/probes/massa_visivel.gd
@@ -379,7 +381,7 @@ func _initialize() -> void:
 	_assert("o tempo de quadro que a massa acrescenta cabe no orçamento de uma janela de 60 Hz",
 		custo_ms <= TETO_MS and custo_ms > -2.0,
 		("%d pares de %d quadros: %.2f ms por quadro com a massa contra %.2f sem ela (mediana "
-			+ "+%.2f ms, pares de %+.2f a %+.2f ms), teto %.1f ms") % [
+			+ "%+.2f ms, pares de %+.2f a %+.2f ms), teto %.1f ms") % [
 			PARES_AB, QUADROS_FPS, com["ms"], sem["ms"], custo_ms,
 			deltas.min(), deltas.max(), TETO_MS])
 	_assert("os 5 760 cascos entram de fato no quadro, medido em primitivas",
@@ -546,6 +548,15 @@ func _initialize() -> void:
 	jogo.bridge_rig.global_position = (jogo.esquadra.centro_aliado as Vector3 \
 		+ Vector3(0.0, 6.0, DISTANCIA_DA_LEITURA)) - desloc
 	jogo.campo_zoom = 0.0
+	# A precondition da fatia 4 lida ANTES da salva, nao depois: um bloco morto no proprio golpe
+	# sai da lista, e o «tapado pelo aliado da frente» viraria «nao estava la». `armados_antes` e
+	# a mesma guarda dos dois `continue` que antecedem o lance em `Esquadra.troca_salva`.
+	var armados_antes := 0
+	for lado_a in ["aliado", "hostil"]:
+		for bloco_a in jogo.esquadra.lista_de(lado_a):
+			if bool(bloco_a["vivo"]) and float(bloco_a["ARMAS"]) > 0.0 \
+					and float(bloco_a["navios"]) > 0.0:
+				armados_antes += 1
 	jogo._update_bridge(0.0)
 	jogo._salva_da_massa()
 	jogo._traco_t = TRACO_T_DE_LEITURA
@@ -554,9 +565,10 @@ func _initialize() -> void:
 	var com_tracos := get_root().get_texture().get_image()
 	_salvar(com_tracos, "salva_voando")
 	# Congelar o pulso no meio da janela viva (0,45 s, entre a última casa acender e o primeiro lance
-	# morrer) é o que põe os 5 760 canos no ar de uma vez. `lances` nao e mais o tamanho da fila: a
-	# fila agora e quatro casas por bloco cobrado, e a sonda le as duas contas separadas.
+	# morrer) é o que põe as bocas da frente no ar de uma vez. `lances` nao e mais o tamanho da fila:
+	# a fila e vinte e quatro casas por bloco cobrado, e a sonda le as duas contas separadas.
 	var blocos_cobrados := int(jogo.esquadra.pares_da_ultima_salva.size())
+	var tapados := armados_antes - blocos_cobrados
 	var tracos_armados := int(jogo._tracos_voando.size())
 	var caros := await _medir_quadros(QUADROS_FPS)
 	jogo.massa_tracos.visible = false
@@ -568,12 +580,16 @@ func _initialize() -> void:
 	var fogo := _varredura(com_tracos, sem_tracos)
 	var custo_primitivas := float(caros["primitivas"]) - float(baratos["primitivas"])
 	var custo_desenhos_traco := float(caros["desenhos"]) - float(baratos["desenhos"])
-	_assert("a marcha chegou ao alcance: sem par no ledger não ha o que desenhar",
-		blocos_cobrados >= 200 and tracos_armados == blocos_cobrados * Esquadra.CASAS,
-			"%d blocos cobraram e %d tracos armados (%d casas por bloco) depois de %d s de marcha, " % [
-				blocos_cobrados, tracos_armados, Esquadra.CASAS, andados] \
-				+ "vao das fachadas %.1f u contra alcance %.1f u" % [
-					vao_final, Esquadra.ALCANCE_DE_BLOCO])
+	_assert("no contato o visor desenha o CORREDOR: um traco por casa de quem a coluna deixou atirar",
+		armados_antes >= 200 and blocos_cobrados > 0 \
+				and tapados >= 0 and blocos_cobrados + tapados == armados_antes \
+				and tracos_armados == blocos_cobrados * Esquadra.CASAS,
+			"%d lancados + %d tapados pelo aliado da frente = %d armados, %d tracos armados " % [
+				blocos_cobrados, tapados, armados_antes, tracos_armados] \
+				+ "(%d casas por bloco) depois de %d s de marcha, vao das fachadas %.1f u contra " % [
+					Esquadra.CASAS, andados, vao_final] \
+				+ "alcance %.1f u (a lei de antes cobrava os mesmos %d armados como lancados)" % [
+					Esquadra.ALCANCE_DE_BLOCO, armados_antes])
 	_assert("apagar o nó dos traços apaga pixels: a salva está desenhada, nao apenas contada",
 		float(fogo["colunas"]) >= float(fogo["total"]) * TRACO_COLUNAS_MIN
 			and fogo["pico"] >= PISTA_MINIMA,
@@ -590,10 +606,10 @@ func _initialize() -> void:
 			("%.0f primitivas por quadro com a salva no ar contra %.0f apagada (%+.0f por quadro, "
 			+ "piso %.0f = 5 760 caixas de 12 triangulos)") % [caros["primitivas"],
 				baratos["primitivas"], custo_primitivas, TRACO_PRIM_MIN])
-	_assert("o preco de cinco mil setecentos e sessenta lances no ar e UMA passada de desenho",
+	_assert("o preco dos cinco mil setecentos e sessenta SLOTS do lote e UMA passada de desenho",
 		custo_desenhos_traco >= 0.0 and custo_desenhos_traco <= TRACOS_DESENHOS_TETO,
 			("%.1f chamadas por quadro com a salva no ar contra %.1f com ela apagada; um no por "
-			+ "lance cobraria 5 760") % [caros["desenhos"], baratos["desenhos"]])
+			+ "lance cobraria %d") % [caros["desenhos"], baratos["desenhos"], tracos_armados])
 
 	print("SONDA-MASSA-VISIVEL: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for nota in notes:

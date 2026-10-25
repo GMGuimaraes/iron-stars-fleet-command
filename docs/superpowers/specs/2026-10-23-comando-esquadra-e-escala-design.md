@@ -283,6 +283,72 @@ de segmento contra a caixa do bloco — geometria decide, nenhum sorteio é cham
 da salva atual). Chegada por cima e por baixo e grupo vindo de outro canto entram aqui como
 **origem do tiro**, não como IA nova.
 
+**O que saiu medido, em três fatias.** A caixa do bloco cheio é lida dos próprios cascos pintados e
+fecha **10,512 × 3,467 × 4,450 u** contra os pisos da grade (10,52 / 3,47 / 4,45), e ela **segue a
+lotação**: meio bloco tem 12 casas e 1,867 u de altura — fecha o topo, não esburaca o meio — e bloco
+morto devolve `size −1.0`, o «não existe» do AABB. É essa cláusula que faz o atrito **abrir**
+corredor em vez de entupi-lo. No contato, a muralha atira por coluna: **60 lançados + 180 tapados
+pelo aliado da frente = 240 blocos armados**, com **60** colunas lidas (30 aliadas + 30 hostis), todas
+de 4 blocos de fundo, **0** fileiras da frente caladas sem corpo na frente e **0** blocos de trás
+atirando por cima do próprio aliado. A fresta que o parágrafo pedia existe e é cobrada por caso: com
+ordem da ponte, o lance do bloco visado (**id 120**, andar `y −5,78`) passa por fora da frente e cobra
+do **id 125**, no mesmo andar — **6 rebatidos** na salva comandada — e quem perde estado é a caixa
+**interceptada, não a apontada** (0 pagadores cobrados sem perder estado, 0 hostis fora do elenco
+mudando de estado, sobre 120 blocos lidos antes e depois). O `y` é arma de alcance, provado por
+contrafactual na mesma corrida: com a caixa rasa (andares colados — a lei que este parágrafo derruba)
+o primeiro corpo na linha seria o bloco **195**; com a caixa de três andares é o **125**, que é quem o
+ledger cobrou. Nada sorteia: **240 caixas** e **5 760 leituras de casa** por salva, e duas montadas
+gemeas devolvem **60/180/0** uma contra a outra com os **60** pares na mesma ordem. O preço do lote não
+mudou: o desenho continua um nó, agora com **1 440 traços** armados (24 casas × 60 blocos) em vez dos
+5 760 de quando as vinte e quatro bocas dos duzentos e quarenta blocos armavam todas as salvas.
+
+**A cláusula invertida foi reescrita nos dois lugares, não afrouxada.** O comentário de
+`_pontos_de_impacto` (`main.gd`, função homônima) continua jurando «nunca vertical» — mas agora
+escopado: a cláusula vale para a salva da **linha**, os doze cascos em `y ≈ 0`; a muralha não passa
+por essa função e resolve caixa contra caixa nos três eixos em `Esquadra.troca_salva`, onde o `y` é
+arma de alcance. O README foi varrido no mesmo commit.
+
+**O corredor cobra um equilíbrio que a sonda não conserta.** Com três bocas em cada quatro caladas,
+sessenta salvas entre duas montadas gemeas fecham **0 blocos afundados de cada lado** — onde a régua
+de antes jurava **30 afundados** — e ainda queimam casco (**996** aliados e **990** hostis perdidos
+dos 24 000; **22 020** vivos na ponte). As duas alavancas que devolvem dente ao fogo são do
+comandante, não da sonda: cravar `DANO_DE_BLOCO` acima de **2,2**, ou pôr **rodízio de fileiras**
+(a coluna da frente se reveza com as de trás entre salvas) para a muralha atirar com o que tem de
+vivo. Nenhuma das duas foi implementada em silêncio.
+
+**O que a fatia ensinou sobre instrumento, não sobre jogo.** Quatro das quebras desta rodada eram de
+sonda, e as quatro foram consertadas declarando a lei nova ou confessando o rótulo — nunca afrouxando
+régua:
+
+1. **A asserção antiga era a lei antiga.** O cabeçalho da família 11 cobrava «TODO BLOCO ATIRA», e o
+   verde passou a depender de reescrevê-la como conta fechada (`lancados + obstruidos == armados`,
+   **60 + 180 = 240**) com a lei velha impressa como contrafactual. Afrouxar a tolerância de
+   `lancados` teria aprovado o corredor sem nunca nomeá-lo.
+2. **Dígito de família alheia também vence.** O cabeçalho da família 8 (preço da pintura) jurava
+   **23 070 + 23 160** — os dois lados assimétricos, dígito de rodada anterior — e a rodada do
+   corredor fecha **23 160 + 23 160 contra 24 000 de teto por lado**. O número do cabeçalho e o do
+   README foram re-cravados do log da rodada, não da memória: uma asserção que passa continua podendo
+   carregar a sua mensagem desatualizada.
+3. **Rótulo também é asserção.** As duas frases da família 12 imprimiam a fila **dos dois lados**
+   como se fosse aliada («1 bloco visado de quem atira aliado» sobre 1 056 traços). A conta estava
+   certa e a frase mentia; o conserto foi o rótulo, não o número.
+4. **A mensagem pode mentir sozinha.** O custo da `massa_visivel` saiu de uma rodada jurando
+   «mediana **+-0,36 ms**»: um `+` literal colado num `%+.2f`. Instrumento que erra o sinal do próprio
+   diferencial não pode ser portão de nada — format corrigido e a sonda re-rodada, para o que entra no
+   commit ser a rodada que o código de hoje produziu.
+
+**Fechamento.** Bateria completa em **30 sondas com `quebras=0` e zero linha de erro**, e as três
+sondas de olho em janela real também: `massa_visivel` **16 conferências** (112,7 fps com a massa
+contra 124,4 sem, mediana de 3 pares A/B **−0,03 ms** contra teto de 8,0; **738 339 primitivas**
+contra 116 255; **2,2 chamadas** para os 240 blocos; boca **105 px a 78° / 694 px a 14°**; salva
+acendendo **346 de 720 colunas (48,1 %)** e varrendo **x 116 a 1330 de 1 440 px — 84 %**; vão lido
+**40,8 u** contra alcance **73,0 u** depois de **18 s** de marcha), `fotograma` **95** e
+`comando_olho` **13**. Os cinco PNGs da sonda de massa foram reabertos: o par `salva_voando` /
+`salva_apagada` mostra o visor atravessado de traços e a mesma moldura sem eles, e `massa_apagada` é
+espaço vazio, só as estrelas. A sonda da lei, `tools/probes/esquadra.gd`, passou de 89 para **97
+conferências**, com a família 14 nova. Aprovação de timing, de leitura do quadro e do equilíbrio do
+fogo continua sendo do comandante, não da sonda.
+
 ## 6. Fatia 5 — doutrina e capitânia por esquadrão
 
 Escolhido: almirante (jogador) → general → capitão de esquadrão. Sem ordem do jogador, cada
