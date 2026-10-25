@@ -1021,7 +1021,7 @@ func _initialize() -> void:
 	var total := 0
 	for nome in NOMES_GRUPOS:
 		total += _botoes(game, nome).size()
-	_assert("trinta e cinco comandos agrupados", total == 35, "%d botões em 9 grupos" % total)
+	_assert("trinta e seis comandos agrupados", total == 36, "%d botões em 9 grupos" % total)
 	for botao in cenario_botoes:
 		if botao.text.contains("CINTURÃO"):
 			botao.pressed.emit()

@@ -62,7 +62,7 @@ extends SceneTree
 ##    desenho autorgada cobrindo o campo, a roda levando a FOV de 78° a 14° com aperto nas duas
 ##    pontas FORA da moldura do painel, a mesma roda não mudando nada sobre ela sem modificador, e
 ##    SHIFT/CTRL trazendo o olho de volta de qualquer lugar. Os três casos são a lei da porta (ver
-##    `_roda_e_do_olho` em `main.gd`), e o letreiro da massa sendo `Label` — os 35 botões de
+##    `_roda_e_do_olho` em `main.gd`), e o letreiro da massa sendo `Label` — os 36 botões de
 ##    `menu.gd` não se mexem.
 ## 10) A LARGADA TEM CAMPO E ELE É CRUZADO MARCHANDO. As duas fachadas nascem a 154,0 u uma da outra e
 ##     fecham no `DISTANCIA_DE_CONTATO` (40 u) sob a lei da massa: o bloco arranca a `a × delta²`
@@ -116,6 +116,23 @@ extends SceneTree
 ##     por salva, nenhum dado chamado, e a cauda de `rng`/`visual_rng` atravessa as sessenta salvas
 ##     igual à semente cravada. O que a família NÃO prova é pixel — o corredor aceso no visor mora em
 ##     `massa_visivel.gd`.
+## 15) O RODÍZIO DE FILEIRAS É UMA JANELA POR ANDAR, E SEM A ORDEM NADA SE MEXE. A alavanca é opt-in:
+##     desligada, a montada roda trinta salvas ao lado da ligada e o ledger das três primeiras é
+##     o MESMO dígito a dígito (a janela só chama em `salva_numero % 4`), e nenhum bloco jamais reclama
+##     a pista. Ligada, a fileira da RETAGUARDA de cada coluna do andar da vez sobe ao meio-andar,
+##     varre a coluna por cima até o vante e as três da frente recuam uma casa. O que a família cobra, medido: os quinze
+##     cascos da janela (três esquadrões × cinco colunas, um andar por vez — os dois andares do mesmo
+##     lado têm colunas no MESMO x e z, `coluna_esq = esq % COLUNAS_NO_LADO` e o andar só muda y, então
+##     duas travessias simultâneas seriam dois blocos no mesmo ponto), zero sobreposição de caixa em
+##     todo quadro do trânsito, a folga vertical medida da pista contra o andar espelhado, o tempo de
+##     travessia em quadros, a frente da coluna amostrada trocando a cada janela e voltando ao bloco
+##     original na quarta, o conjunto de `formacao` da coluna invariante (é permutação, não troca de
+##     posto a mais nem a menos), `lancados + obstruidos == armados` em toda salva dos dois regimes, e
+##     o recuo limpo: destino da ponte em bloco em trânsito devolve a fase a zero e destrava a janela
+##     do lado. O preço é impresso, não prometido: a travessia por proa mede 672 quadros (sete salvas),
+##     a pista é uma faixa só e por isso a janela seguinte só libera na oitava (`RODIZIO_JANELA`); com
+##     os dois andares alternando, a coluna roda uma casa a cada DUAS janelas e a volta inteira custa
+##     `2 × RODIZIO_JANELA × LINHAS_NO_ESQUADRAO` = 64 salvas ≈ 102,4 s.
 ##
 ## Uso: godot --headless --path . --quit-after 6000 -s res://tools/probes/esquadra.gd
 
@@ -202,6 +219,23 @@ const QUADROS_DO_CICLO_DA_DERIVA := 540
 const AQUECIMENTO_DA_PROA := 300
 const SEMENTE_RNG := 1234567890
 const SEMENTE_VISUAL := 555
+## Espelhos da cadência de `main.gd` para a família 15: a salva dispara quando o relógio de fogo passa
+## de 1,6 s, e a 60 quadros por segundo isso são 96 quadros. É o denominador de todo preço medido em
+## salvas — mudar a cadência lá sem mudar aqui quebra a asserção de propósito.
+const QUADROS_DA_SALVA := 96
+## Salvas dadas às DUAS montadas gemeas: é a janela da inocuidade, onde o ledger dos dois regimes tem
+## de fechar dígito a dígito e a pista desligada tem de ler zero. É janela de medição, não régua do
+## jogo — a montada ligada continua sozinha até `SALVAS_DO_CICLO`.
+const SALVAS_DO_RODIZIO := 30
+## Salvas dadas à montada ligada até o fim da régua: a volta inteira de uma coluna pede quatro janelas
+## do MESMO andar, e o andar de baixo só é chamado a cada duas janelas (`Esquadra.RODIZIO_JANELA` × 2 =
+## 16 salvas por degrau), então a quarta leitura fecha na salva 52 e pousa depois disso. Sessenta é o
+## primeiro múltiplo honesto que cabe essa volta com folga de trânsito.
+const SALVAS_DO_CICLO := 60
+## Os blocos que uma janela reclama: um andar são `COLUNAS_NO_LADO` esquadrões (3) por
+## `COLUNAS_NO_ESQUADRAO` colunas (5) = 15 colunas, e cada uma manda a própria fileira da frente. É a
+## conta da lei lida na fonte, não um número chutado pela sonda.
+const BLOCOS_DA_JANELA := Esquadra.COLUNAS_NO_LADO * Esquadra.COLUNAS_NO_ESQUADRAO
 
 var breaks := 0
 var notes: Array[String] = []
@@ -282,11 +316,12 @@ func _novo_mm(e: Esquadra) -> MultiMesh:
 	mm.instance_count = Esquadra.INSTANCIAS_POR_LADO
 	return mm
 
+
 ## Sobreposição de pisos: dois blocos ocupam o mesmo espaço se as caixas de 10,5 × 4,45 × 3,47 se
 ## cruzam nos TRÊS eixos. Ignorar y era correto enquanto a segunda dimensão do lado era profundidade;
 ## desde que os esquadrões se empilham em altura, dois blocos dividem a mesma coluna de boreste a 12 u
 ## de piso vertical, e uma régua de dois eixos lê isso como 120 sobreposições que não existem.
-func _sobrepoe(a: Dictionary, b: Dictionary) -> bool:
+static func _sobrepoe(a: Dictionary, b: Dictionary) -> bool:
 	var pa: Vector3 = a["pos"]
 	var pb: Vector3 = b["pos"]
 	return absf(pa.x - pb.x) < PISO_X - FOLGA and absf(pa.z - pb.z) < PISO_Z - FOLGA \
@@ -734,6 +769,110 @@ static func _mais_frente(a: Dictionary, b: Dictionary, aliada: bool) -> bool:
 	if aliada:
 		return za < zb
 	return za > zb
+
+
+## ---- Ferramentas da família 15: o rodízio de fileiras ----
+
+## Os blocos do lado que hoje têm fase de rodízio, lidos da FASE e não da posição. É de propósito: a
+## janela da pista é reclamada por fase (`_pista_ocupada`), e um bloco esquecido em trânsito com a
+## ponte mandando nele trava a janela do próprio lado para sempre — que é exatamente o caso que a
+## asserção do recuo cobra.
+static func _em_transito(e: Esquadra, lado: String) -> Array[Dictionary]:
+	return _transito_em(e.lista_de(lado))
+
+
+## A mesma leitura sobre uma lista já colhida: a varredura quadro a quadro da família 15 passa por aqui
+## dezenas de milhares de vezes, e `lista_de` refazer o banco a cada corpo não é a lei — é o custo dela.
+static func _transito_em(lista: Array[Dictionary]) -> Array[Dictionary]:
+	var fora: Array[Dictionary] = []
+	for b in lista:
+		if int(b["rodizio_fase"]) > Esquadra.ROD_NA_LINHA:
+			fora.append(b)
+	return fora
+
+
+## Os únicos corpos que podem dividir x e z com um bloco em trânsito: a própria coluna e a coluna
+## espelhada do outro andar. A grade é um reticulado e a caixa é menor que o passo em cada eixo —
+## `bc` diferente afasta 13,0 u em boreste e `br` diferente afasta 7,0 u em vante, contra uma caixa de
+## 10,51 × 4,45 — então só o `esq ± COLUNAS_NO_LADO` (mesmo `coluna_esq`, andar trocado, porque
+## `camada_esq = esq / COLUNAS_NO_LADO` só muda y) cai no mesmo ponto de vista horizontal. Varredura de
+## sete vizinhos é exaustiva por lei da grade, não amostral por economia.
+static func _vizinhos_na(lista: Array[Dictionary], b: Dictionary) -> Array[Dictionary]:
+	var espelho := int(b["esquadrao"]) + Esquadra.COLUNAS_NO_LADO
+	if int(b["esquadrao"]) >= Esquadra.COLUNAS_NO_LADO:
+		espelho = int(b["esquadrao"]) - Esquadra.COLUNAS_NO_LADO
+	var bc := int(b["formacao"]) % Esquadra.COLUNAS_NO_ESQUADRAO
+	var fora: Array[Dictionary] = []
+	for outro in lista:
+		if int(outro["id"]) == int(b["id"]):
+			continue
+		if int(outro["esquadrao"]) != int(b["esquadrao"]) \
+				and int(outro["esquadrao"]) != espelho:
+			continue
+		if int(outro["formacao"]) % Esquadra.COLUNAS_NO_ESQUADRAO != bc:
+			continue
+		fora.append(outro)
+	return fora
+
+
+## A leitura de pista de um lado no quadro corrente, numa passada só: quantos pares de caixas se
+## sobrepõem e qual a menor folga vertical entre um corpo em trânsito e os vizinhos que dividem o x/z
+## dele. Régua medida quadro a quadro, não conta de cabeça. Nascida de 6,0 u de meio-andar menos os
+## 3,467 u de caixa nos dois planos, ela come a respira de 0,45 u do vizinho que está na linha. Folga
+## negativa é abalroamento, e abalroamento na pista é a manobra punindo quem obedece.
+static func _leitura_da_pista(lista: Array[Dictionary], transito: Array[Dictionary]) -> Dictionary:
+	var somas := 0
+	var pior := INF
+	var dono := -1
+	var fase := -1
+	for t in transito:
+		var tp: Vector3 = t["pos"]
+		var pior_do_corpo := INF
+		for v in _vizinhos_na(lista, t):
+			var vp: Vector3 = v["pos"]
+			if absf(tp.x - vp.x) >= PISO_X or absf(tp.z - vp.z) >= PISO_Z:
+				continue
+			if _sobrepoe(t, v):
+				somas += 1
+			var ar := absf(tp.y - vp.y) - PISO_Y
+			if ar < pior_do_corpo:
+				pior_do_corpo = ar
+		if pior_do_corpo < pior:
+			pior = pior_do_corpo
+			dono = int(t["id"])
+			fase = int(t["rodizio_fase"])
+	return {"sobreposicoes": somas, "folga": pior, "id": dono, "fase": fase}
+
+
+## Quem tem vante limpo na coluna, lido do POSTO (`formacao`) e não da posição: a permutação escreve no
+## posto assim que o bloco pousa na pista, então o posto é a lei e a posição é o trânsito dela.
+static func _frente_da_coluna(e: Esquadra, lado: String, esq: int, bc: int) -> int:
+	var melhor := -1
+	var fila := 99
+	for b in e.lista_de(lado):
+		if not bool(b["vivo"]):
+			continue
+		if int(b["esquadrao"]) != esq or int(b["formacao"]) % Esquadra.COLUNAS_NO_ESQUADRAO != bc:
+			continue
+		var f := Esquadra._fila_da_coluna(b, lado)
+		if f < fila:
+			fila = f
+			melhor = int(b["id"])
+	return melhor
+
+
+## Os postos da coluna como conjunto lido ordenado — a digital da permutação. Rodízio bom troca a quem
+## pertence cada posto; um posto a mais, a menos ou repetido é a grade mentindo para a coluna.
+static func _postos_da_coluna(e: Esquadra, lado: String, esq: int, bc: int) -> String:
+	var postos: Array[int] = []
+	for b in e.lista_de(lado):
+		if not bool(b["vivo"]):
+			continue
+		if int(b["esquadrao"]) != esq or int(b["formacao"]) % Esquadra.COLUNAS_NO_ESQUADRAO != bc:
+			continue
+		postos.append(int(b["formacao"]))
+	postos.sort()
+	return str(postos)
 
 
 func _initialize() -> void:
@@ -1366,7 +1505,7 @@ func _initialize() -> void:
 	_assert("CTRL+roda sobre o painel vence a geografia e afasta, na direção da roda",
 		is_equal_approx(zoom_ctrl, 0.0),
 		"do teto com CTRL pressionado e 40 voltas para baixo -> %.2f" % zoom_ctrl)
-	_assert("o letreiro da massa e um Label: os 35 botoes de menu.gd nao se mexem",
+	_assert("o letreiro da massa e um Label: os 36 botoes de menu.gd nao se mexem",
 		jogo.massa_label is Label and String(jogo.massa_label.text).contains("MASSA"),
 		"%s" % jogo.massa_label.text)
 	jogo._recomecar_batalha()
@@ -2068,6 +2207,289 @@ func _initialize() -> void:
 				int(s_a.get("lancados", 0)), int(s_a.get("obstruidos", 0)), int(s_a.get("rebatidos", 0)),
 				int(s_b.get("lancados", 0)), int(s_b.get("obstruidos", 0)), int(s_b.get("rebatidos", 0)),
 				ids_a.size()])
+
+	# ── 15. O RODÍZIO DE FILEIRAS É OPT-IN, UMA JANELA POR ANDAR E COBRA O PREÇO ───────────────
+	# A alavanca é do comandante; o resto é da lei. Duas montadas gemeas marcham até o contato, uma fica
+	# na lei de sempre e a outra sobe a alavanca antes da primeira salva. As três salvas seguintes têm de
+	# fechar com o MESMO ledger dígito a dígito — `_rodizar_fileiras` só chama em `salva_numero % 4`, e a
+	# janela é a quarta. Depois as duas rodam as mesmas trinta salvas lado a lado: do lado desligado nem
+	# a fase, nem a pista, nem o relógio de fogo têm de sentir a existência do código novo.
+	var nuc_a15 := _nucleos(true)
+	var nuc_h15 := _nucleos(false)
+	var off15 := _nova_esquadra()
+	var on15 := _nova_esquadra()
+	_marchar_ate_contato(off15, nuc_a15, nuc_h15)
+	_marchar_ate_contato(on15, nuc_a15, nuc_h15)
+	on15.rodizio_ativo = true
+	var ESQ15 := 0
+	var BC15 := 0
+	var frente_zero15 := _frente_da_coluna(on15, "aliado", ESQ15, BC15)
+	var postos_zero15 := _postos_da_coluna(on15, "aliado", ESQ15, BC15)
+	var ano15 := 0
+	var salvas15 := 0
+	var caudas_off15: Array[String] = []
+	var caudas_on15: Array[String] = []
+	var identico15 := true
+	var pista_off15 := 0
+	var ledger_ok15 := true
+	var aberturas15: Array[Dictionary] = []
+	var duracoes15: Array[int] = []
+	var frentes15: Array[int] = []
+	var postos_mudados15 := 0
+	var sobreposicoes15 := 0
+	var folga_min15 := INF
+	var folga_id15 := -1
+	var folga_fase15 := -1
+	var folga_salva15 := 0
+	var quadros_em_pista15 := 0
+	var transito_aberto15 := -1
+	var lancados_min15 := 999
+	var quadros_off15 := 0
+	while (salvas15 < SALVAS_DO_CICLO or on15.em_rodizio("aliado") > 0) \
+			and salvas15 < SALVAS_DO_CICLO + 8:
+		# A gemea desligada roda até a régua da inocuidade, não até a régua do ciclo: depois das trinta
+		# salvas ligadas o que resta medido é só a volta da coluna, e marchar duzentos blocos por quadro
+		# em duas esquadras é o custo da sonda, não do jogo.
+		var off_viva15 := salvas15 < SALVAS_DO_RODIZIO
+		for quadro15 in range(QUADROS_DA_SALVA):
+			if off_viva15:
+				off15.passo(1.0 / 60.0, nuc_a15, nuc_h15)
+				quadros_off15 += 1
+				if off15.em_rodizio("aliado") + off15.em_rodizio("hostil") > 0:
+					pista_off15 += 1
+			on15.passo(1.0 / 60.0, nuc_a15, nuc_h15)
+			ano15 += 1
+			var lista_a15 := on15.lista_de("aliado")
+			var lista_h15 := on15.lista_de("hostil")
+			var em_a15 := _transito_em(lista_a15)
+			var em_h15 := _transito_em(lista_h15)
+			if em_a15.is_empty() and em_h15.is_empty():
+				continue
+			quadros_em_pista15 += 1
+			var ler_a15 := _leitura_da_pista(lista_a15, em_a15)
+			var ler_h15 := _leitura_da_pista(lista_h15, em_h15)
+			sobreposicoes15 += int(ler_a15["sobreposicoes"]) + int(ler_h15["sobreposicoes"])
+			var f_lado15 := minf(float(ler_a15["folga"]), float(ler_h15["folga"]))
+			if f_lado15 < folga_min15:
+				folga_min15 = f_lado15
+				var pior_leitura15: Dictionary = ler_a15 \
+						if float(ler_a15["folga"]) <= float(ler_h15["folga"]) else ler_h15
+				folga_id15 = int(pior_leitura15["id"])
+				folga_fase15 = int(pior_leitura15["fase"])
+				folga_salva15 = salvas15 + 1
+		if transito_aberto15 >= 0 and on15.em_rodizio("aliado") == 0:
+			duracoes15.append(ano15 - transito_aberto15)
+			transito_aberto15 = -1
+			if int(aberturas15[aberturas15.size() - 1]["camada"]) == 0:
+				frentes15.append(_frente_da_coluna(on15, "aliado", ESQ15, BC15))
+				if _postos_da_coluna(on15, "aliado", ESQ15, BC15) != postos_zero15:
+					postos_mudados15 += 1
+		var armados_on15 := _armados(on15)
+		var s_on15: Dictionary = on15.troca_salva()
+		var armados_off15 := 0
+		var s_off15 := {}
+		if off_viva15:
+			armados_off15 = _armados(off15)
+			s_off15 = off15.troca_salva()
+		salvas15 += 1
+		var cauda15 := "%d/%d/%d" % [int(s_off15.get("lancados", 0)),
+			int(s_off15.get("obstruidos", 0)), int(s_off15.get("rebatidos", 0))]
+		var cauda15_on := "%d/%d/%d" % [int(s_on15.get("lancados", 0)),
+			int(s_on15.get("obstruidos", 0)), int(s_on15.get("rebatidos", 0))]
+		caudas_off15.append(cauda15)
+		caudas_on15.append(cauda15_on)
+		if salvas15 <= 3 and cauda15 != cauda15_on:
+			identico15 = false
+		if salvas15 <= 3 and armados_off15 != armados_on15:
+			identico15 = false
+		if off_viva15 \
+				and int(s_off15.get("lancados", 0)) + int(s_off15.get("obstruidos", 0)) != armados_off15:
+			ledger_ok15 = false
+		if int(s_on15.get("lancados", 0)) + int(s_on15.get("obstruidos", 0)) != armados_on15:
+			ledger_ok15 = false
+		lancados_min15 = mini(lancados_min15, int(s_on15.get("lancados", 0)))
+		if on15.em_rodizio("aliado") > 0 and transito_aberto15 < 0:
+			transito_aberto15 = ano15
+			var aberto15: Dictionary = _em_transito(on15, "aliado")[0]
+			aberturas15.append({"salva": int(s_on15.get("salva", 0)),
+				"blocos": on15.em_rodizio("aliado"),
+				"camada": int(float(int(aberto15["esquadrao"])) / float(Esquadra.COLUNAS_NO_LADO))})
+	# A lei nova tem de caber na janela que a liberação abre: se o trânsito estourasse `RODIZIO_JANELA`
+	# salvas, a chamada seguinte cairia num quadro em que a pista ainda está reclamada e a cadência do
+	# painel deixaria de ser o preço que o painel anuncia.
+	var dur_max15 := 0
+	for d15 in duracoes15:
+		dur_max15 = maxi(dur_max15, d15)
+	var janelas15 := aberturas15.size()
+	var de_baixo15: Array[Dictionary] = []
+	for a15 in aberturas15:
+		if int(a15["camada"]) == 0:
+			de_baixo15.append(a15)
+	var salto_janela15 := 0
+	if de_baixo15.size() >= 2:
+		salto_janela15 = int(de_baixo15[1]["salva"]) - int(de_baixo15[0]["salva"])
+	var salto_entre_janelas15 := 0
+	var saltos_certos15 := janelas15 > 1
+	for i15b in range(1, janelas15):
+		var salto15 := int(aberturas15[i15b]["salva"]) - int(aberturas15[i15b - 1]["salva"])
+		salto_entre_janelas15 = salto15
+		if salto15 != Esquadra.RODIZIO_JANELA:
+			saltos_certos15 = false
+	var periodo15 := 0
+	if de_baixo15.size() >= 4:
+		periodo15 = int(de_baixo15[3]["salva"]) - int(de_baixo15[0]["salva"]) + salto_janela15
+	var leitura_janelas15 := ""
+	var leitura_andares15 := ""
+	for janela15 in aberturas15:
+		leitura_janelas15 += "s%d:%d/c%d " % [int(janela15["salva"]), int(janela15["blocos"]),
+			int(janela15["camada"])]
+		leitura_andares15 += "%d " % int(janela15["camada"])
+	var leitura_baixo15 := ""
+	for baixo15 in de_baixo15:
+		leitura_baixo15 += "%d " % int(baixo15["salva"])
+	# A conta de dente: a manobra nao multiplica o fogo por salva — o teto do corredor continua sendo
+	# o teto —, ela gira QUEM o ocupa. O que o comandante quer ler e se, girando, a muralha volta a
+	# gastar navio. Printed, nao cobrado: a asserção de cima fecha o ledger nos dois regimes.
+	print("SONDA-ESQUADRA: atrito com a alavanca LIGADA apos %d salvas - %s (aliados afundados=%d, hostis afundados=%d, rendidos=%d)" % [
+		salvas15, on15.resumo(), int(on15.perdas_aliadas), int(on15.perdas_hostis), int(on15.presas)])
+	_assert("com a alavanca desligada a roda nao existe: %d salvas sem um bloco em transito" % SALVAS_DO_RODIZIO,
+			pista_off15 == 0,
+			"%d quadros com bloco em transito na montada desligada, sobre %d salvas e %d quadros dados " % [
+				pista_off15, SALVAS_DO_RODIZIO, quadros_off15] \
+			+ "a ela contra %d salvas da ligada; o letreiro da ponte le o mesmo zero, porque e a mesma " % salvas15 \
+			+ "funcao")
+	_assert("as tres primeiras salvas da montada ligada sao as da montada desligada, digito a digito",
+		identico15,
+			"off=%s | on=%s (a janela e a quarta salva, e ate la o codigo novo nao e chamado)" % [
+				str(caudas_off15.slice(0, 3)), str(caudas_on15.slice(0, 3))])
+	_assert("a janela reclama o andar inteiro, nem um bloco a mais: %d colunas de front" % BLOCOS_DA_JANELA,
+		janelas15 >= 2,
+			"%d janelas aliadas em %d salvas, tamanhos lidos: %s" % [janelas15, salvas15,
+				leitura_janelas15])
+	var tamanhos_certos := janelas15 > 0
+	for a15 in aberturas15:
+		if int(a15["blocos"]) != BLOCOS_DA_JANELA:
+			tamanhos_certos = false
+	_assert("um andar sao quinze colunas: a janela nunca abre com outro tamanho", tamanhos_certos,
+		"%d janelas lidas, todas com %d blocos em transito" % [janelas15, BLOCOS_DA_JANELA])
+	var alternadas := true
+	for i15 in range(1, janelas15):
+		if int(aberturas15[i15]["camada"]) == int(aberturas15[i15 - 1]["camada"]):
+			alternadas = false
+	_assert("os dois andares se revezam na pista unica: janela consecutiva nunca e do mesmo andar",
+		alternadas and janelas15 >= 2,
+			"andares na ordem das aberturas: %s" % leitura_andares15)
+	var fases15 := ["NA_LINHA", "SUBINDO", "PISTA", "DESCENDO"]
+	var nome_fase15 := "nenhuma"
+	if folga_fase15 >= 0 and folga_fase15 < fases15.size():
+		nome_fase15 = fases15[folga_fase15]
+	_assert("zero abalroamento: nenhum quadro de transito poe duas caixas no mesmo ponto",
+		sobreposicoes15 == 0 and folga_min15 > 0.0,
+			"%d sobreposicoes sobre %d quadros com a pista em uso; a menor folga vertical medida na " % [
+				sobreposicoes15, quadros_em_pista15] \
+			+ "pista foi %.3f u (bloco %d em %s, salva %d) contra os %.3f u de altura da caixa" % [
+				folga_min15, folga_id15, nome_fase15, folga_salva15, PISO_Y])
+	_assert("o transito cabe na janela liberada: a travessia nao estoura as %d salvas do andar" % Esquadra.RODIZIO_JANELA,
+		duracoes15.size() == janelas15 and dur_max15 <= QUADROS_DA_SALVA * Esquadra.RODIZIO_JANELA,
+			"%d travessias medidas, a mais longa em %d quadros = %.1f s, contra uma janela liberada de " % [
+				duracoes15.size(), dur_max15, float(dur_max15) / 60.0] \
+			+ "%d x %d = %d quadros" % [QUADROS_DA_SALVA, Esquadra.RODIZIO_JANELA,
+			QUADROS_DA_SALVA * Esquadra.RODIZIO_JANELA])
+	_assert("a leitura de fase entrega uma janela a cada %d salvas, sem perder chamada" % Esquadra.RODIZIO_JANELA,
+		saltos_certos15 and janelas15 >= 4,
+			"janelas lidas %s, ultimo salto %d salvas contra os %d declarados em RODIZIO_JANELA " % [
+				leitura_janelas15, salto_entre_janelas15, Esquadra.RODIZIO_JANELA] \
+			+ "(a chamada e a cada %d salvas e a pista so libera quando o andar anterior pousa)" % Esquadra.RODIZIO_A_CADA)
+	_assert("cada janela entrega uma arma nova a fileira da frente, e a quarta devolve a primeira",
+		frentes15.size() >= 4 and frentes15[0] != frente_zero15 and frentes15[1] != frentes15[0] \
+				and frentes15[2] != frentes15[1] and frentes15[3] == frente_zero15,
+			"baseline id %d, sequencia lida %s (os quatro blocos da coluna, um por janela do andar de " % [
+				frente_zero15, str(frentes15)] \
+			+ "baixo]; a quarta janela fecha o ciclo e devolve o bloco original")
+	_assert("rodizio e permutacao: o conjunto de postos da coluna amostrada nao ganha nem perde casa",
+		postos_mudados15 == 0 and frentes15.size() >= 4,
+			"postos da coluna (esquadrao %d, coluna %d): %s, lido apos cada janela fechada e igual " % [
+				ESQ15, BC15, postos_zero15] \
+			+ "em %d leitura(s) contra o zero" % frentes15.size())
+	_assert("o ledger fecha nos dois regimes: lancados + obstruidos = armados em toda salva",
+		ledger_ok15 and lancados_min15 > 0,
+			"minimo de lancados por salva na montada ligada: %d, em %d salvas dos dois regimes" % [
+				lancados_min15, salvas15])
+	_assert("o preco anunciado e o preco medido: a coluna roda uma casa a cada duas janelas",
+			de_baixo15.size() >= 4 and salto_janela15 == 2 * Esquadra.RODIZIO_JANELA \
+					and periodo15 == 2 * Esquadra.RODIZIO_JANELA * Esquadra.LINHAS_NO_ESQUADRAO,
+			"janelas do andar de baixo nas salvas %s -> %d salvas entre rodas do mesmo andar, e a volta " % [
+				leitura_baixo15, salto_janela15] \
+			+ "inteira custou %d salvas = %.1f s, contra os %d = %.1f s do letreiro" % [
+				periodo15, float(periodo15) * 1.6,
+				2 * Esquadra.RODIZIO_JANELA * Esquadra.LINHAS_NO_ESQUADRAO,
+				float(2 * Esquadra.RODIZIO_JANELA * Esquadra.LINHAS_NO_ESQUADRAO) * 1.6])
+	# O recuo: ordem da ponte em bloco que esta na pista. A janela e lida da FASE, entao um corpo
+	# esquecido em transito travaria as janelas do lado para sempre -- geometricamente o recuo e limpo
+	# porque na subida o bloco ainda tem o proprio posto de grade (so muda a cota).
+	var recuo15 := _nova_esquadra()
+	_marchar_ate_contato(recuo15, nuc_a15, nuc_h15)
+	recuo15.rodizio_ativo = true
+	for c15 in range(Esquadra.RODIZIO_A_CADA):
+		recuo15.troca_salva()
+	var cheia15 := recuo15.em_rodizio("aliado")
+	for q15 in range(30):
+		recuo15.passo(1.0 / 60.0, nuc_a15, nuc_h15)
+	var vitima15: Dictionary = _em_transito(recuo15, "aliado")[0]
+	var id_vitima15 := int(vitima15["id"])
+	var fase_vitima15 := int(vitima15["rodizio_fase"])
+	recuo15.selecionar_bloco(id_vitima15)
+	var escritos15 := recuo15.mandar_destino((vitima15["pos"] as Vector3) + Vector3(0.0, 0.0, -25.0))
+	var pista_solta15 := recuo15.em_rodizio("aliado")
+	var abriu_de_novo15 := false
+	for s15 in range(8):
+		for q15b in range(QUADROS_DA_SALVA):
+			recuo15.passo(1.0 / 60.0, nuc_a15, nuc_h15)
+		recuo15.troca_salva()
+		if recuo15.em_rodizio("aliado") > 0:
+			abriu_de_novo15 = true
+	_assert("destino da ponte desfaz a manobra sem travar a janela do lado",
+		cheia15 == BLOCOS_DA_JANELA and fase_vitima15 > Esquadra.ROD_NA_LINHA and escritos15 == 1 \
+				and int(vitima15["rodizio_fase"]) == Esquadra.ROD_NA_LINHA \
+				and pista_solta15 == cheia15 - 1 and abriu_de_novo15,
+			"a janela tinha %d blocos, o alvo %d estava na fase %d; depois do destino a fase e %d, a " % [
+				cheia15, id_vitima15, fase_vitima15, int(vitima15["rodizio_fase"])] \
+			+ "pista ficou com %d reclamacoes e uma janela nova abriu nas %d salvas seguintes" % [
+				pista_solta15, 8])
+	# A rendicao cruza o tabuleiro com o bloco: se ele atravessar em transito, a pista do lado antigo
+	# ficaria reclamada por um corpo que ja nao e daquele lado.
+	var rendicao15 := _nova_esquadra()
+	_marchar_ate_contato(rendicao15, nuc_a15, nuc_h15)
+	rendicao15.rodizio_ativo = true
+	for c15b in range(Esquadra.RODIZIO_A_CADA):
+		rendicao15.troca_salva()
+	var cruzado15: Dictionary = _em_transito(rendicao15, "aliado")[0]
+	cruzado15["rendicao"] = true
+	cruzado15["TRIPULACAO"] = 0.0
+	# O teto de instância é a lei: a lista receptora cheia mata a presa em vez de recebê-la (esquadra.gd
+	# abre o banco para `BLOCOS_NO_LADO`). Sem esta vaga, esta asserção provaria o caminho do afundamento
+	# e não o da travessia — o corpo nunca chegaria ao lado receptor, e a pista aliada estaria limpa por
+	# outro motivo. A vaga é aberta num casco HOSTIL FORA DE TRÂNSITO, para não mexer na conta da pista.
+	var em_roldio_hostil15: Array[int] = []
+	for h15 in _em_transito(rendicao15, "hostil"):
+		em_roldio_hostil15.append(int(h15["id"]))
+	var vaga_aberta15 := false
+	for b15 in rendicao15.lista_de("hostil"):
+		if int(b15["id"]) in em_roldio_hostil15:
+			continue
+		b15["vivo"] = false
+		vaga_aberta15 = true
+		break
+	rendicao15._prencher_rendicoes()
+	var fase_cruzada15 := int(cruzado15["rodizio_fase"])
+	var pista_apos15 := rendicao15.em_rodizio("aliado")
+	_assert("presa que cruza de lado nao leva a pista comigo",
+		vaga_aberta15 and bool(cruzado15["presa"]) and String(cruzado15["lado"]) == "hostil" \
+				and fase_cruzada15 == Esquadra.ROD_NA_LINHA and pista_apos15 == BLOCOS_DA_JANELA - 1,
+			"bloco %d virou presa do lado %s na fase %d, e a pista aliada ficou com %d reclamacoes " % [
+				int(cruzado15["id"]), String(cruzado15["lado"]), fase_cruzada15, pista_apos15] \
+			+ "contra %d da janela inteira; a vaga do receptor foi aberta? %s" % [
+				BLOCOS_DA_JANELA, str(vaga_aberta15)])
 
 	print("SONDA-ESQUADRA: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for nota in notes:

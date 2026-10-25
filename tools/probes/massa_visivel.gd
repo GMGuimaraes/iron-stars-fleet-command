@@ -54,6 +54,15 @@ extends SceneTree
 ##    de traços no centro deixa as bordas escuras, e as duas situações não se confundem nem por ruído.
 ##    O preço continua sendo UM nó: as primitivas do quadro sobem com a salva no ar e as chamadas de
 ##    desenho, não.
+## 7) O RODÍZIO DE FILEIRAS OCUPA UMA FAIXA ONDE A LINHA NUNCA PÕE CORPO (fatia 4.5). A família 15 de
+##    `esquadra.gd` conta a manobra em cabeça fria — 0 abalroamento, 1,023 u de folga, 64 salvas de
+##    ciclo — e nada disso diz se o olho a lê. Aqui a régua é pixel, e são três contas que se somam:
+##    a BOCA de cada corpo da pista contra o mesmo retângulo com a massa aliada apagada (o corpo está
+##    desenhado), o mesmo retângulo contra o MESMO tabuleiro com a alavanca desligada (quem o pôs ali
+##    foi a manobra, e não a muralha), e a folga de tela até a fila do MESMO plano de profundidade,
+##    medida contra a respira projetada (o olho lê corredor, não tremor). A câmera é gravada e
+##    devolvida antes do quadro de controle, e a manobra é chamada pelo portão real do fecho de salva
+##    nos dois braços — a única diferença entre eles é a alavanca.
 ##
 ## Uso (janela real, sem --headless):
 ##   godot --path . --quit-after 6000 -s res://tools/probes/massa_visivel.gd
@@ -125,6 +134,41 @@ const TRACOS_DESENHOS_TETO := 12.0
 const TRACO_PRIM_MIN := 55000.0
 ## Quantos segundos de marcha a sonda pode simular antes de desistir de chegar ao alcance.
 const MARCHA_MAXIMA := 120
+## ---- A pista do rodízio à vista (fatia 4.5) ----
+## Passo de simulação da seção 4, em segundos: o quadro de um quadro do jogo. A cota de pouso da
+## casa é `Voo.CAPTURA_DE_POUSO = 0,02 u` (`voo.gd:58`) e o bloco corre a 6,0 u/s, então um passo de
+## meio segundo saltaria 3,0 u por cima da própria janela de chegada e `RODIZIO_POUSO` nunca seria
+## satisfeito — a manobra ficaria para sempre em `ROD_SUBINDO`, parada que a sonda leria como
+## «nenhum corpo na pista». A régua da casa é o quadro: nada aqui inventa física mais lerda.
+const PASSO_DA_PISTA := 1.0 / 60.0
+## Teto de passos procurando corpo na faixa do meio. Mil e duzentos quadros são vinte segundos de
+## simulação, quase duas vezes a travessia mais longa medida pela família 15 de `esquadra.gd`
+## (672 quadros); estourar isto é a manobra não acontecer, não a sonda estar errada.
+const PASSOS_DA_PISTA_MAXIMOS := 1200
+## Dentro disto do plano médio dos dois andares um centro é lido «na pista». Os corpos de linha
+## moram a ±6,0 u desse plano e a respira de custódia tira deles no máximo 0,5 u (lei da família
+## 13), então qualquer limiar entre 0,5 e 5,5 separa as duas coisas; 2,0 u deixa o corpo da pista
+## inteiro dentro da faixa e ainda exige folga.
+const FAIXA_DA_PISTA := 2.0
+## Quantos corpos na pista precisam acender pixel próprio para a família fechar. Uma janela são 15
+## colunas de frente; meia janela já é manobra no visor, e o piso é baixo de propósito porque quem
+## manda no veredito é o quadro de controle desligado, não a contagem.
+const CORPOS_DA_PISTA_MIN := 6
+## Altura e largura da caixa do bloco em u, lidas pela família 14 de `esquadra.gd` (10,512 × 3,467 ×
+## 4,450). Repeatidas aqui como régua de TELA, não como dado do jogo: é o retângulo que o olho tem de
+## ver aceso na faixa do meio, e é a altura que separa «corredor» de «tremor».
+const ALTURA_DA_CAIXA := 3.467
+const LARGURA_DA_CAIXA := 10.512
+## A respira da muralha (`esquadra.gd:136 DERIVA_Y`): nenhum corpo de linha se move mais que isto em
+## `y` sem ordem. É o limiar de TELA contra o qual a pista tem de vencer — se o corpo da manobra fica
+## a menos de uma respira da fila, o olho lê tremor, não manobra.
+const RESPIRA_DA_MURALHA := 0.45
+## Duas caixas só competem na régua do vão se estiverem no MESMO plano de profundidade. Medido: sem
+## esta janela a fila mais perto em tela era uma linha a centenas de u, comprimida pela perspectiva, e
+## a pista «encostava» na fila com 5,8 u de ar no mundo.
+const JANELA_DE_PROFUNDIDADE := 1.0
+## Piso de luminância (Rec.709, média sobre o retângulo) que conta como «acendeu».
+const PISTA_GANHO_MIN := 0.002
 
 var breaks := 0
 var notes: Array[String] = []
@@ -285,6 +329,74 @@ static func _vao_das_fachadas(e) -> float:
 	if aliado == INF or hostil == -INF:
 		return INF
 	return aliado - hostil
+
+## O plano médio dos dois andares, lido dos corpos que NÃO estão em manobra: mínimo e máximo de `y`
+## sobre a linha, pela média. É a cota da pista, medida na própria muralha — não a constante
+## `PISTA_DO_RODIZIO`, que é o deslocamento pedido, não o lugar onde o olho espera ver o corpo.
+static func _plano_medio(e) -> float:
+	var baixo := INF
+	var topo := -INF
+	for b in e.lista_de("aliado"):
+		if not bool(b["vivo"]) or int(b["rodizio_fase"]) != Esquadra.ROD_NA_LINHA:
+			continue
+		var y := float((b["pos"] as Vector3).y)
+		baixo = minf(baixo, y)
+		topo = maxf(topo, y)
+	if baixo == INF:
+		return 0.0
+	return (baixo + topo) * 0.5
+
+## A janela do rodízio abre no FECHO DE SALVA (`esquadra.gd:1105`), e esta seção não resolve salvos de
+## fogo: resolve marcha, para não amarrar a leitura do pixel ao ledger. Então a manobra é chamada pelo
+## portão real — cadência e «pista livre» inclusive — com o contador cravado no valor que a cadência
+## aceita, nos DOIS braços. A única diferença entre ligado e desligado continua sendo a alavanca,
+## nunca a chamada: com `rodizio_ativo = false` a função devolve na primeira linha, que é a inertez
+## que a família 15 cobra dígito por dígito e que aqui é cobrada em pixel.
+static func _abrir_janela_do_rodizio(e) -> void:
+	e.salva_numero = Esquadra.RODIZIO_A_CADA
+	e._rodizar_fileiras()
+
+## Quantos corpos aliados já POUSARAM na pista (fase `ROD_PISTA`), não apenas em trânsito: um bloco em
+## `ROD_SUBINDO` ainda está na diagonal e não tem nada a ver com a faixa do meio.
+static func _corpos_na_pista(e) -> int:
+	var n := 0
+	for b in e.lista_de("aliado"):
+		if bool(b["vivo"]) and int(b["rodizio_fase"]) == Esquadra.ROD_PISTA:
+			n += 1
+	return n
+
+## Média de luminância sobre um retângulo de tela. A amostra de um corpo da pista é a BOCA do bloco,
+## não o seu centro: um bloco é desenhado como grade de até 24 casas com vão entre elas, e o centro
+## cai num vão — medido na primeira versão desta seção, sete dos nove corpos amostrados num quadro de
+## nove pixels leram ganho 0,0000 exato, o mesmo valor de quem não tem nada ali.
+static func _luz_ret(img: Image, r: Dictionary) -> float:
+	var soma := 0.0
+	var n := 0
+	for u in range(int(float(r["x"]) - float(r["rx"])), int(float(r["x"]) + float(r["rx"])) + 1):
+		for v in range(int(float(r["y"]) - float(r["ry"])), int(float(r["y"]) + float(r["ry"])) + 1):
+			if u < 0 or v < 0 or u >= img.get_width() or v >= img.get_height():
+				continue
+			var c := img.get_pixel(u, v)
+			soma += 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+			n += 1
+	if n == 0:
+		return -1.0
+	return soma / float(n)
+
+## O retângulo de tela da boca de um bloco: centro projetado mais os semieixos lidos na PROFUNDIDADE
+## do próprio bloco (projetar o deslocamento em `y` e em `x` do próprio corpo, nunca escalar pixel
+## fixo — a muralha tem dezenas de unidades de ar em `z` e a escala muda com ela).
+static func _boca_na_tela(cam: Camera3D, p: Vector3) -> Dictionary:
+	var c := cam.unproject_position(p)
+	var lx := cam.unproject_position(p + Vector3(LARGURA_DA_CAIXA * 0.5, 0.0, 0.0))
+	var ly := cam.unproject_position(p + Vector3(0.0, ALTURA_DA_CAIXA * 0.5, 0.0))
+	return {"x": c.x, "y": c.y,
+		"rx": maxf(absf(lx.x - c.x), 1.0), "ry": maxf(absf(ly.y - c.y), 1.0)}
+
+static func _dentro_da_tela(r: Dictionary, img: Image) -> bool:
+	return float(r["x"]) - float(r["rx"]) >= 0.0 and float(r["y"]) - float(r["ry"]) >= 0.0 \
+			and float(r["x"]) + float(r["rx"]) <= float(img.get_width()) \
+			and float(r["y"]) + float(r["ry"]) <= float(img.get_height())
 
 ## A régua da salva: coluna por coluna, o maior ganho de luminância entre o quadro com traços e o
 ## quadro sem. Devolve quantas colunas acenderam e a faixa de x que elas cobrem, em fração do visor.
@@ -611,11 +723,149 @@ func _initialize() -> void:
 			("%.1f chamadas por quadro com a salva no ar contra %.1f com ela apagada; um no por "
 			+ "lance cobraria %d") % [caros["desenhos"], baratos["desenhos"], tracos_armados])
 
+	# ── 4. o rodízio à vista: a pista do meio-andar é um lugar onde a linha nunca põe corpo ──
+	# A família 15 de `tools/probes/esquadra.gd` prova a manobra em cabeça fria — 0 abalroamento,
+	# 1,023 u de folga, 64 salvas de ciclo — e nada disso diz se o OLHO lê a volta. O pedido do
+	# comandante era justamente «fazer as naves se moverem durante a batalha», então a régua aqui é
+	# pixel: um corpo na faixa do meio tem de acender um ponto que o MESMO tabuleiro, com a alavanca
+	# desligada, não acende. A comparação é interna ao instante (mesma câmera, mesma simulação, só a
+	# visibilidade do corpo aliado muda), porque fundo estrelado deslocado entre dois quadros é ruído
+	# e ruído aprovado seria exatamente o portão quebrado que a seção 1 desta sonda existe para pegar.
+	jogo._remontar_esquadras()
+	jogo.esquadra.rodizio_ativo = true
+	_abrir_janela_do_rodizio(jogo.esquadra)
+	var passos4 := 0
+	while passos4 < PASSOS_DA_PISTA_MAXIMOS \
+			and _corpos_na_pista(jogo.esquadra) < CORPOS_DA_PISTA_MIN:
+		jogo._atualizar_esquadras(PASSO_DA_PISTA)
+		passos4 += 1
+	var meia4 := _plano_medio(jogo.esquadra)
+	var na_pista: Array[Vector3] = []
+	var na_linha := 0
+	for b in jogo.esquadra.lista_de("aliado"):
+		if not bool(b["vivo"]):
+			continue
+		var p4: Vector3 = b["pos"]
+		if absf(p4.y - meia4) <= FAIXA_DA_PISTA:
+			na_pista.append(p4)
+		elif int(b["rodizio_fase"]) == Esquadra.ROD_NA_LINHA:
+			na_linha += 1
+	jogo.bridge_rig.rotation = Vector3.ZERO
+	jogo.bridge_rig.global_position = (jogo.esquadra.centro_aliado as Vector3 \
+		+ Vector3(0.0, 6.0, DISTANCIA_DA_LEITURA)) - desloc
+	jogo.campo_zoom = 0.0
+	# Os traços da salva saem de cena: a lei daqui é silhueta de casco na faixa do meio, e um risco
+	# de cano atravessando a pista acenderia o mesmo pixel por outro motivo.
+	jogo.massa_tracos.visible = false
+	jogo._update_bridge(0.0)
+	# A câmera é gravada e DEVOLVIDA antes do quadro de controle: comparar pixel de dois quadros
+	# que não têm o mesmo olho é medir o vento, e é exatamente o erro que a seção 1 desta sonda
+	# registra quando lê 60,0 fps com e sem a massa.
+	var olho_da_pista: Vector3 = jogo.bridge_rig.global_position
+	await _frames(4)
+	var com_pista := get_root().get_texture().get_image()
+	_salvar(com_pista, "rodizio_na_pista")
+	jogo.massa_aliada.visible = false
+	await _frames(3)
+	var pista_apagada := get_root().get_texture().get_image()
+	_salvar(pista_apagada, "rodizio_pista_apagada")
+	jogo.massa_aliada.visible = true
+	# Lê cada corpo da pista AINDA com a muralha da manobra em pé: a boca do bloco contra a mesma boca
+	# com o aliado apagado, e a separação de tela contra a fila do MESMO plano de profundidade.
+	var acesos := 0
+	var amostras := 0
+	var ganho_min := INF
+	var vao_min_px := INF
+	var px_da_respira := 0.0
+	var px_da_caixa := 0.0
+	var bocas: Array[Dictionary] = []
+	for p in na_pista:
+		var r := _boca_na_tela(cam, p)
+		if not _dentro_da_tela(r, com_pista):
+			continue
+		bocas.append(r)
+		amostras += 1
+		var ligue := _luz_ret(com_pista, r)
+		var fundo := _luz_ret(pista_apagada, r)
+		if ligue >= fundo + PISTA_GANHO_MIN:
+			acesos += 1
+		ganho_min = minf(ganho_min, ligue - fundo)
+		px_da_caixa = maxf(px_da_caixa, 2.0 * float(r["ry"]))
+		px_da_respira = maxf(px_da_respira, absf(
+			cam.unproject_position(p + Vector3(0.0, RESPIRA_DA_MURALHA, 0.0)).y \
+			- cam.unproject_position(p).y))
+		for q in jogo.esquadra.lista_de("aliado"):
+			if not bool(q["vivo"]) or int(q["rodizio_fase"]) != Esquadra.ROD_NA_LINHA:
+				continue
+			var qp: Vector3 = q["pos"]
+			if absf(qp.z - p.z) > JANELA_DE_PROFUNDIDADE:
+				continue
+			var rq := _boca_na_tela(cam, qp)
+			vao_min_px = minf(vao_min_px, absf(float(rq["y"]) - float(r["y"])) \
+					- float(rq["ry"]) - float(r["ry"]))
+	# Controle: o mesmo tabuleiro remontado, a alavanca desligada, os mesmos quadros andados e o MESMO
+	# olho de volta. A régua não é «o fundo não acende» — é «a manobra acende contra a própria muralha
+	# sem manobra»: no quadro desligado os quinze blocos estão DE VOLTA na linha, então ali só pode
+	# haver menos luz, nunca mais, e um ganho positivo no retângulo da pista só veio do corpo da pista.
+	jogo._remontar_esquadras()
+	jogo.esquadra.rodizio_ativo = false
+	_abrir_janela_do_rodizio(jogo.esquadra)
+	for passo_c in range(passos4):
+		jogo._atualizar_esquadras(PASSO_DA_PISTA)
+	var meia_c := _plano_medio(jogo.esquadra)
+	var na_pista_c := 0
+	for b in jogo.esquadra.lista_de("aliado"):
+		if bool(b["vivo"]) and absf((b["pos"] as Vector3).y - meia_c) <= FAIXA_DA_PISTA:
+			na_pista_c += 1
+	jogo.massa_tracos.visible = false
+	jogo.bridge_rig.global_position = olho_da_pista
+	jogo._update_bridge(0.0)
+	await _frames(4)
+	var sem_pista := get_root().get_texture().get_image()
+	_salvar(sem_pista, "rodizio_desligado")
+	var acesos_c := 0
+	var ganho_c_max := -INF
+	for r_c in bocas:
+		var delta_c := _luz_ret(com_pista, r_c) - _luz_ret(sem_pista, r_c)
+		ganho_c_max = maxf(ganho_c_max, delta_c)
+		if delta_c >= PISTA_GANHO_MIN:
+			acesos_c += 1
+	_assert("a pista do meio-andar existe: há corpo aliado na faixa entre os dois andares",
+		passos4 < PASSOS_DA_PISTA_MAXIMOS and na_pista.size() >= CORPOS_DA_PISTA_MIN \
+				and na_linha > 0,
+			"%d corpos em %d quadros (%.1f s de simulação) com %d blocos ainda na linha; " % [
+				na_pista.size(), passos4, float(passos4) * PASSO_DA_PISTA,
+				na_linha] \
+			+ "plano medio lido da propria muralha em y %.3f u, controle desligado na mesma faixa: %d" % [
+				meia4, na_pista_c])
+	_assert("o corpo da pista acende pixel: a manobra esta desenhada, nao apenas contada",
+		amostras >= CORPOS_DA_PISTA_MIN and acesos >= CORPOS_DA_PISTA_MIN,
+			"%d de %d bocas de bloco na pista acendem acima do fundo apagado (menor ganho %.4f, " % [
+				acesos, amostras, ganho_min if ganho_min != INF else -9.9] \
+			+ "retangulo da boca projetada %.0f px de altura) - quadro salvo em %srodizio_na_pista.png" % [
+				px_da_caixa, OUT])
+	_assert("com a alavanca ligada a pista clareia o proprio retangulo contra o mesmo tabuleiro " \
+			+ "desligado: o pixel nao e fundo nem fila, e corpo da volta",
+		na_pista_c == 0 and acesos_c >= CORPOS_DA_PISTA_MIN,
+			"%d bocas de %d clareiam acima do quadro desligado (maior diferenca %+.4f, piso %.4f), " % [
+				acesos_c, bocas.size(), ganho_c_max if ganho_c_max != -INF else 0.0,
+				PISTA_GANHO_MIN] \
+			+ "com %d corpos na faixa do quadro desligado e %d acesos contra o fundo apagado no ligado" % [
+				na_pista_c, acesos])
+	_assert("a pista se le como vaio: no mesmo plano de profundidade o corpo da manobra fica a mais de " \
+			+ "uma respira de qualquer fila",
+		vao_min_px >= px_da_respira and vao_min_px > 0.0 and px_da_respira > 0.0,
+			("menor folga limpa de tela entre corpo da pista e fila do mesmo plano: %.1f px contra %.1f px " % [
+				vao_min_px if vao_min_px != INF else -9.9, px_da_respira])
+			+ "de respira projetada (%.2f u de deriva, caixa de %.1f px de altura lida a %.0f u)" % [
+				RESPIRA_DA_MURALHA, px_da_caixa, DISTANCIA_DA_LEITURA])
+
 	print("SONDA-MASSA-VISIVEL: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for nota in notes:
 		print(nota)
 	print(("SONDA-MASSA-VISIVEL: quadros salvos em %s (massa_largo, massa_zoom, massa_apagada, "
-		+ "salva_voando, salva_apagada)") % OUT)
+		+ "salva_voando, salva_apagada, rodizio_na_pista, rodizio_pista_apagada, rodizio_desligado)")
+		% OUT)
 	quit(1 if breaks > 0 else 0)
 
 static func img_boca_min(img: Image) -> float:

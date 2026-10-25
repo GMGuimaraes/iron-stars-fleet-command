@@ -535,13 +535,17 @@ var pause_button: Button
 ## acabou de abrir. É o que `tools/probes/recomecar.gd` mede.
 var restart_button: Button
 ## Letreiro do canhão da capitânia dentro do grupo ARMAMENTO. É Label, não Button: leitura de
-## estado não é comando, e por isso os trinta e cinco botões que `tools/probes/menu.gd` conta
-## continuam sendo trinta e cinco.
+## estado não é comando, e por isso a conta de botões que `tools/probes/menu.gd` batia em trinta e
+## cinco só subiu para trinta e seis quando o rodízio de fileiras entrou no painel como ordem.
 var capitania_label: Label
 var speed_label: Label
 ## A linha da massa no letreiro de cima: blocos vivos e cascos restantes de cada lado. É Label e
-## não botão — a contagem de trinta e cinco controles de `tools/probes/menu.gd` não se mexe.
+## não botão — a contagem de controles de `tools/probes/menu.gd` não se mexe por leitura.
 var massa_label: Label
+## O botão do rodízio de fileiras. É a única ordem da massa que é ESTADO e não pulso, e por isso o
+## rótulo precisa de uma alça para se reescrever: um botão que diz "OFF" enquanto a manobra roda é a
+## ponte mentindo para o comandante, e a sonda do menu lê o rótulo, não a variável.
+var rodizio_button: Button
 var command_label: Label
 var bridge_rig: Node3D
 var rng := RandomNumberGenerator.new()
@@ -1774,7 +1778,7 @@ func _remontar_esquadras() -> void:
 ##
 ## A esquadra obedecia só pelo painel: dois campos numéricos e uma lista. Esta camada põe um segundo
 ## olho sobre o tabuleiro e faz do clique a MESMA ordem, sem criar um nó por bloco, sem criar janela
-## desenhada dentro da cena e sem tocar nos 35 botões do painel. Quatro leis mandam aqui:
+## desenhada dentro da cena e sem tocar nos botões de comando do painel. Quatro leis mandam aqui:
 ## * **Um olho por vez.** `ponte_camera` e `tatico_camera` se alternam por `current` / `make_current()`
 ##   — no Godot 4 `Camera3D` não tem `enabled`, quem manda no quadro é o viewport, e ele só tem uma
 ##   câmera corrente. A FOV contratada
@@ -2739,6 +2743,10 @@ func _build_ui() -> void:
 	_add_button(grupo_manobra, "MOVER PARA POSIÇÃO", func(): _give_order("MOVER"))
 	_add_button(grupo_manobra, "DISPERSAR TROPAS", func(): _give_order("DISPERSAR"))
 	_add_button(grupo_manobra, "AGRUPAR TROPAS", func(): _give_order("AGRUPAR"))
+	# A quarta ordem do grupo é da MASSA, não dos doze cascos, e é um estado e não um pulso: ligada,
+	# toda janela de cadência manda a fileira da frente sair da linha. Desligada — que é como o jogo
+	# abre — a muralha fecha o ledger exatamente como fechava antes da fatia 4.5, dígito por dígito.
+	rodizio_button = _add_button(grupo_manobra, "RODÍZIO DE FILEIRAS — OFF", _alternar_rodizio)
 	# Grupo ARMAMENTO: as duas escadas de casco. São degrau de ponte e não ordem de casco porque a
 	# classe troca o que o navio carrega, não para onde ele vai — e sobem e descem pelo mesmo
 	# caminho, a bateria pela cabeça do cadastro e a aviação pela cauda, sem somar estado nenhum.
@@ -5010,6 +5018,34 @@ func _ajustar_fogo(passo: int) -> void:
 	_update_hud()
 
 
+## Ordem de cadência da massa: ligar ou desligar o rodízio de fileiras. É a única ordem do painel que
+## não dispara nada no clique — ela troca a LEI com que as salvas seguintes resolvem. Desligada, a
+## muralha fecha o ledger exatamente como fechava antes da fatia 4.5; ligada, cada janela de
+## `Esquadra.RODIZIO_A_CADA` salvas manda a retaguarda do andar da vez subir à pista do meio-andar e
+## varrer a coluna por cima até o vante, enquanto as três da frente recuam uma casa. O sentido é
+## medida, não gosto: o percurso inverso — a frente indo para a retaguarda — corre vinte e uma
+## unidades de RÉ, a 1,2 u/s do bloco, e a sonda mediu a travessia em 1 440 quadros (quinze salvas).
+## Por proa são os mesmos vinte e uma unidades a 6,0 u/s, e o recuo caro vira três saltos de sete
+## feitos em paralelo. O custo que sobra é o que a geometria cobra, não o que a ponte gostaria: a
+## travessia por proa mede 672 quadros (sete salvas) e a pista é uma faixa só, então a janela seguinte
+## só abre na oitava (`Esquadra.RODIZIO_JANELA`) e o ciclo completo de uma coluna é `2 * RODIZIO_JANELA
+## * LINHAS_NO_ESQUADRAO` salvas ≈ 102,4 s — assinado pela família 15 da sonda da esquadra.
+func _alternar_rodizio() -> void:
+	esquadra.rodizio_ativo = not esquadra.rodizio_ativo
+	if is_instance_valid(rodizio_button):
+		rodizio_button.text = "RODÍZIO DE FILEIRAS — ON" if esquadra.rodizio_ativo \
+			else "RODÍZIO DE FILEIRAS — OFF"
+	if esquadra.rodizio_ativo:
+		report_label.text = "MANOBRA: rodízio de fileiras LIGADO // a retaguarda do andar da vez sobe " \
+			+ "à pista a cada %d salvas e toma o vante; ciclo completo da coluna = %d salvas." % [
+			esquadra.RODIZIO_A_CADA,
+			2 * esquadra.RODIZIO_JANELA * esquadra.LINHAS_NO_ESQUADRAO]
+	else:
+		report_label.text = "MANOBRA: rodízio de fileiras DESLIGADO // a fileira da frente segura o " \
+			+ "próprio posto até afundar, e as três de trás ficam com a boca tapada."
+	_update_hud()
+
+
 ## O casco sob o setor comandado: o apontado pelo painel, ou o primeiro hostil vivo quando ele
 ## caiu, foi capturado ou nunca foi apontado. `_resolve_volley` e o letreiro de alcance da capitânia
 ## leem esta função — painel e salva não podem apontar para alvos diferentes, que é o tipo de
@@ -5932,9 +5968,11 @@ func _update_hud() -> void:
 		# O letreiro fala do olho e da ordem agora, não só da massa. O zoom da ponte continua na régua
 		# em qualquer modo, porque é exatamente assim que o comandante vê que a roda do TATICO não o
 		# tocou: o dígito fica parado enquanto a altura muda.
-		massa_label.text = "%s • zoom %03d%% • olho %s • %d bloco(s) na seleção • %d sob destino • [TAB]" % [
+		massa_label.text = "%s • zoom %03d%% • olho %s • %d bloco(s) na seleção • %d sob destino • rodízio %s (%d em pista) • [TAB]" % [
 			esquadra.resumo(), int(roundf(campo_zoom * 100.0)), campo_modo,
-			esquadra.contar_selecionados(), esquadra.com_destino()]
+			esquadra.contar_selecionados(), esquadra.com_destino(),
+			"ON" if esquadra.rodizio_ativo else "off",
+			esquadra.em_rodizio("aliado") + esquadra.em_rodizio("hostil")]
 	if is_instance_valid(command_label):
 		var living := 0
 		var damaged := 0

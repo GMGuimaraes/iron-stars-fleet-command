@@ -381,6 +381,113 @@ ponto de cada teste é derivado do `Rect2` do painel e a asserção confere o re
 confiar na medida. Contas da rodada: `tools/probes/esquadra.gd` **100** conferências (era 97) e
 `tools/probes/comando.gd` **66** (era 63), cada uma com as três portas cobradas.
 
+## 5.6 Fatia 4.5 — o rodízio de fileiras (a alavanca que devolve fogo ao corredor)
+
+O pedido do comandante foi dois, e esta folha paga os dois: «cada nave do bloco tem que atirar
+também … e também fazer as naves se moverem durante a batalha». O primeiro veio na fatia 3.5; o
+segundo é aqui, e ele não é enfeite — a lei do corredor cala **três bocas em cada quatro** (60
+lançados contra 240 armados), e a única alavanca que devolve fogo sem desmentir a geometria é
+trocar **quem** segura o vante. Trocar por sorteio seria mentira na conta, porque um lance que
+atravessa um aliado continuaria mentira na tela; tem de ser **manobra**: o bloco que ainda não
+descarregou sai da retaguarda, sobe à pista, toma o vante, e as três da frente fecham fileira um
+degrau para trás.
+
+**A pista é o meio-andar, e foi escolha do jogador** entre as três faixas que a geometria deixa.
+Em boreste o ar é **2,488 u** contra **10,512 u** de caixa; em vante é **2,550 u** contra
+**4,450 u** — nenhum dos dois passa um bloco sem sobreposição, e as famílias 2 e 13 da sonda
+provam isso quadro a quadro. O eixo com folga é o vertical: os dois andares estão a **12,0 u** de
+centro a centro e a caixa tem **3,467 u**, então existe uma faixa de **5,066 u** (+3,467 a +8,533
+em relação ao próprio andar) por onde um corpo passa sem tocar nem o andar de baixo nem o de cima.
+O centro dela é a cota da pista: `PISTA_DO_RODIZIO = 6,0 u`. Os dois andares caem no **mesmo**
+ponto do meio-andar — os esquadrões `e` e `e + COLUNAS_NO_LADO` têm o mesmo `x` e o mesmo `z` e só
+diferem em `y` —, logo há **uma pista por lado**, e é por isso que o andar da vez **alterna**: dois
+corpos no meio-andar seriam dois corpos no mesmo lugar.
+
+**A margem não é a geometria pura**, e foi aqui que a conta de cabeça mentiu: 2,533 u teóricos
+viram **1,023 u** medidos quadro a quadro pela família 15, porque a faixa come a respira de
+custódia (±0,45 u por esquadrão, defasados) e o freio de chegada. O contrato é folga positiva:
+**0 sobreposições sobre 5 179 quadros** com a pista em uso, contra os 3,467 u de altura da caixa.
+
+**As duas metades do preço.** `RODIZIO_A_CADA = 4` é a *chamada* por cadência; `RODIZIO_JANELA = 8`
+é a *libertação* por leitura de pista, e quem manda nela é a travessia, não o apetite. Medido: a
+travessia mais longa fecha em **672 quadros = 7 salvas** (a janela seguinte cai na oitava salva,
+e nenhuma travessia estoura as 8). Como a mesma coluna só pode ser rearmada quando o andar dela
+volta a ter a vez, a coluna roda **uma casa a cada duas janelas**, e o ciclo completo custa
+`2 × RODIZIO_JANELA × LINHAS_NO_ESQUADRAO` = **64 salvas ≈ 102,4 s**. Esta é a fatura certa, e ela
+substitui as duas promessas erradas desta sessão: primeiro **25,6 s**, antes de qualquer medida;
+depois **32 salvas ≈ 51,2 s**, com a janela ainda contada de cabeça. O painel hoje anuncia 64, e a sonda confere o letreiro contra a medida:
+**16 salvas entre duas rodas do mesmo andar, volta inteira 64 salvas = 102,4 s**.
+
+**O sentido é medida, não gosto.** A frente indo para a retaguarda corre vinte e uma unidades de
+**RÉ**, a 1,2 u/s do bloco, e a sonda mediu a travessia em **1 440 quadros** (quinze salvas). Por
+**proa** são os mesmos vinte e uma unidades a 6,0 u/s e o recuo caro vira três saltos de sete
+feitos em paralelo: **672 quadros**. A lei de voo (`voo.gd`, `FICHA_BLOCO`) não foi tocada — o que
+mudou foi para onde o destino aponta.
+
+**Inocuidade com a alavanca desligada, provada quadro a quadro.** A ordem é opt-in e nasce
+desligada, e o portão não é «o código não roda»: é a montada desligada rodando **de verdade** em
+paralelo com a ligada. Medido: **0 quadros com bloco em trânsito** na montada OFF ao longo das 30
+salvas (2 880 quadros) da janela da inocuidade, e as **três primeiras salvas** da montada ligada
+são **digito a digito** as da desligada (cauda `60/180/0` = lançados / tapados / rebatidos) — a janela é a
+quarta salva, e até lá o código novo não é chamado. A permutação também é cobrada por leitura, não
+por fé: a sequência de blocos com vante limpo fecha **[15, 10, 5, 0]** e volta à baseline na
+quarta janela do mesmo andar, com o conjunto de `formacao` da coluna invariado em
+**[0, 5, 10, 15]** — a manobra troca o posto, não inventa posto.
+
+**Estados e pouso.** `rodizio_fase` do bloco vale `ROD_NA_LINHA` (a lei antiga: persegue o posto
+da grade e respira), `ROD_SUBINDO`, `ROD_PISTA`, `ROD_DESCENDO`; as três fileiras da frente não
+entram em fase, só recebem o posto novo quando o fresco pousa na pista. `RODIZIO_POUSO = 0,37 u`
+não é régua nova: é `Voo.CAPTURA_DE_POUSO` (0,02) mais a folga com que a sonda da muralha já assina
+o pouso da marcha (0,35). O bloco em trânsito persegue a **cota** da pista, sem a deriva somada —
+somar mais meio metro de custódia é fechar a margem que a família 15 acabou de medir.
+
+### 5.6.1 Teste da fatia 4.5
+
+`tools/probes/esquadra.gd` **114 conferências** (era 100), `quebras=0`, zero linha de erro, ~128 s
+de parede. As famílias novas cobram, na ordem: a alavanca desligada não roda; as três primeiras
+salvas gemeas; a janela reclama o andar inteiro (**15** blocos, nunca outro tamanho); os dois
+andares se revezam (`0 1 0 1 0 1 0 1`); zero abalroamento com a folga atribuída ao bloco e à fase
+que a sofreram; o trânsito cabe na janela liberada; a leitura de fase entrega uma janela a cada
+**8** salvas sem perder chamada; o preço anunciado é o preço medido (**64 salvas = 102,4 s**); o
+recuo entrega a fileira (bloco 15 → fase 0, **14** reclamações, janela nova em 8 salvas); a presa
+que cruza de lado não leva a pista comigo (bloco 15 virou presa hostil já em fase 0, a pista
+aliada ficou com **14** reclamações contra as 15 da janela, e a vaga do receptor se abriu). O
+atrito é impresso, não jurado: `SONDA-ESQUADRA: atrito com a alavanca LIGADA apos 67 salvas -
+MASSA 120/120 • 10116c // hostil 120/120 • 10125c // 0 rend. (aliados afundados=0, hostis
+afundados=0, rendidos=0)` — **0 blocos afundados dos dois lados em 67 salvas de manobra ligada**.
+A conta de dente é essa, e ela diz o que a alavanca faz: **não** multiplica o fogo por salva — o
+mínimo de lançados por salva na montada ligada continua **60**, o teto do corredor —, ela gira
+**quem** ocupa o teto. A aprovação do *aspecto* da manobra — se o olho lê a volta como manobra e não como
+glitch — é do comandante na janela, não da sonda.
+
+**A outra metade do pedido é pixel, e ela mora em `tools/probes/massa_visivel.gd` (20 conferências,
+eram 16).** A sonda não escreve fase na mão: põe `salva_numero` no quarto passo e chama
+`_rodizar_fileiras()`, que é exatamente o portão que o fecho de salva chama. A muralha anda em passos
+de **1/60 s** porque `Voo.CAPTURA_DE_POUSO` é **0,02 u** e o salto a cobrir é de 3 u — com o passo de
+0,5 s que a sonda usava antes, nenhum corpo pousa jamais. A travessia fecha em **168 quadros
+(2,8 s de simulação)** e a leitura é feita do olho da ponte, **60 u** atrás do centro aliado, com
+`campo_zoom` zero e a pose **gravada e devolvida** entre o quadro ligado e o desligado: comparar pixel
+entre quadros de olhos diferentes é medir o vento. Três quadros saem gemeos por construção —
+`rodizio_na_pista`, `rodizio_pista_apagada` (o MESMO tabuleiro com o corpo aliado apagado) e
+`rodizio_desligado` (o mesmo tabuleiro remontado com a alavanca desligada). O que se cobra é
+**retângulo projetado**, não ponto: a boca de cada bloco da pista vira um retângulo lido na
+profundidade do próprio corpo (**39 px** de altura nesta rodada) e sua luminância média em Rec.709,
+porque uma caixa de 9 px no centro do bloco caía no vão da malha das 24 casas e lia fundo —
+**7 de 9** bocas acendem acima do fundo apagado e as mesmas **7** clareiam o próprio retângulo contra
+o quadro desligado (maior diferença **+0,0491**, piso 0,0020), com **15** corpos na faixa de ±2,0 u
+em torno do plano médio lido da própria muralha (**y 0,486 u**) contra **0** corpos na mesma faixa do
+desligado. A régua de vão só vale no **mesmo plano de profundidade**: filtrados os vizinhos por
+|Δz| ≤ **1,0 u** e medida a folga de **borda a borda**, o corpo da manobra fica a **30,0 px** limpos
+de qualquer fila contra os **5,0 px** da respira projetada (0,45 u de deriva; a caixa projeta 38,6 px
+a 60 u). A primeira versão comparava telas de profundidades diferentes e reprovava a manobra por
+perspectiva — **19,5 px** contra uma caixa inteira. **Bateria da rodada: as 30 sondas headless com
+`quebras=0` e zero linha de erro** mais **as três de janela** (`fotograma` 95, `massa_visivel` 20,
+`comando_olho` 13), com os PNGs relidos. Dez sondas foram tocadas por esta fatia: `esquadra` e
+`massa_visivel` ganharam as duas famílias novas, `menu` passou a cobrar o quarto botão de MANOBRA,
+e as sete que contam os comandos do painel (`cacas`, `capitania`, `cenarios`, `comando`, `ia`,
+`misseis`, `recomecar`) passaram de **35 para 36** pelo mesmo motivo — a régua seguiu o botão,
+nenhum número de jogo foi afrouxado.
+
 ## 6. Fatia 5 — doutrina e capitânia por esquadrão
 
 Escolhido: almirante (jogador) → general → capitão de esquadrão. Sem ordem do jogador, cada

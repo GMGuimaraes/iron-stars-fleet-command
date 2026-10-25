@@ -141,6 +141,56 @@ var _derivas: Array[Vector3] = []
 ## Marcha da massa, em u/s: um bloco cruza a faixa do próprio esquadrão (32 u de largura) em cinco
 ## segundos, o bastante para a manobra ser lida no visor sem a linha virar formiga.
 const MARCHA_DE_BLOCO := 6.0
+## ---- O rodízio de fileiras (fatia 4.5) ----
+## A lei do corredor cala três bocas em cada quatro: numa coluna de quatro blocos amarrados a 7,0 u
+## em z, com 4,450 u de casco, só o mais adiantado tem vante limpo. O rodízio é a alavanca que devolve
+## ao fogo o que a geometria emprestou — e ela NÃO pode ser um sorteio de quem atira, porque um lance
+## que atravessa um aliado deixaria de ser mentira na conta e continuaria mentira na tela. Tem de ser
+## MANOBRA: o bloco que ainda não descarregou sai da retaguarda, sobe à pista, toma o vante, e as três
+## da frente fecham fileira um degrau para trás.
+##
+## A travessia precisa de uma pista, e a massa só tem uma. Em boreste o ar é **2,488 u** contra
+## **10,512 u** de caixa; em vante é **2,550 u** contra **4,450 u** — nenhum dos dois deixa passar um
+## bloco sem sobreposição, e as famílias 2 e 13 da sonda provam isso quadro a quadro. O que sobra é o
+## eixo em que há folga: os dois andares estão a **12,0 u** de centro a centro e a caixa tem **3,467 u**
+## de altura, então entre eles existe uma faixa de **5,066 u** (de +3,467 a +8,533 em relação ao próprio
+## andar) por onde um corpo passa sem tocar nem o andar de baixo nem o de cima. O centro dessa faixa é
+## a pista: **6,0 u** de deslocamento em y. A margem não é a geometria pura — é a geometria menos a
+## respira de custódia (±0,45 u por esquadrão, defasados) e menos o freio de chegada, e quem mede o
+## piso real é a família 15 da sonda, quadro a quadro: **1,023 u** no pior dos 5 179 quadros em que a
+## pista esteve em uso na rodada que assinou esta folha (teórica 2,533 u), contra os **3,467 u** de
+## altura da caixa. Folga positiva é o contrato; a conta de cabeça só dizia onde ela seria se a muralha
+## não respirasse.
+const PISTA_DO_RODIZIO := 6.0
+## Salvas entre duas janelas da pista quando a cadência chama com a faixa livre. É o piso do
+## anúncio, nunca o preço cobrado: a chamada é por cadência e a LIBERTAÇÃO é por leitura de pista, e
+## a travessia custa mais que a janela. Medido pela família 15: `672` quadros de trânsito = `7`
+## salvas, com a chamada seguinte caindo na `8ª` salva — os dois dígitos que `RODIZIO_JANELA`
+## declara. Reduzir `RODIZIO_A_CADA` não encurta nada: quem manda no fechamento da janela é a
+## travessia, e a travessia é voo com ficha de bloco, não teleporte.
+const RODIZIO_A_CADA := 4
+## Salvas de uma janela liberada até a seguinte, medidas na travessia mais longa. É o dígito que o
+## painel anuncia como preço, e a asserção da sonda é dupla: nenhum trânsito estoura `RODIZIO_JANELA`
+## salvas e as janelas consecutivas caem exatamente a cada `RODIZIO_JANELA`. Como a pista é UMA faixa
+## só — os dois andares têm colunas no mesmo x e no mesmo z, e um corpo no meio-andar de cada um
+## seriam dois corpos no mesmo ponto — o andar da vez alterna, e a MESMA coluna roda uma casa a cada
+## DUAS janelas. O preço, em salvas para a coluna dar a volta inteira: `2 * RODIZIO_JANELA *
+## LINHAS_NO_ESQUADRAO` = 64 salvas ≈ 102,4 s.
+const RODIZIO_JANELA := 8
+## Folga de chegada da manobra: dentro disto o bloco é tido como pousado na fase e a próxima começa.
+## É a captura de pouso da casa (`Voo.CAPTURA_DE_POUSO` = 0,02) mais a folga com que a sonda da muralha
+## já assina o pouso da marcha (0,35), e não uma régua nova.
+const RODIZIO_POUSO := 0.37
+## Os três estados do bloco em rodízio, mais o regime de sempre. `ROD_NA_LINHA` é a lei antiga: sem
+## destino próprio, o bloco persegue o posto da grade e respira. Os outros três são a volta — sobe à
+## pista, corre a pista por PROA até o vante, desce no posto da frente. As três fileiras da frente NÃO
+## entram numa fase: elas só recebem o posto novo (a permutação de `formacao`) quando o fresco pousa na
+## pista, e a partir daí perseguem o posto da grade como sempre perseguiram. Recuar em fileira abrindo
+## o buraco é custódia comum, não manobra — e é por isso que a manobra cabe num corpo por coluna.
+const ROD_NA_LINHA := 0
+const ROD_SUBINDO := 1
+const ROD_PISTA := 2
+const ROD_DESCENDO := 3
 ## Dano de canhão de um bloco inteiro por salva, antes de escalar por navios e ARMAS. Um quinto
 ## do golpe de um casco de linha: vinte blocos equivalem a ~4 cascos de linha de fogo, e a
 ## contagem da massa chega ao mesmo fim da contagem dos núcleos em dezenas de salvas, não em duas.
@@ -222,6 +272,15 @@ var tempo := 0.0
 ## nenhum índice de frota, nenhum sorteio entra aqui.
 var fogo_concentrado := false
 var alvo_comandado := Vector3.ZERO
+## Ordem do comandante sobre a cadência: com isto ligado, toda salva que fecha manda a fileira que
+## acabou de atirar sair da linha, e as três de trás fecham fileira. Desligado, nenhum bloco recebe
+## destino de rodízio e `passo()` toma exatamente o mesmo caminho de antes — é a inertez que a
+## família 15 da sonda cobra dígito por dígito contra a montada sem o código.
+var rodizio_ativo := false
+## Quantas janelas da pista cada lado já abriu. É o relógio da ALTERNÂNCIA entre andares (e não o
+## `salva_numero`, porque uma janela pode ser perdida com a pista ainda ocupada e não tem direito de
+## adiantar o turno de ninguém).
+var _rodizio_ciclo := {"aliado": 0, "hostil": 0}
 ## Quantas casas cada `MultiMesh` tem de fato escritas. A rendição encolhe uma lista, e a cauda que
 ## ela pintou fica órfã: sem este registro os vinte e quatro transformados do bloco que partiu
 ## continuariam no ar, um bloco fantasma pendurado na tela do lado que o perdeu. Sobrevive de
@@ -280,6 +339,13 @@ func _novo_bloco(id: int, esq: int, indice: int, lado: String, pos: Vector3) -> 
 		# andam juntos porque `Vector3.ZERO` é um destino legítimo — um falso com destino zero é a
 		# muralha inteira navegando para a origem do mundo.
 		"destino": Vector3.ZERO, "com_destino": false, "selecionado": false,
+		# Estado do rodízio de fileiras: `ROD_NA_LINHA` é o regime de sempre. Não há alvo capturado,
+		# e é de propósito — a pista é lida viva de `posto_no_lado` contra a estação do quadro, então
+		# uma linha que recua leva a pista junto; um ponto congelado na largada seria o bloco
+		# atravessando o mar enquanto o mar anda. O rodízio também não toca `com_destino`: ordem da
+		# ponte e manobra de cadência são canais separados, e o letreiro «sob destino» continua
+		# contando só o que o comandante mandou.
+		"rodizio_fase": ROD_NA_LINHA,
 		"pintas": {"casas": -1, "pos": Vector3(1e9, 0.0, 0.0), "rumo": 1e9}}
 
 
@@ -396,6 +462,12 @@ func montar(nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 	fogo_concentrado = false
 	alvo_comandado = Vector3.ZERO
 	pares_da_ultima_salva = []
+	# O relógio da alternância morre com a batalha velha: remonta com o contador de fora seria um
+	# andar começar a partida devendo a pista ao outro. `rodizio_ativo` fica de propósito — é doutrina
+	# cravada no painel, não ordem de batalha, e zerá-la aqui é o jeito exato de o letreiro do painel
+	# passar a jurar uma lei que a massa não segue.
+	_rodizio_ciclo["aliado"] = 0
+	_rodizio_ciclo["hostil"] = 0
 	centro_aliado = _centro_de(nucleos_aliados)
 	centro_hostil = _centro_de(nucleos_hostis)
 	recuo_hostil = -float(CAMPO_DE_APROXIMACAO)
@@ -532,6 +604,144 @@ func _absorvedor(origem: Vector3, trecho: Vector3, lado: String, exceto: int) ->
 	return {"i": melhor, "t": melhor_t}
 
 
+## ---- A máquina do rodízio (fatia 4.5) ----
+
+## Em que fileira da coluna o bloco está, contado DA FRENTE: 0 é quem tem vante limpo. É `br` para o
+## aliado, que olha para -z, e o complemento para o hostil, que olha para +z — a mesma assimetria de
+## `rumo_da_linha`, lida da grade em vez de cravada na calculadora.
+static func _fila_da_coluna(b: Dictionary, lado: String) -> int:
+	var br := int(float(int(b["formacao"])) / float(COLUNAS_NO_ESQUADRAO))
+	return br if lado == "aliado" else LINHAS_NO_ESQUADRAO - 1 - br
+
+
+## Os blocos VIVOS de uma coluna (mesmo esquadrão, mesma `bc`), do mais adiantado para o mais
+## atrasado. Insertion sort estável sobre a ordem de lista: empate impossível (os quatro postos de
+## uma coluna são quatro `formacao` diferentes) e sorteio proibido — duas montadas gemeas rodizam a
+## mesma coluna na mesma ordem.
+func _coluna(lado: String, esq: int, bc: int) -> Array[Dictionary]:
+	var fora: Array[Dictionary] = []
+	for c in lista_de(lado):
+		if not bool(c["vivo"]):
+			continue
+		if int(c["esquadrao"]) != esq or int(c["formacao"]) % COLUNAS_NO_ESQUADRAO != bc:
+			continue
+		var f := _fila_da_coluna(c, lado)
+		var i := fora.size()
+		while i > 0 and _fila_da_coluna(fora[i - 1], lado) > f:
+			i -= 1
+		fora.insert(i, c)
+	return fora
+
+
+## Para onde anda um bloco em rodízio: o posto da grade, com a altura trocada pela COTA da pista
+## enquanto ele estiver fora do plano. A `formacao` já é o posto novo depois de o bloco pousar na
+## pista (é a permutação quem escreve nela), então `posto_no_lado` devolve sozinha o vante certo e o
+## x da coluna, sem ponto capturado. A deriva fica de fora dos três casos: quem respira é a linha, e
+## a pista é a única faixa do campo com folga vertical — 1,023 u no pior quadro medido pela família
+## 15 (e o pior quadro é de um corpo já em fase PISTA, não da subida), contra os 2,533 u que a
+## geometria sem deriva prometia.
+func _alvo_do_rodizio(b: Dictionary, lado: String) -> Vector3:
+	var posto := posto_no_lado(int(b["esquadrao"]), int(b["formacao"]), estacao(lado))
+	if int(b["rodizio_fase"]) == ROD_DESCENDO:
+		return posto
+	# Os dois andares caem no MESMO meio-andar: camada 0 sobe 6,0 u, camada 1 desce 6,0 u, e as duas
+	# contas chegam à altura da própria estação. É exatamente por isso que a pista é uma janela só.
+	var camada := int(float(int(b["esquadrao"])) / float(COLUNAS_NO_LADO))
+	return Vector3(posto.x,
+		posto.y + (PISTA_DO_RODIZIO if camada == 0 else -PISTA_DO_RODIZIO), posto.z)
+
+
+## Um quadro de trânsito: chegar é medido contra o alvo do próprio quadro, com a folga de pouso da
+## casa, e quem anda continua sendo `Voo.marchar`. Nada aqui teleporta corpo nem escreve posição.
+func _avancar_rodizio(b: Dictionary, lado: String) -> void:
+	if (b["pos"] as Vector3).distance_to(_alvo_do_rodizio(b, lado)) > RODIZIO_POUSO:
+		return
+	var fase := int(b["rodizio_fase"])
+	if fase == ROD_SUBINDO:
+		# Chegou à pista: agora, e só agora, a coluna inteira troca de posto. A permutação é as
+		# fileiras correndo uma casa para TRÁS — quem veio de trás herda o vante e cada um dos outros
+		# sobe o posto do vizinho de frente (`postos[(i + 1) % k]` é a lista de postos rodando uma casa
+		# no sentido inverso ao do bloco em trânsito). Ela não acontece na largada porque as três da
+		# frente só podem recuar depois de a retaguarda ter saído do plano delas: avançar com ela ainda
+		# na linha é o aliado dentro do aliado que as famílias 2 e 13 da sonda caçam quadro a quadro.
+		var col := _coluna(lado, int(b["esquadrao"]),
+			int(b["formacao"]) % COLUNAS_NO_ESQUADRAO)
+		var postos: Array[int] = []
+		for c in col:
+			postos.append(int(c["formacao"]))
+		var k := col.size()
+		for i in range(k):
+			col[i]["formacao"] = postos[(i + 1) % k]
+		b["rodizio_fase"] = ROD_PISTA
+	elif fase == ROD_PISTA:
+		b["rodizio_fase"] = ROD_DESCENDO
+	else:
+		b["rodizio_fase"] = ROD_NA_LINHA
+
+
+## A pista está ocupada? É leitura de estado, não de relógio, e existe porque os dois andares do
+## mesmo lado têm colunas no MESMO x e no MESMO z (`coluna_esq` é `esq % COLUNAS_NO_LADO`, o andar só
+## muda y): dois blocos em trânsito ao mesmo tempo seriam dois blocos no mesmo ponto do meio-andar.
+## Se uma travessia atrasar, a outra espera a próxima janela em vez de atravessar por cima.
+func _pista_ocupada(lado: String) -> bool:
+	for b in lista_de(lado):
+		if int(b["rodizio_fase"]) > ROD_NA_LINHA:
+			return true
+	return false
+
+
+## Ordem da ponte desfaz a manobra: quem recebeu destino volta ao regime de linha. É preciso e não é
+## cosmético — a pista é reclamada por leitura de fase, e um bloco esquecido em trânsito com a ponte
+## mandando nele travaria a janela do próprio lado para sempre. Geometricamente o recuo é limpo em
+## qualquer fase: na subida o posto de grade do bloco é o MESMO x/z que ele tem agora (só muda a
+## cota), e depois da permutação o posto dele é o da frente, onde a própria travessia o está
+## levando — o destino da ponte assume o corpo, e o posto que ele larga é o da fileira que sobe.
+func _desmanchar_rodizio(b: Dictionary) -> void:
+	b["rodizio_fase"] = ROD_NA_LINHA
+
+
+## Abre a roda de um andar: a fileira da RETAGUARDA de cada coluna dele recebe a fase de subida, as
+## quinze de uma vez (três esquadrões × cinco colunas). Rodar coluna por coluna custaria uma janela
+## por coluna, e a travessia deixaria de ser lida como manobra para virar um gotejamento. Andar
+## inteiro de uma vez é o que faz a linha se ver respirar em vez de trocar de lugar aos pedaços.
+##
+## O sentido é conseqüência de medida, não de gosto. A primeira versão mandava a fileira da frente
+## para a retaguarda, e a sonda mediu a travessia em 1 440 quadros — vinte e quatro segundos, quinze
+## salvas — porque vinte e uma unidades de ré correm no envelope mais lerdo do bloco (`re 0,2` ×
+## `MARCHA_DE_BLOCO 6,0` = 1,2 u/s) e doze de empuxo correm no do través (2,4 u/s). Mandando a
+## retaguarda subir e varrer a coluna POR CIMA, o mesmo percurso de vinte e uma unidades passa a
+## correr a 6,0 u/s de proa, e o recuo caro fica distribuído em três saltos de sete unidades
+## feitos em paralelo por quem não está na pista. A fileira fresca chega ao vante em vez de
+## escoltada ir embora, que é o que o comandante pede quando roda a linha.
+func _comecar_rodizio(lado: String, camada: int) -> void:
+	for e in range(COLUNAS_NO_LADO):
+		var esq := camada * COLUNAS_NO_LADO + e
+		for bc in range(COLUNAS_NO_ESQUADRAO):
+			var col := _coluna(lado, esq, bc)
+			if col.size() < 2:
+				continue
+			col[col.size() - 1]["rodizio_fase"] = ROD_SUBINDO
+
+
+## Fecho de salva: se a cadência chama e a pista está livre, o andar da vez manda a própria fileira
+## da frente sair da linha. É aqui, e só aqui, que um bloco ganha fase de rodízio — a travessia nunca
+## começa no meio de uma salva, porque o corredor que os lances atravessam é o da linha de antes.
+## Com a ordem desligada, esta função devolve na primeira linha e nenhum número do ledger se move: é
+## a inertez que a família 15 da sonda cobra dígito por dígito contra a montada sem o código.
+func _rodizar_fileiras() -> void:
+	if not rodizio_ativo:
+		return
+	if salva_numero % RODIZIO_A_CADA != 0:
+		return
+	for lado in ["aliado", "hostil"]:
+		var l := String(lado)
+		if _pista_ocupada(l):
+			continue
+		var camada := int(_rodizio_ciclo[l]) % CAMADAS_NO_LADO
+		_rodizio_ciclo[l] = int(_rodizio_ciclo[l]) + 1
+		_comecar_rodizio(l, camada)
+
+
 ## Um quadro de massa: cada bloco persegue o posto do seu esquadrão, e o posto persegue a estação do
 ## lado. Integração pela `Voo.marchar`, nunca teleportar — é a mesma lei que faz as formações dos doze
 ## cascos levarem tempo de locomoção, e é ela que faz o campo de aproximação ser cruzado marchando em
@@ -561,6 +771,12 @@ func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 			# casos, então nem o posto nem o destino teleportam.
 			if bool(b["com_destino"]):
 				posto = b["destino"] as Vector3
+			elif int(b["rodizio_fase"]) > ROD_NA_LINHA:
+				# O rodízio manda mais que a grade e menos que o comandante. A deriva fica de fora de
+				# propósito: a pista tem 1,023 u de folga medida depois de descontada a respira, e somar a
+				# ela mais meio metro de custódia é fechar a margem — o bloco em trânsito persegue a
+				# COTA da pista, não a cota balançando.
+				posto = _alvo_do_rodizio(b, String(lado))
 			else:
 				# Custódia de posto: o bloco nunca estaciona de vez, ele orbita o próprio lugar na
 				# grade. Boreste com a fase do ANDAR e altura com a fase do ESQUADRÃO — a divisão está
@@ -585,6 +801,12 @@ func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 			b["vel"] = voo["vel"]
 			b["rumo"] = voo["rumo"]
 			b["giro"] = voo["giro"]
+			# A fase só avança DEPOIS de o corpo ter andado: é a posição nova que decide se o bloco
+			# pousou na pista, e medir a chegada na posição do quadro anterior atrasaria a manobra em
+			# um quadro por fase — três fases, três quadros de borracha no meio de uma travessia de
+			# 5,5 s que a sonda lê em 0,1 s de precisão.
+			if int(b["rodizio_fase"]) > ROD_NA_LINHA:
+				_avancar_rodizio(b, String(lado))
 	_reparar(delta)
 
 
@@ -740,6 +962,7 @@ func mandar_destino(ponto: Vector3) -> int:
 		var desloc := (b["pos"] as Vector3) - centro
 		b["destino"] = ponto + desloc
 		b["com_destino"] = true
+		_desmanchar_rodizio(b)
 		escritos += 1
 	return escritos
 
@@ -763,6 +986,7 @@ func mandar_orbita(marco: Vector3, raio: float) -> int:
 		b["destino"] = marco + (rumo.normalized() * raio) \
 			+ Vector3(0.0, de_marco.y, 0.0)
 		b["com_destino"] = true
+		_desmanchar_rodizio(b)
 		escritos += 1
 	return escritos
 
@@ -875,6 +1099,10 @@ func troca_salva() -> Dictionary:
 	# limpar `rendicao` aqui deixaria a mudança de lista sem nada para mover.
 	_prencher_rendicoes()
 	rendidos = _rendidas_na_ultima_salva
+	# A janela do rodízio fecha com a salva resolvida, nunca antes dela: o ledger acima foi desenhado
+	# contra a linha que estava de pé no quadro anterior, e mandar a frente sair da linha antes de
+	# resolver seria cobrar fogo de uma formação que a manobra já desfiz.
+	_rodizar_fileiras()
 	return {"lancados": lancados, "feridos": feridos, "afundados": afundados,
 		"rendidos": rendidos, "obstruidos": obstruidos, "rebatidos": rebatidos,
 		"salva": salva_numero}
@@ -992,6 +1220,11 @@ func _prencher_rendicoes() -> void:
 			b["rendicao"] = false
 			b["TRIPULACAO"] = TRIPULACAO_DE_PRESA
 			b["pintas"]["casas"] = -1
+			# Uma presa que atravessa o campo em plena travessia levaria a própria alegação de pista
+			# para o lado receptor, e a `_pista_ocupada` do lado receptor passaria a contar um corpo
+			# que nunca esteve naquela faixa. A rendição desfaz a manobra: o bloco pousa no posto que
+			# `_recrutar_postos` acabou de dar a ele e volta a respirar com a muralha nova.
+			b["rodizio_fase"] = ROD_NA_LINHA
 			nova.append(b)
 			presas += 1
 			_rendidas_na_ultima_salva += 1
@@ -1165,3 +1398,14 @@ func resumo() -> String:
 	return "MASSA %d/%d • %dc // hostil %d/%d • %dc // %d rend." % [
 		vivos("aliado"), BLOCOS_NO_LADO, navios("aliado"),
 		vivos("hostil"), BLOCOS_NO_LADO, navios("hostil"), presas]
+
+
+## Quantos blocos do lado estão fora da linha neste quadro. É a leitura que o letreiro usa para dizer
+## "pista em uso" sem a ponte ter que adivinhar fase de bloco nenhum — e é a régua com que a sonda
+## prova que uma travessia fecha, em vez de deixar corpo pendurado no meio-andar para sempre.
+func em_rodizio(lado: String) -> int:
+	var n := 0
+	for b in lista_de(lado):
+		if int(b["rodizio_fase"]) > ROD_NA_LINHA:
+			n += 1
+	return n

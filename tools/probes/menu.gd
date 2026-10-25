@@ -3,13 +3,16 @@ extends SceneTree
 ## Sonda do painel em grupos e das duas ordens de densidade (DISPERSAR / AGRUPAR).
 ##
 ## O pedido do comandante foi «menos poluição»: o painel tinha dezenove botões de ordem empilhados,
-## sempre todos à vista, e dois deles faziam a mesma coisa. Agora são trinta e cinco comandos em nove
+## sempre todos à vista, e dois deles faziam a mesma coisa. Agora são trinta e seis comandos em nove
 ## categorias, uma aberta por vez — a sétima (CENÁRIO) entrou depois, com os quatro mapas, e ganhou
 ## o quinto (SISTEMA) na rodada das luas; a oitava
 ## (TRILHA) com as quatro faixas da ponte, e o grupo
 ## ATAQUE ganhou os dois degraus de densidade do disco de salva. A nona (ARMAMENTO) são as duas
 ## escadas de casco: quatro botões, dois de bateria e dois de convés, que trocam o que o casco
-## carrega, não para onde ele vai. Isso
+## carrega, não para onde ele vai. O trigésimo sexto é o rodízio de fileiras, a quarta ordem de
+## MANOBRA — e o primeiro botão da casa que é ESTADO e não pulso: ele liga uma manobra que roda
+## salva após salva, sem dar ordem a casco nenhum no clique.
+## Isso
 ## é pintura — mas pintura que esconde comando, e painel que esconde sem dizer o que escondeu
 ## deixa de ser instrumento. Então esta sonda mede as duas margens:
 ##
@@ -45,7 +48,7 @@ const PASSO := 0.1
 
 const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "ARMAMENTO", "REPAROS",
 	"RECONHECIMENTO", "CENÁRIO", "TRILHA"]
-const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "ARMAMENTO": 4,
+const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 4, "ARMAMENTO": 4,
 	"REPAROS": 5, "RECONHECIMENTO": 1, "CENÁRIO": 5, "TRILHA": 4}
 
 var breaks := 0
@@ -154,6 +157,15 @@ func _botoes(game, nome: String) -> Array[Button]:
 			lista.append(filho as Button)
 	return lista
 
+## Os rótulos de ordem dos doze cascos, numa string só. É a régua com que a família 6b prova que a
+## ordem da MASSA não encosta na frota: um letreiro que muda é estado, mas ordem que muda é comando
+## dado a quem não foi comandado.
+func _ordens_cascos(game) -> String:
+	var s := ""
+	for unit in game.fleet:
+		s += String(unit["order"]) + " "
+	return s
+
 ## Quantos botões de comando estão à vista agora (corpo aberto) — a medida de poluição.
 func _a_vista(game) -> int:
 	var total := 0
@@ -205,7 +217,10 @@ func _initialize() -> void:
 	var total_botoes := 0
 	for nome in NOMES_GRUPOS:
 		total_botoes += _botoes(game, nome).size()
-	_assert("trinta e cinco comandos agrupados", total_botoes == 35,
+	# A conta subiu de trinta e cinco para trinta e seis na fatia 4.5: o rodízio de fileiras entrou no
+	# grupo MANOBRA como a quarta ordem, e é botão porque é ORDEM do comandante, não letreiro — ele
+	# troca a lei com que as salvas seguintes resolvem.
+	_assert("trinta e seis comandos agrupados", total_botoes == 36,
 		"%d botões de comando em 9 grupos" % total_botoes)
 
 	# 2 — Menos poluição: o que se vê é um grupo, não a lista toda. Este era o número da rodada
@@ -232,8 +247,8 @@ func _initialize() -> void:
 		not (game.group_bodies["FORMAÇÕES"] as Control).visible
 		and _marca(game, "FORMAÇÕES") == "▸",
 		"marca de FORMAÇÕES: %s" % _marca(game, "FORMAÇÕES"))
-	_assert("ainda um grupo só à vista depois do clique", _a_vista(game) == 3,
-		"%d botões visíveis contra 3 do grupo MANOBRA" % _a_vista(game))
+	_assert("ainda um grupo só à vista depois do clique", _a_vista(game) == 4,
+		"%d botões visíveis contra 4 do grupo MANOBRA" % _a_vista(game))
 	_assert("o relatório anuncia o que abriu",
 		str(game.report_label.text).contains("PAINEL: MANOBRA"),
 		str(game.report_label.text))
@@ -326,6 +341,49 @@ func _initialize() -> void:
 		game.report_label.text)
 	game.fogo_densidade = densidade_antes
 	game._desenhar_setor_de_fogo()
+
+	# 6b — A quarta ordem de MANOBRA é ESTADO, não pulso: o rodízio de fileiras. A lei nova é a
+	# única da massa que sobrevive ao clique, então a sonda não pode conferir um efeito momentâneo —
+	# ela confere a BANDIIRA (o estado da massa), o RÓTULO (o que a ponte jura estar mandando) e a
+	# volta ao regime de antes. As três têm de concordar no mesmo clique: um botão que liga a manobra
+	# e continua dizendo OFF é a ponte mentindo para o comandante em plena tela.
+	var manobra := _botoes(game, "MANOBRA")
+	_assert("MANOBRA tem quatro ordens, contando o rodízio", manobra.size() == 4,
+		"%d botões no grupo" % manobra.size())
+	var botao_rodizio := manobra[3] as Button
+	_assert("a ordem entra no painel desligada",
+			botao_rodizio.text == "RODÍZIO DE FILEIRAS — OFF"
+			and not bool(game.esquadra.rodizio_ativo),
+		"rótulo=[%s] ativo=%s" % [botao_rodizio.text, str(game.esquadra.rodizio_ativo)])
+	var ordens_antes_rodizio := _ordens_cascos(game)
+	var sorteio_rodizio := int(game.rng.state)
+	botao_rodizio.pressed.emit()
+	_assert("um clique liga a manobra na massa", bool(game.esquadra.rodizio_ativo),
+		"rodizio_ativo=%s" % str(game.esquadra.rodizio_ativo))
+	_assert("o rótulo acompanha o estado", botao_rodizio.text == "RODÍZIO DE FILEIRAS — ON",
+		"rótulo depois do clique: [%s]" % botao_rodizio.text)
+	# O preço não é um dígito congelado na montagem: a conta de cabeça desta sessão errou o ciclo duas
+	# vezes (25,6 s e depois 32 salvas) antes da família 15 medir 64, e um "32" escrito aqui aprovaria
+	# o letreiro velho para sempre. A cobraça é a fórmula da LEI — a pista é uma faixa só, então a
+	# coluna roda uma casa a cada duas janelas — e quem prova que a lei é a medida é a família 15 da
+	# sonda da esquadra, não este painel.
+	var preco_da_lei := 2 * int(game.esquadra.RODIZIO_JANELA) \
+			* int(game.esquadra.LINHAS_NO_ESQUADRAO)
+	_assert("o relatório diz o preço da manobra, e o preço é o da lei: %d salvas" % preco_da_lei,
+		String(game.report_label.text).contains("ciclo completo da coluna = %d salvas" % preco_da_lei),
+			"lei = 2 x %d x %d = %d salvas, letreiro = [%s]" % [
+				int(game.esquadra.RODIZIO_JANELA), int(game.esquadra.LINHAS_NO_ESQUADRAO),
+				preco_da_lei, game.report_label.text])
+	_assert("ligar o rodízio não dá ordem a casco nenhum",
+		_ordens_cascos(game) == ordens_antes_rodizio,
+		"ordens antes == depois: %s" % str(_ordens_cascos(game) == ordens_antes_rodizio))
+	_assert("ligar o rodízio não sorteia", int(game.rng.state) == sorteio_rodizio,
+		"rng.state %d" % int(game.rng.state))
+	botao_rodizio.pressed.emit()
+	_assert("o segundo clique devolve a muralha à lei antiga",
+			not bool(game.esquadra.rodizio_ativo)
+			and botao_rodizio.text == "RODÍZIO DE FILEIRAS — OFF",
+		"ativo=%s rótulo=[%s]" % [str(game.esquadra.rodizio_ativo), botao_rodizio.text])
 
 	# 7 — DISPERSAR: anel largo em torno do centro REAL da seleção.
 	game.selection_scope = "FROTA"

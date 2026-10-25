@@ -36,7 +36,7 @@ extends SceneTree
 ## `tools/probes/capitania.gd`). Mudar o número lá quebra a asserção aqui: é de propósito.
 const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "ARMAMENTO", "REPAROS",
 	"RECONHECIMENTO", "CENÁRIO", "TRILHA"]
-const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "ARMAMENTO": 4,
+const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 4, "ARMAMENTO": 4,
 	"REPAROS": 5, "RECONHECIMENTO": 1, "CENÁRIO": 5, "TRILHA": 4}
 const SEMENTE := 1234567890
 ## Salvas da corrida A/B. Seis é o bastante para a cauda divergir em qualquer resto de partida.
@@ -75,7 +75,7 @@ func _frames(n: int) -> void:
 		await process_frame
 
 ## Botões de um grupo do painel, contados dentro do corpo — o mesmo instrumento de
-## `tools/probes/capitania.gd`, porque o contrato de 35 comandos só vale se a contagem for a que
+## `tools/probes/capitania.gd`, porque o contrato de 36 comandos só vale se a contagem for a que
 ## `menu.gd` faz: `Label` no corpo não é comando, e botão no trilho de cima não entra na conta.
 func _botoes(game, nome: String) -> int:
 	var total := 0
@@ -285,7 +285,7 @@ func _initialize() -> void:
 		if nome == "ARMAMENTO":
 			corpo_armamento = "%d botões + %d nós no corpo" % [n,
 				(base.group_bodies[nome] as Control).get_child_count()]
-	_assert("painel ainda 9 grupos / 35 comandos", botoes == 35 and NOMES_GRUPOS.size() == 9,
+	_assert("painel ainda 9 grupos / 36 comandos", botoes == 36 and NOMES_GRUPOS.size() == 9,
 		"%d botões contados só dentro dos corpos dos grupos: o contador de menu.gd não vê top_row" % botoes)
 	_assert("nenhum grupo ganhou ou perdeu filho", tamanhos_ok,
 		"per grupo, %s — o letreiro do canhão é Label e não entra na conta de comandos" % corpo_armamento)

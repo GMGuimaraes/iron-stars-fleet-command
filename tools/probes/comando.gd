@@ -72,7 +72,7 @@ extends SceneTree
 ##    separa olhar de navegar: soltura depois de varredura não escreve ordem nenhuma — é o ramo do
 ##    clique que escreve, e ele fica de fora.
 ## 9) O PREÇO DECLARADO É MEDIDO, NÃO PROMETIDO. Um nó a mais na árvore: o gabarito de filhos é
-##    re-medido aqui e nas três sondas que o assinavam, e os 35 comandos do painel conferidos pelo
+##    re-medido aqui e nas três sondas que o assinavam, e os 36 comandos do painel conferidos pelo
 ##    mesmo contador de `menu.gd` — o clique não pediu botão novo, e um botão a mais obrigaria as
 ##    55 conferências daquela sonda a serem reescritas. O letreiro continua `Label` e passa a
 ##    anunciar o próprio modo, a contagem de seleção e a de destinos.
@@ -110,7 +110,7 @@ const BLOCOS_POR_LADO := 120
 const BLOCOS_NO_ESQUADRAO := 20
 const CASAS := 24
 const NAVIOS_NO_BLOCO := 100
-const BOTOES_DO_PAINEL := 35
+const BOTOES_DO_PAINEL := 36
 ## Os mesmos nove corpos de `menu.gd`: é dentro deles que moram os comandos, e só deles que este
 ## contador lê.
 const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "ARMAMENTO", "REPAROS",
@@ -880,7 +880,7 @@ func _initialize() -> void:
 	# ── 9. o preco declarado e medido, nao prometido ──────────────────────────────────────────
 	# O contador é o de `menu.gd`, não um BFS da árvore inteira: `CheckBox` e `CheckButton` herdam
 	# de `Button`, então uma varredura por tipo contaria as alavancas de opção como se fossem ordens
-	# e o gabarito de trinta e cinco nunca fecharia.
+	# e o gabarito de trinta e seis nunca fecharia.
 	var botoes := 0
 	for nome in NOMES_GRUPOS:
 		for filho in (o.group_bodies[nome] as Control).get_children():
@@ -890,7 +890,7 @@ func _initialize() -> void:
 		int(o.get_child_count()) == FILHOS_DO_JOGO,
 		"%d filhos nesta montagem sem cenário; com o `cenario_root` são %d, conferido por geoide.gd" % [
 			o.get_child_count(), FILHOS_COM_CENARIO])
-	_assert("os trinta e cinco comandos do painel não se mexem", botoes == BOTOES_DO_PAINEL,
+	_assert("os trinta e seis comandos do painel não se mexem", botoes == BOTOES_DO_PAINEL,
 		"%d botões de comando nos nove corpos" % botoes)
 	_assert("o letreiro continua Label e passa a anunciar o próprio modo",
 		o.massa_label is Label and String(o.massa_label.text).contains("MASSA") \

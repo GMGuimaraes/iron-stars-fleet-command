@@ -63,7 +63,7 @@ const POS_FOLGA := 0.001
 ## e desce, e não existe botão de «escolher o navio» — a classe é do casco, não da ordem.
 const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "ARMAMENTO", "REPAROS",
 	"RECONHECIMENTO", "CENÁRIO", "TRILHA"]
-const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "ARMAMENTO": 4,
+const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 4, "ARMAMENTO": 4,
 	"REPAROS": 5, "RECONHECIMENTO": 1, "CENÁRIO": 5, "TRILHA": 4}
 
 var breaks := 0
@@ -485,7 +485,7 @@ func _secao_escada() -> void:
 		"%s, %d nós Conves" % [i2.fleet[5]["classe"], _conves_na_cena(i2)])
 	extra.queue_free()
 
-## ---- 3. O painel: nove grupos, trinta e cinco comandos, quatro degraus ------------------------
+## ---- 3. O painel: nove grupos, trinta e seis comandos, quatro degraus ------------------------
 func _secao_painel() -> void:
 	var game: Node3D = await _montar_jogo()
 	_alinhar(game)
@@ -506,7 +506,7 @@ func _secao_painel() -> void:
 		if n != int(TAMANHOS[nome]):
 			tamanhos_ok = false
 	_assert("cada grupo carrega os comandos que promete", tamanhos_ok, medido)
-	_assert("trinta e cinco comandos agrupados", total == 35, "%d botões de comando" % total)
+	_assert("trinta e seis comandos agrupados", total == 36, "%d botões de comando" % total)
 	_assert("ARMAMENTO nasce fechado", not (game.group_bodies["ARMAMENTO"] as Control).visible
 		and (game.group_heads["ARMAMENTO"] as Button).text.substr(0, 1) == "▸", "▸ fechado")
 	var mais_bateria := _botao(game, "ARMAMENTO", "ENCURRAÇADOS +1")

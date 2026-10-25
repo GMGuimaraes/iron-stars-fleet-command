@@ -46,11 +46,11 @@ const ROCHA_INTEGRIDADE_POR_RAIO := 6.0
 const SEMENTE := 1234567890
 ## Tolerância de float32 lida de volta do motor: perto de 80 u o ulp é ~7,6e-6.
 const FOLGA := 0.00005
-## Nove grupos e trinta e cinco comandos: a capitânia ganha um letreiro, não um botão — `Label` é
+## Nove grupos e trinta e seis comandos: a capitânia ganha um letreiro, não um botão — `Label` é
 ## filho do corpo do grupo e o contador de `tools/probes/menu.gd` só enxerga `Button`.
 const NOMES_GRUPOS := ["ATAQUE", "POSTURA", "FORMAÇÕES", "MANOBRA", "ARMAMENTO", "REPAROS",
 	"RECONHECIMENTO", "CENÁRIO", "TRILHA"]
-const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 3, "ARMAMENTO": 4,
+const TAMANHOS := {"ATAQUE": 4, "POSTURA": 5, "FORMAÇÕES": 4, "MANOBRA": 4, "ARMAMENTO": 4,
 	"REPAROS": 5, "RECONHECIMENTO": 1, "CENÁRIO": 5, "TRILHA": 4}
 
 var breaks := 0
@@ -411,7 +411,7 @@ func _secao_painel() -> void:
 		total += _botoes(game, nome).size()
 	_assert("painel.grupos", int(game.group_bodies.size()) == NOMES_GRUPOS.size(),
 		"%d grupos de comando no painel" % game.group_bodies.size())
-	_assert("painel.comandos", total == 35, "%d botões de comando em todo o painel" % total)
+	_assert("painel.comandos", total == 36, "%d botões de comando em todo o painel" % total)
 	_assert("painel.armamento", _botoes(game, "ARMAMENTO").size() == int(TAMANHOS["ARMAMENTO"]) \
 			and _nao_botoes(game, "ARMAMENTO") == 1 and is_instance_valid(game.capitania_label),
 			"ARMAMENTO segue com %d botões e ganhou exatamente um filho que não é botão: o letreiro da capitânia" % TAMANHOS["ARMAMENTO"])
