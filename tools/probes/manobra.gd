@@ -3,8 +3,10 @@ extends SceneTree
 ## Sonda da navegação e do casco físico. O que ela prova tem três camadas, e a terceira é a que
 ## costuma ser mentirosa:
 ##
-## 1) O timão obedece em três eixos — avante, RÉ (com teto próprio), guinada, arfagem, rolagem
-##    autocorrigida e empuxo vertical — e o campo é grande, com limites que fecham em coordenada
+## 1) O timão obedece nos seis eixos — avante, RÉ (com teto próprio), guinada (Q/R), traslação de
+##    través (A/D, que NÃO vira o casco), arfagem, rolagem autocorrigida (Z/X) e empuxo vertical
+##    (C/V) — e o mapinha que liga cada tecla a cada eixo é conferido tecla a tecla, código e
+##    físico. O campo é grande, com limites que fecham em coordenada
 ##    exata. Nada disso sorteia: `rng.state` tem de sair intacto de vinte quadros de manobra, e
 ##    é por isso que a posição da ponte pode ser afirmada com valor, não com ordem de grandeza.
 ## 2) Corpo não atravessa corpo. Separação posicional com peso distribuído pelo casco, destroço
@@ -32,8 +34,26 @@ const MAP_Z_FAR := -600.0
 const CAPITAL_SPEED := 22.0
 const CAPITAL_REVERSE := -0.6
 const CAPITAL_LIFT := 12.0
+const CAPITAL_TRAVES := 12.0
 const PITCH_LIMIT := 0.62
 const ROLL_LIMIT := 0.5
+## Espelho de `VOO_ACOES`, de `main.gd`. Esta sonda é a única que cobra QUAL tecla física move
+## QUAL eixo, e é o único lugar do repo onde a troca de um mapinha silencioso é reprovada por
+## número: o comando no painel e a legenda da ponte são texto, e texto não quebra a sonda.
+const TECLAS_DE_VOO := {
+	"capital_avante": KEY_W,
+	"capital_re": KEY_S,
+	"capital_bombordo": KEY_A,
+	"capital_estibordo": KEY_D,
+	"capital_nariz_acima": KEY_UP,
+	"capital_nariz_abaixo": KEY_DOWN,
+	"capital_giro_esquerda": KEY_Q,
+	"capital_giro_direita": KEY_R,
+	"capital_role_esquerda": KEY_Z,
+	"capital_role_direita": KEY_X,
+	"capital_empuxo_acima": KEY_C,
+	"capital_empuxo_abaixo": KEY_V,
+}
 const HULL_RADIUS := 2.4
 const CAPITAL_RADIUS := 6.0
 const RAM_SPEED := 3.0
@@ -74,8 +94,9 @@ func _teclar(acao: String, apertado: bool) -> void:
 
 func _soltar_tudo() -> void:
 	for acao in ["capital_avante", "capital_re", "capital_bombordo", "capital_estibordo",
-		"capital_nariz_acima", "capital_nariz_abaixo", "capital_role_esquerda",
-		"capital_role_direita", "capital_empuxo_acima", "capital_empuxo_abaixo"]:
+		"capital_nariz_acima", "capital_nariz_abaixo", "capital_giro_esquerda",
+		"capital_giro_direita", "capital_role_esquerda", "capital_role_direita",
+		"capital_empuxo_acima", "capital_empuxo_abaixo"]:
 		_teclar(acao, false)
 
 ## Toda seção de voo abre e fecha a mesma ação por nome, e o nome é o que `_registra_voo` escreve:
@@ -83,11 +104,31 @@ func _soltar_tudo() -> void:
 ## a sonda acorda com o casco parado — que é QUEBRA ruidosa, não verde mentiroso.
 func _acoes_voo_existem() -> bool:
 	for acao in ["capital_avante", "capital_re", "capital_bombordo", "capital_estibordo",
-		"capital_nariz_acima", "capital_nariz_abaixo", "capital_role_esquerda",
-		"capital_role_direita", "capital_empuxo_acima", "capital_empuxo_abaixo"]:
+		"capital_nariz_acima", "capital_nariz_abaixo", "capital_giro_esquerda",
+		"capital_giro_direita", "capital_role_esquerda", "capital_role_direita",
+		"capital_empuxo_acima", "capital_empuxo_abaixo"]:
 		if not InputMap.has_action(acao) or InputMap.action_get_events(acao).is_empty():
 			return false
 	return true
+
+## Cada ação do mapinha recebe DOIS eventos em `_registra_voo`: o código digitado e a posição
+## física da tecla. Ler só o primeiro deixaria passar um mapinha com o físico em outro lugar — e é
+## o físico que salva o comandante em AZERTY e no build web, onde o navegador nem sempre reporta o
+## código. Devolve vazio quando tudo bate, e a mensagem dele é o nome da ação fora da lei.
+func _teclas_fora_do_mapinha() -> String:
+	for acao: String in TECLAS_DE_VOO:
+		var esperada := int(TECLAS_DE_VOO[acao])
+		var eventos: Array = InputMap.action_get_events(acao)
+		if eventos.size() != 2:
+			return "%s tem %d evento(s) registrados, esperado 2" % [acao, eventos.size()]
+		for evento in eventos:
+			var tecla := evento as InputEventKey
+			if tecla == null:
+				return "%s tem evento que não é tecla" % acao
+			var lida := tecla.keycode if tecla.keycode != KEY_NONE else tecla.physical_keycode
+			if int(lida) != esperada:
+				return "%s lê %d, esperado %d" % [acao, int(lida), esperada]
+	return ""
 
 func _alinhar(game) -> void:
 	for i in range(game.fleet.size()):
@@ -152,7 +193,11 @@ func _initialize() -> void:
 
 	# 1 — Linha de partida: a ponte é corpo, o casco dela tem medida e o campo é tridimensional.
 	_assert("timão registrado no InputMap", _acoes_voo_existem(),
-		"as dez ações de voo existem e cada uma tem evento de teclado")
+		"as doze ações de voo existem e cada uma tem evento de teclado")
+	var desvio_teclas := _teclas_fora_do_mapinha()
+	_assert("o mapinha é o da fatia: Q/R guinada, A/D través, Z/X rolagem, C/V vertical",
+		desvio_teclas == "",
+		desvio_teclas if desvio_teclas != "" else "as doze ações têm código e físico na tecla pedida")
 	_assert("capitânia abre com casco cheio", is_equal_approx(float(game.capital_hp), 100.0),
 		"casco %.1f" % float(game.capital_hp))
 	_assert("rig abre na origem, parado", game.bridge_rig.position == Vector3.ZERO
@@ -204,21 +249,47 @@ func _initialize() -> void:
 	_assert("inércia devolve o throttle ao neutro", is_equal_approx(float(game.throttle), 0.0),
 		"throttle %.3f" % float(game.throttle))
 
-	# 5 — Guinada e arfagem nos tetos, e arfagem com motor ligado vira subida REAL (o empuxo sai
-	# da transformada do rig, não de um eixo fixo).
-	_teclar("capital_bombordo", true)
+	# 5 — Guinada (Q/R), través (A/D) e arfagem nos tetos, e arfagem com motor ligado vira subida
+	# REAL (o empuxo sai da transformada do rig, não de um eixo fixo).
+	_teclar("capital_giro_esquerda", true)
 	var yaw_antes := float(game.bridge_rig.rotation.y)
 	for i in range(10):
 		game._update_capital_ship(0.1)
-	_assert("A abre a guinada para bombordo", float(game.bridge_rig.rotation.y) > yaw_antes,
+	_assert("Q abre a guinada para bombordo", float(game.bridge_rig.rotation.y) > yaw_antes,
 		"yaw %.3f -> %.3f" % [yaw_antes, float(game.bridge_rig.rotation.y)])
-	_teclar("capital_bombordo", false)
-	_teclar("capital_estibordo", true)
+	_teclar("capital_giro_esquerda", false)
+	_teclar("capital_giro_direita", true)
 	var yaw_direita := float(game.bridge_rig.rotation.y)
 	for i in range(10):
 		game._update_capital_ship(0.1)
-	_assert("D fecha a guinada para estibordo", float(game.bridge_rig.rotation.y) < yaw_direita,
+	_assert("R fecha a guinada para estibordo", float(game.bridge_rig.rotation.y) < yaw_direita,
 		"yaw %.3f -> %.3f" % [yaw_direita, float(game.bridge_rig.rotation.y)])
+	_teclar("capital_giro_direita", false)
+	# A traslação é o outro gesto do mesmo par de nomes: o casco anda para dentro de costado sem
+	# virar. Zerar a atitude antes é o que torna a asserção de coordenada possível — com o rumo
+	# torto, o través é uma diagonal e o número deixa de ser o da lei.
+	game.bridge_rig.rotation = Vector3.ZERO
+	var x_no_traves: float = game.bridge_rig.position.x
+	var yaw_no_traves := float(game.bridge_rig.rotation.y)
+	var z_no_traves: float = game.bridge_rig.position.z
+	_teclar("capital_bombordo", true)
+	for i in range(10):
+		game._update_capital_ship(0.1)
+	_assert("A traslada para bombordo sem virar o casco",
+		_igual(game.bridge_rig.position.x, x_no_traves - CAPITAL_TRAVES, 0.05)
+		and is_equal_approx(float(game.bridge_rig.rotation.y), yaw_no_traves)
+		and is_equal_approx(game.bridge_rig.position.z, z_no_traves),
+		"x %.2f -> %.2f (esperado %.2f), yaw %.4f, z %.2f" % [x_no_traves, game.bridge_rig.position.x,
+			x_no_traves - CAPITAL_TRAVES, float(game.bridge_rig.rotation.y), game.bridge_rig.position.z])
+	_teclar("capital_bombordo", false)
+	_teclar("capital_estibordo", true)
+	var x_a_bombordo: float = game.bridge_rig.position.x
+	for i in range(10):
+		game._update_capital_ship(0.1)
+	_assert("D devolve o casco por estibordo no mesmo fôlego",
+		_igual(game.bridge_rig.position.x, x_a_bombordo + CAPITAL_TRAVES, 0.05),
+		"x %.2f -> %.2f (esperado %.2f)" % [x_a_bombordo, game.bridge_rig.position.x,
+			x_a_bombordo + CAPITAL_TRAVES])
 	_teclar("capital_estibordo", false)
 	_teclar("capital_nariz_acima", true)
 	for i in range(40):
@@ -232,7 +303,7 @@ func _initialize() -> void:
 	_teclar("capital_nariz_acima", false)
 	_teclar("capital_avante", false)
 
-	# 6 — Empuxo vetorial: R sobe sem mudar atitude. Atitude é o que a mesa lê, então confundir
+	# 6 — Empuxo vetorial: C sobe sem mudar atitude. Atitude é o que a mesa lê, então confundir
 	# os dois faria o blip contar subida onde só houve arfagem.
 	var pitch_fixado := float(game.bridge_rig.rotation.x)
 	game.capital_velocity = Vector3.ZERO
@@ -240,7 +311,7 @@ func _initialize() -> void:
 	var y_antes: float = game.bridge_rig.position.y
 	for i in range(10):
 		game._update_capital_ship(0.1)
-	_assert("R sobe sem tocar na atitude", is_equal_approx(float(game.bridge_rig.rotation.x), pitch_fixado)
+	_assert("C sobe sem tocar na atitude", is_equal_approx(float(game.bridge_rig.rotation.x), pitch_fixado)
 		and game.bridge_rig.position.y > y_antes,
 		"y %.2f -> %.2f, pitch %.3f" % [y_antes, game.bridge_rig.position.y, pitch_fixado])
 	_teclar("capital_empuxo_acima", false)

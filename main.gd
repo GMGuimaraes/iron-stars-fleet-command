@@ -32,6 +32,10 @@ const CAPITAL_SPEED := 22.0
 const CAPITAL_REVERSE := -0.6
 ## Empuxo vetorial: subir e descer sem mudar a atitude do casco.
 const CAPITAL_LIFT := 12.0
+## Empuxo de través: ir para bombordo ou estibordo sem virar o casco. O valor é o do empuxo
+## vertical de propósito — deitar e subir custam o mesmo fôlego na ponte, e o jogador não tem de
+## reaprender o fôlego do casco só porque trocou de eixo.
+const CAPITAL_TRAVES := 12.0
 ## Atitude limitada: sem teto de arfagem a ponte gira em parafuso e a mesa holográfica, que é
 ## filha do rig, perde o horizonte que o comandante usa para ler o quadro.
 const PITCH_LIMIT := 0.62
@@ -47,9 +51,11 @@ const VOO_ACOES := {
 	"capital_estibordo": KEY_D,
 	"capital_nariz_acima": KEY_UP,
 	"capital_nariz_abaixo": KEY_DOWN,
-	"capital_role_esquerda": KEY_Q,
-	"capital_role_direita": KEY_E,
-	"capital_empuxo_acima": KEY_R,
+	"capital_giro_esquerda": KEY_Q,
+	"capital_giro_direita": KEY_R,
+	"capital_role_esquerda": KEY_Z,
+	"capital_role_direita": KEY_X,
+	"capital_empuxo_acima": KEY_C,
 	"capital_empuxo_abaixo": KEY_V,
 }
 ## Raio de manobra do casco: é perfil de tráfego, não a pintura (o billete mede ~4 unidades de
@@ -2793,8 +2799,8 @@ func _build_ui() -> void:
 		(group_bodies[grupo_aberto] as Control).visible = true
 		(group_heads[grupo_aberto] as Button).text = "▾  " + grupo_aberto
 	var hint := Label.new()
-	hint.text = ("W avante  •  S ré (a ré tem teto)\nA / D guinada  •  ↑ / ↓ arfagem  •  "
-		+ "Q / E rolagem\nR sobe  •  V desce  •  ESPAÇO pausa tática")
+	hint.text = ("W avante  •  S ré (a ré tem teto)\nQ / R guinada  •  A / D través  •  "
+		+ "↑ / ↓ arfagem\nZ / X rolagem  •  C sobe  •  V desce  •  ESPAÇO pausa tática")
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.add_theme_color_override("font_color", Color(0.65, 0.78, 0.9))
 	col.add_child(hint)
@@ -3871,16 +3877,22 @@ func _cobrar_contato(lista: Array[Dictionary], prefixo: String) -> void:
 					"hostil": corpo["hostil"], "imovel": false}, dano)
 
 
-## Timão da capitânia em três eixos: guinada (A/D), arfagem (setas ↑/↓), rolagem (Q/E, que se
-## autocorrige quando a mão sai do teclado para a mesa continuar legível), avante e ré (W/S, com a
-## ré limitada) e empuxo vertical (R/V, sobe e desce sem mudar a atitude). Nada aqui sorteia: a
-## posição do rig é leitura de teclado, e é por isso que a sonda de voo pode afirmar coordenada.
+## Timão da capitânia em seis eixos: guinada (Q/R), traslação de través (A/D, o casco vai para
+## bombordo ou estibordo sem virar), arfagem (setas ↑/↓), rolagem (Z/X, que se autocorrige quando a
+## mão sai do teclado para a mesa continuar legível), avante e ré (W/S, com a ré limitada) e empuxo
+## vertical (C/V, sobe e desce sem mudar a atitude). Nada aqui sorteia: a posição do rig é leitura
+## de teclado, e é por isso que a sonda de voo pode afirmar coordenada.
 func _update_capital_ship(delta: float) -> void:
 	var turn := 0.0
-	if Input.is_action_pressed("capital_bombordo"):
+	if Input.is_action_pressed("capital_giro_esquerda"):
 		turn += 1.0
-	if Input.is_action_pressed("capital_estibordo"):
+	if Input.is_action_pressed("capital_giro_direita"):
 		turn -= 1.0
+	var lado := 0.0
+	if Input.is_action_pressed("capital_bombordo"):
+		lado -= 1.0
+	if Input.is_action_pressed("capital_estibordo"):
+		lado += 1.0
 	var pitch := 0.0
 	if Input.is_action_pressed("capital_nariz_acima"):
 		pitch += 1.0
@@ -3914,7 +3926,12 @@ func _update_capital_ship(delta: float) -> void:
 	# O rumo sai da transformada global do rig, então arfar aponta o empuxo para cima de verdade:
 	# subir com o nariz erguido e subir com o vetor de proa são manobras diferentes na ponte.
 	var rumo := -bridge_rig.global_transform.basis.z
-	bridge_rig.position += (rumo * throttle * CAPITAL_SPEED + Vector3(0.0, lift * CAPITAL_LIFT, 0.0)) * delta
+	# O través sai do mesmo lugar que o rumo: é o eixo do próprio casco, não o x do mundo. Por isso
+	# girar antes de ir para bombordo muda a direção da traslação — manobra com o costado virado
+	# empurra o casco para vante, e a ponte lê isso como o que de fato aconteceu.
+	var traves := bridge_rig.global_transform.basis.x
+	bridge_rig.position += (rumo * throttle * CAPITAL_SPEED + traves * lado * CAPITAL_TRAVES
+		+ Vector3(0.0, lift * CAPITAL_LIFT, 0.0)) * delta
 	bridge_rig.position.x = clampf(bridge_rig.position.x, -MAP_X, MAP_X)
 	bridge_rig.position.y = clampf(bridge_rig.position.y, -MAP_Y, MAP_Y)
 	bridge_rig.position.z = clampf(bridge_rig.position.z, MAP_Z_FAR, MAP_Z_NEAR)

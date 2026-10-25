@@ -488,6 +488,62 @@ e as sete que contam os comandos do painel (`cacas`, `capitania`, `cenarios`, `c
 `misseis`, `recomecar`) passaram de **35 para 36** pelo mesmo motivo — a régua seguiu o botão,
 nenhum número de jogo foi afrouxado.
 
+## 5.7 Lapidação 1 — o mapinha de voo (tecla pedida a olho, não fatia nova)
+
+O pedido é de mão, não de doutrina: **A/D passam a ser traslação lateral e o giro vai para Q/R**.
+Antes de codar foi medida a consequência: as duas teclas desalojadas são as da rolagem (Q/E) e as
+do empuxo vertical (R/V), e seis eixos não cabem em cinco pares. A decisão foi oferecida ao
+comandante, não adivinhada, e a escolhida foi **Z/X para rolagem e C/V para o vertical** — mantém
+`V` significando «desce», não inverte nenhum gesto aprendido e deixa os seis eixos vivos (as
+alternativas eram aposentar a rolagem ou deitá-la automática na curva).
+
+Ficou assim, e só isto: `W`/`S` avante e ré, `Q`/`R` guinada, `A`/`D` través, `↑`/`↓` arfagem,
+`Z`/`X` rolagem, `C`/`V` empuxo vertical. Os nomes das ações acompanharam a lei em vez de
+acompanhar a tecla: o par de proa/bordo virou `capital_giro_esquerda` / `capital_giro_direita`, e
+`capital_bombordo` / `capital_estibordo` ficaram onde sempre deveriam ter estado — traslação para
+dentro de costado. `capital_role_*` e `capital_empuxo_*` mantêm nome e lógica, só trocam a tecla
+física, inclusive a autocorreção do adernamento. Ninguém mais no repo lê esses nomes: `main.gd` é
+quem registra (`_registra_voo`) e quem consulta (`_update_capital_ship`), e a única outra leitora é
+a sonda do voo — o custo do renomear foi medir duas listas de rótulos.
+
+A lei do través é um termo no mesmo somatório que já soma empuxo e subida, em
+`main.gd` (`_update_capital_ship`): `traves * lado * CAPITAL_TRAVES`, com `traves` lido de
+`bridge_rig.global_transform.basis.x`. Não é o x do mundo de propósito — é o mesmo lugar de onde o
+rumo já saía, então girar antes de ir para bombordo muda a direção da traslação, que é o
+comportamento de quem manobra com o costado virado. `CAPITAL_TRAVES := 12,0` é o valor do
+`CAPITAL_LIFT` por decisão declarada: deitar e subir custam o mesmo fôlego, e o comandante não
+reaprende o casco ao trocar de eixo. Instantâneo como o vertical, sem estado novo: como
+`capital_velocity` continua sendo a diferença real do quadro, a mesa holográfica lê o través sem
+nenhuma contabilidade extra, e o `clampf` de `MAP_X` que já fechava o costado fecha o través sem
+regra nova.
+
+Nada mais se moveu: rampa de throttle, tetos de arfagem e rolagem, os três limites do campo e o
+`delta` de medição ficam como estavam, e nenhum número da esquadra, da salva ou do ledger é tocado
+por esta fatia. É por isso que a régua dela é a bateria inteira, não asserções novas espalhadas:
+uma troca de tecla que reescrevesse a física seria visível nas outras vinte e nove sondas.
+
+**Teste da lapidação.** `tools/probes/manobra.gd` foi de **54 para 57 conferências** e continua com
+`quebras=0`. As três novas são a lei: **uma conferência de mapinha**, que lê as doze ações no
+`InputMap` e cobra **código digitado e posição física** de cada uma contra o espelho
+`TECLAS_DE_VOO` da sonda — é a primeira vez no repo que trocar uma tecla reprova por número, antes
+isso era texto que ninguém lia; e **as duas do través**, que zeram a atitude do rig e cobram
+`x` de **0,00 a −12,00** em dez passos de 0,1 s com `rotation.y` em **0,0000** e `z` parado, e a
+volta por estibordo devolvendo os mesmos 12,00 (`−12,00 → 0,00`). O predicado «não virou» é o que
+separa os dois gestos: sem ele, um través que também escrevesse guinada passaria contando curva
+onde o comandante fez uma traslação.
+
+**Bateria da rodada.** As **30 sondas headless** fecharam com `quebras=0` e **zero linha de erro**
+em todas, com `manobra` em 57 e `menu` em 63 conferências — a ausência de baseline tolerada é o
+que prova a afirmação do parágrafo acima de que nada mais se moveu. As três de olho foram rodadas
+em janela real, sem `--headless`: `fotograma` **95** conferências, `massa_visivel` **20**,
+`comando_olho` **13**, todas `quebras=0` e `linhas_de_erro=0`, e os quadros reabertos a olho
+(`01_abertura`, `olho_01_ponte`, `olho_02_tatico`) sem regressão de raster. Uma honestidade sobre
+o portão visual: a legenda nova está no rodapé da coluna do painel, abaixo da dobra do ScrollContainer,
+então os PNGs provam que o mapinha não quebrou a ponte — não provam que ele se lê. Quem aprova o
+gesto na mão é o jogador, e a tecla em si é texto conferido pela sonda, não pelo pixel.
+
+
+
 ## 6. Fatia 5 — doutrina e capitânia por esquadrão
 
 Escolhido: almirante (jogador) → general → capitão de esquadrão. Sem ordem do jogador, cada
