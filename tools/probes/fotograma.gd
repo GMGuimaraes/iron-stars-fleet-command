@@ -309,8 +309,14 @@ func _initialize() -> void:
 	# O casco sai da linha para água funda: com o olho agora a ~11 u dele, o quadro deixaria de ser
 	# close-up de chapa e viria fotografando a parede de bombordo da própria ponte, que o quadro 05f
 	# estacionou a 45 u. O posto volta exatamente onde estava, e nenhum outro quadro lê esta banda.
+	# A banda, porém, mudou de dono: `z -190` era água funda enquanto a muralha hostil largava atrás
+	# de si, e hoje — com a marcha fechando o contato e a respira deslizando a grade — o ponto cai
+	# DENTRO do campo das 5 760 réplicas. Fotografado ali, o `05g` acordou com um bloco hostil
+	# atravessado na moldura e a média do quadro subiu de 0,0133 para 0,2297: o portão de imagem
+	# (> 0,01) passou a ser pago pelo brilho de outra pessoa, que é a definição de portão aberto.
+	# O z continua o mesmo para a moldura não trocar de céu; quem sai da linha é o y.
 	var posto_foto: Vector3 = casco_foto.position
-	casco_foto.position = Vector3(0.0, 0.0, -190.0)
+	casco_foto.position = Vector3(0.0, 400.0, -190.0)
 	var camera_exterior := Camera3D.new()
 	camera_exterior.name = "SondaCascoPerto"
 	camera_exterior.fov = 55.0

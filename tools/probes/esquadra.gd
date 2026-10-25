@@ -81,14 +81,23 @@ extends SceneTree
 ##     e quem não alcança não atira), e a muralha hostil continua local porque a ordem é nossa. A fila
 ##     `pares_da_ultima_salva` tem de ter o tamanho exato do ledger: é ela que o desenho lê, e fila
 ##     diferente de conta é tela mostrando fogo que a conta não cobrou.
-## 12) O LANCE DA MASSA TEM CANAL DE DESENHO. A queixa do comandante era de tela, não de conta: sem
-##     traço, os únicos disparos visíveis são os dos doze cascos e a salva "só acontece no centro".
-##     Aqui a lei é o CANAL: um nó `MultiMeshInstance3D` com uma instância por bloco, a fila armada
-##     do desenho igual ao ledger lance a lance, o convergir da ordem refletido nos pontos de destino
-##     (um só `para` quando a ponte concentra, muitos quando solta), o jitter de boca sem sorteio, e
-##     o pulso que apaga a fila no impacto — traço pendurado é "todo mundo atirando o tempo todo".
-##     O que ela NÃO prova é pixel: sob `--headless` o `set_instance_transform` é descartado e a
-##     leitura volta identidade, então o acender do visor mora em `massa_visivel.gd`.
+## 12) O LANCE DA MASSA TEM CANAL DE DESENHO, UM POR CASCO PINTADO. A queixa do comandante era de
+##     tela, não de conta: com um traço por bloco, vinte e quatro naves cobravam fogo e a tela mostrava
+##     um cano só por paralelepípedo. Desde aqui o cano É o casco desenhado — um lance por casa viva,
+##     com atraso `casa × PASSO_DA_ONDA`, a leva inteira fechando dentro de uma cadência. A fila armada
+##     tem de ser o espelho do ledger casa a casa (desenho mostrando fogo que a conta não cobrou é a
+##     falha espelhada), o convergir da ordem converge o BLOCO visado e não um ponto único, nada pode
+##     sorteiar, e o custo tem de continuar sendo UM nó reescrito por quadro — cinco mil setecentos e
+##     sessenta escritas por quadro, não cinco mil setecentos e sessenta nós. O pulso apaga a fila no
+##     impacto: traço pendurado é "todo mundo atirando o tempo todo". O que ela NÃO prova é pixel: sob
+##     `--headless` o `set_instance_transform` é descartado e a leitura volta identidade, então o
+##     acender do visor mora em `massa_visivel.gd`.
+## 13) A MURALHA RESPIRA. O pedido era de nave andando durante a batalha, e a lei assinada é de
+##     custódia de posto, não de vaga: cada bloco orbita o PRÓPRIO lugar na grade, em boreste e em
+##     altura, com a fase do esquadrão — os vinte blocos de um esquadrão se movem como um corpo, então
+##     a distância de formação e o ar da família 2 continuam os mesmos números de antes. Em `z` a
+##     deriva não entra de propósito: é o eixo do contato, e a fachada que as famílias 2 e 10 assinam é
+##     medida centro a centro. Quem recebe destino da ponte para no ponto e não balançar em volta dele.
 ##
 ## Uso: godot --headless --path . --quit-after 6000 -s res://tools/probes/esquadra.gd
 
@@ -151,10 +160,28 @@ const CAMPO_ESPERADO := 154.0
 const FOLGA_CONTATO := 1.0
 const QUADROS := 200
 const SALVAS := 60
-## Espelhos de `main.gd` para a família 12: um traço por bloco nos dois lados, e o voo que fecha a
-## fila. Mudar o número lá sem mudar aqui quebra a asserção de propósito.
-const TRACOS_MAXIMOS := 240
+## Espelhos de `main.gd` para a família 12: um traço por CASA desenhada nos dois lados, o passo da
+## onda dentro do bloco e o pulso que fecha a fila. Mudar o número lá sem mudar aqui quebra a
+## asserção de propósito.
+const TRACOS_MAXIMOS := 5760
 const TRACO_SEG := 0.55
+const PASSO_ONDA := 0.012
+const TRACO_PULSO := 0.012 * 23.0 + 0.55
+## Espelhos da deriva de custódia (família 13). A folga não é afrouxamento: é o atraso com que o
+## bloco persegue um posto que anda a ~0,4 u/s, medido e impresso na asserção.
+const FOLGA_DERIVA := 0.35
+## A folga com que `Esquadra.pintar` decide regravar um bloco: `esquadra.gd:925` compara a posição com
+## a última pintada e só escreve quem passou de 0,01 u (é o `0.0001` do quadrado da distância). É a
+## régua que separa a muralha que anda da muralha que respira: uma anda 0,05 u por quadro e paga todo
+## quadro, outra anda 0,007 u e paga a cada dois.
+const FOLGA_DE_PINTURA := 0.01
+## Um ciclo inteiro da deriva (9,0 s a 60 quadros por segundo): é o tempo que a família 13 dá à
+## muralha para percorrer a órbita antes de cobrar o teto, o piso e o eixo que não balança.
+const QUADROS_DO_CICLO_DA_DERIVA := 540
+## Aquecimento do leme para a família 13b: no contato os blocos ainda chegam com a proa do último
+## resíduo de marcha, e girar 90° no timão do bloco custa `(PI/2) / giro_maximo` segundos = 188
+## quadros. Cobrar antes disso seria medir o transitório, não a lei; 300 é o dobro do necessário.
+const AQUECIMENTO_DA_PROA := 300
 const SEMENTE_RNG := 1234567890
 const SEMENTE_VISUAL := 555
 
@@ -355,6 +382,163 @@ static func _selo_da_fila(fila: Array[Dictionary]) -> String:
 	for t in fila:
 		partes.append("%s>%s|%s" % [str(t["de"]), str(t["para"]), str(bool(t["aliado"]))])
 	return "|".join(partes)
+
+
+## Casas vivas dos blocos que cobraram: é o esperado da fila de desenho desde que o cano passou a
+## ser o CASCO — um lance por casa do bloco que atirou, não um lance por bloco.
+static func _casas_esperadas(fila_pares: Array[Dictionary]) -> int:
+	var n := 0
+	for par in fila_pares:
+		n += Esquadra.casas_vivas(par["origem"])
+	return n
+
+
+## Quantos lances estão no ar no instante `t` do pulso: o cano só dispara depois do próprio atraso,
+## e morre um voo depois. É a régua da ONDA — sem ela, vinte e quatro lances simultâneos por bloco e
+## vinte e quatro em fila reads iguais no papel.
+static func _lances_no_ar(fila: Array[Dictionary], t: float) -> int:
+	var n := 0
+	for tr in fila:
+		var atraso := float(tr["atraso"])
+		if t > atraso and t < atraso + TRACO_SEG:
+			n += 1
+	return n
+
+
+## Bocas distintas de um mesmo bloco origem. Um é o desenho antigo (o centro do paralelepípedo);
+## vinte e quatro é a fileira, cada tiro saindo do casco em que o olho vê a nave.
+static func _bocas_distintas(fila: Array[Dictionary], bloco: int) -> int:
+	var vistos: Dictionary = {}
+	for tr in fila:
+		if int(tr["bloco"]) == bloco:
+			vistos[str(tr["de"])] = true
+	return vistos.size()
+
+
+## Quantos BLOCOS hostis a fila de um lado toca. Com a mira por casco, "um destino só" deixou de ser
+## a leitura da ordem concentrada: o que converge é o alvo-bloco, e dentro dele os vinte e quatro
+## tiros se repartem nos cascos do bloco visado.
+static func _blocos_alvo_distintos(fila: Array[Dictionary], aliado: bool) -> int:
+	var vistos: Dictionary = {}
+	for tr in fila:
+		if bool(tr["aliado"]) == aliado:
+			vistos[int(tr["alvo_bloco"])] = true
+	return vistos.size()
+
+
+## Posições pintadas das casas de um bloco, na ordem do desenho. É a régua que prova que a boca do
+## cano É o casco: a fila do lance tem de dar exatamente estes pontos, e nenhum outro.
+static func _casas_no_mundo(bloco: Dictionary) -> PackedStringArray:
+	var rot := Basis.from_euler(Vector3(0.0, float(bloco["rumo"]), 0.0))
+	var base: Vector3 = bloco["pos"]
+	var partes: PackedStringArray = []
+	for c in range(Esquadra.casas_vivas(bloco)):
+		partes.append(str(base + (rot * Esquadra.casa_local(c))))
+	partes.sort()
+	return partes
+
+
+static func _bocas_de_um_bloco(fila: Array[Dictionary], bloco: int) -> PackedStringArray:
+	var partes: PackedStringArray = []
+	for tr in fila:
+		if int(tr["bloco"]) == bloco:
+			partes.append(str(tr["de"]))
+	partes.sort()
+	return partes
+
+
+## Quantos lances da fila têm atraso diferente da própria casa. É a onda lida no desenho: se o atraso
+## viesse de outra fonte — um sorteio, a posição na fila, o número do bloco — vinte e quatro tiros por
+## bloco sairiam juntos e a queixa do comandante continuaria de pé mesmo com a conta certa.
+static func _casas_fora_da_onda(fila: Array[Dictionary], espelho: Array[Dictionary]) -> int:
+	var comuns := mini(fila.size(), espelho.size())
+	var fora := 0
+	for i in range(comuns):
+		if not is_equal_approx(float(fila[i]["atraso"]), \
+				float(int(espelho[i]["casa"])) * PASSO_ONDA):
+			fora += 1
+	return fora + absi(fila.size() - espelho.size())
+
+
+## Deriva esperada de um esquadrão no instante lido: os mesmos quatro números que `passo()` usa,
+## refeitos aqui a partir das constantes publicadas — boreste com a fase do ANDAR, altura com a fase
+## do ESQUADRÃO, nada em z. Espelho, não API nova: a sonda confere a lei, não a chama. `t` aberto é
+## para a família 13b medir o passo que o próprio posto dá num quadro; sem ele, o espelho lê o
+## relógio vivo do módulo, que é o uso de sempre.
+static func _deriva_esperada(e: Esquadra, esq: int, t := NAN) -> Vector3:
+	var rel := float(e.tempo) if is_nan(t) else t
+	var base := rel * TAU / Esquadra.DERIVA_CICLO
+	var andar := int(float(esq) / float(Esquadra.COLUNAS_NO_LADO))
+	var fase_x := base + float(andar) * TAU / float(Esquadra.CAMADAS_NO_LADO)
+	var fase_y := base + float(esq) * TAU / float(Esquadra.ESQUADROES_NO_LADO)
+	return Vector3(cos(fase_x) * Esquadra.DERIVA_X, sin(fase_y * 0.5) * Esquadra.DERIVA_Y, 0.0)
+
+
+## A muralha que respira, por eixo. Para cada bloco de linha vivo e sem ordem da ponte: o maior desvio
+## contra o posto EXATO da grade (antes era zero — este é o número novo) e o maior erro contra o posto
+## JÁ derivado (perseguição: tem de continuar pequeno).
+static func _respiro(e: Esquadra, lado: String) -> Dictionary:
+	var max_x := 0.0
+	var max_y := 0.0
+	var max_z := 0.0
+	var perseg := 0.0
+	var perseg_x := 0.0
+	var perseg_y := 0.0
+	var perseg_z := 0.0
+	var vivos := 0
+	for b in e.lista_de(lado):
+		if not bool(b["vivo"]) or bool(b["com_destino"]):
+			continue
+		vivos += 1
+		var esq := int(b["esquadrao"])
+		var posto := Esquadra.posto_no_lado(esq, int(b["formacao"]), e.estacao(lado))
+		var pos: Vector3 = b["pos"]
+		var desvio := pos - posto
+		max_x = maxf(max_x, absf(desvio.x))
+		max_y = maxf(max_y, absf(desvio.y))
+		max_z = maxf(max_z, absf(desvio.z))
+		var alvo := posto + _deriva_esperada(e, esq)
+		perseg = maxf(perseg, pos.distance_to(alvo))
+		perseg_x = maxf(perseg_x, absf(pos.x - alvo.x))
+		perseg_y = maxf(perseg_y, absf(pos.y - alvo.y))
+		perseg_z = maxf(perseg_z, absf(pos.z - alvo.z))
+	return {"vivos": vivos, "max_x": max_x, "max_y": max_y, "max_z": max_z,
+		"perseg": perseg, "perseg_x": perseg_x, "perseg_y": perseg_y, "perseg_z": perseg_z}
+
+
+## Respirar é o que se mede aqui, e formar é o que se preserva: duas asserções numa passada só.
+## `ar_min` é o vão entre caixas do par mais junto do tabuleiro (a régua da família 2, que a deriva
+## não pode baixar); `pior_x` é o maior erro de distância EM BORESTE entre dois blocos do MESMO andar,
+## que tem de ficar zero porque o boreste é fase de andar — é exatamente a razão de a deriva ser
+## dividida por eixo. `fileira` é a quantidade de pares que entraram nessa régua.
+static func _ar_da_respiracao(e: Esquadra) -> Dictionary:
+	var ar_min := INF
+	var pior_x := 0.0
+	var sobrepostos := 0
+	var fileira := 0
+	for lado in ["aliado", "hostil"]:
+		var lista := e.lista_de(lado)
+		for i in range(lista.size()):
+			if not bool(lista[i]["vivo"]) or bool(lista[i]["com_destino"]):
+				continue
+			for j in range(i + 1, lista.size()):
+				if not bool(lista[j]["vivo"]) or bool(lista[j]["com_destino"]):
+					continue
+				var pa: Vector3 = lista[i]["pos"]
+				var pb: Vector3 = lista[j]["pos"]
+				var ar := _ar_entre(pa, pb)
+				if ar < 0.0:
+					sobrepostos += 1
+				ar_min = minf(ar_min, ar)
+				var esq_a := int(lista[i]["esquadrao"])
+				var esq_b := int(lista[j]["esquadrao"])
+				if esq_a / Esquadra.COLUNAS_NO_LADO == esq_b / Esquadra.COLUNAS_NO_LADO:
+					var oa := Esquadra.posto_no_lado(esq_a, int(lista[i]["formacao"]), e.estacao(lado))
+					var ob := Esquadra.posto_no_lado(esq_b, int(lista[j]["formacao"]), e.estacao(lado))
+					if absf(ob.x - oa.x) <= PASSO_X + FOLGA:
+						fileira += 1
+						pior_x = maxf(pior_x, absf(absf(pa.x - pb.x) - absf(ob.x - oa.x)))
+	return {"ar_min": ar_min, "pior_x": pior_x, "sobrepostos": sobrepostos, "fileira": fileira}
 
 
 func _faixa_z(e: Esquadra, lado: String) -> Dictionary:
@@ -768,6 +952,17 @@ func _initialize() -> void:
 	var escritas_hostil := 0
 	var quadro_pleno := -1
 	var paros_depois := 0
+	var parcos_na_rampa := 0
+	## Fim da rampa de arranque: `MARCHA_DE_BLOCO / aceleracao` em quadros. Antes dela o curso do
+	## bloco é menor que a folga de pintura, e um quadro barato é a cláusula do módulo funcionando.
+	var rampa_de_arranque := int(Esquadra.MARCHA_DE_BLOCO / float(Voo.FICHA_BLOCO["aceleracao"])
+		* 60.0)
+	var pos_anteriores := {}
+	var parcos_lidos := ""
+	var passo_max := 0.0
+	var passo_max_h := 0.0
+	var desvio_pintura := 0.0
+	var curso_hostil := 0.0
 	var inicio_ms := Time.get_ticks_msec()
 	var w := 0
 	while w < QUADROS:
@@ -787,11 +982,54 @@ func _initialize() -> void:
 		# O primeiro quadro em que a marcha paga os duzentos e quarenta é o fim da rampa: antes dele
 		# o passo do bloco é menor que a folga de pintura (`esquadra.gd` só regrava quem andou mais
 		# de 0,01 u), então um quadro de arranque baratinho é a lei funcionando, não uma frota parada.
-		if tocou_a == BLOCOS_POR_LADO and tocou_h == BLOCOS_POR_LADO:
+		# Fim da rampa de arranque: o primeiro quadro em que a MARCHA paga os cento e vinte blocos que
+		# ela empurra. A estação hostil desta janela é fixa, então quem ali só respira anda menos de
+		# 0,01 u por quadro e regrava a cada dois quadros — cobrar o pleno dos dois lados era cobrar
+		# uma frota que teleporta. O atraso de tela dessa muralha tem régua própria, logo abaixo.
+		if tocou_a == BLOCOS_POR_LADO:
 			if quadro_pleno < 0:
 				quadro_pleno = w + 1
 		elif quadro_pleno > 0:
-			paros_depois += 1
+			# Precondition da fatia 3.5, declarada aqui e nao afrouxada na folga: guardada a proa da
+			# linha, o unico motivo que sobra para um quadro de arranque ser barato e o passo da
+			# respira passar abaixo da folga de pintura — a clausula do modulo pulando a escrita. Isso
+			# e a rampa funcionando, nao buraco no meio da marcha, entao o portao continua `paros == 0`
+			# mas cobrado de onde a rampa termina. Os parcos da rampa vao contados e impressos com o
+			# menor andar de cada um, para a diferenca ficar lida na janela e nao coberta por numero.
+			if w + 1 > rampa_de_arranque:
+				paros_depois += 1
+			else:
+				parcos_na_rampa += 1
+			# Instrumento, nao tolerancia: os menores andares do quadro entre os blocos que a pintura
+			# nao regravou. Separar 'a marcha parou' de 'a respira passa pelo ponto morto' so com o
+			# numero que a folga de 0,01 u viu.
+			if paros_depois + parcos_na_rampa <= 6:
+				var menores: Array = []
+				for ld2 in ["aliado", "hostil"]:
+					for bk2 in p.lista_de(ld2):
+						var ch2 := "%s#%d" % [String(ld2), int(bk2["id"])]
+						var av2: Vector3 = pos_anteriores.get(ch2, Vector3.INF)
+						if av2 == Vector3.INF:
+							continue
+						menores.append([av2.distance_to(bk2["pos"] as Vector3), ch2])
+				menores.sort_custom(func(x2, y2): return float(x2[0]) < float(y2[0]))
+				var cp2 := ""
+				for mt2 in menores.slice(0, 5):
+					cp2 += "%s %.5f u, " % [String(mt2[1]), float(mt2[0])]
+				parcos_lidos += " | q%d a%d h%d: %s" % [w, tocou_a, tocou_h, cp2]
+		for ld3 in ["aliado", "hostil"]:
+			for bk3 in p.lista_de(ld3):
+				var ch3 := "%s#%d" % [String(ld3), int(bk3["id"])]
+				var pos3: Vector3 = bk3["pos"]
+				var av3: Vector3 = pos_anteriores.get(ch3, pos3)
+				var anda3 := av3.distance_to(pos3)
+				passo_max = maxf(passo_max, anda3)
+				if String(ld3) == "hostil":
+					curso_hostil += anda3
+					passo_max_h = maxf(passo_max_h, anda3)
+				pos_anteriores[ch3] = pos3
+				var pp3: Vector3 = (bk3["pintas"] as Dictionary)["pos"]
+				desvio_pintura = maxf(desvio_pintura, pos3.distance_to(pp3))
 		w += 1
 	var custo_ms := float(Time.get_ticks_msec() - inicio_ms)
 	var casas_por_quadro := 2 * INSTANCIAS_POR_LADO
@@ -802,19 +1040,38 @@ func _initialize() -> void:
 	# nada. O que é determinístico é a conta de escritas, e ela mudou de forma com a lei: um bloco
 	# que anda menos de 0,01 u num quadro não regrava, então os primeiros quadros do arranque são
 	# baratos por construção. O portão passa a ser o regime, não a soma: nenhum dos dois lados pode
-	# escrever mais que um por bloco por quadro, e a partir do primeiro quadro pleno a marcha paga
-	# os duzentos e quarenta em todo quadro, sem buraco no meio do caminho.
+	# escrever mais que um por bloco por quadro, e a partir do primeiro quadro pleno a MARCHA paga os
+	# cento e vinte blocos da muralha que anda em todo quadro, sem buraco no meio do caminho. A
+	# muralha hostil desta janela não anda — ela respira, a estação dela é fixa — e por isso não paga
+	# o pleno: o que se cobra dela é a régua de atraso de tela e o teto de custo do caminho, logo
+	# abaixo. Cobrar o pleno dos dois lados era cobrar uma frota que teleporta o traço.
 	_assert("nenhum lado escreve mais que um por bloco em um quadro",
 		escritas_aliado <= QUADROS * BLOCOS_POR_LADO \
 			and escritas_hostil <= QUADROS * BLOCOS_POR_LADO,
 			"%d + %d escritas contra %d de teto por lado" % [escritas_aliado, escritas_hostil,
 				QUADROS * BLOCOS_POR_LADO])
-	_assert("do quadro %d em diante a marcha repinte os duzentos e quarenta blocos todo quadro" % quadro_pleno,
-		quadro_pleno > 0 and quadro_pleno <= int(Esquadra.MARCHA_DE_BLOCO
-			/ float(Voo.FICHA_BLOCO["aceleracao"]) * 60.0) and paros_depois == 0,
-			"primeiro quadro pleno %d (rampa de %d quadros), %d quadros parcos depois dele, %d escritas no total" % [
-				quadro_pleno, int(Esquadra.MARCHA_DE_BLOCO / float(Voo.FICHA_BLOCO["aceleracao"]) * 60.0),
-				paros_depois, escritas])
+	_assert("terminada a rampa, a marcha repinte os cento e vinte blocos da muralha que anda",
+		quadro_pleno > 0 and quadro_pleno <= rampa_de_arranque and paros_depois == 0,
+			("primeiro quadro pleno %d (rampa de %d quadros), %d parcos dentro da rampa e %d depois; " % [
+				quadro_pleno, rampa_de_arranque, parcos_na_rampa, paros_depois])
+				+ ("%d escritas no total; " % escritas) + parcos_lidos)
+	# A régua que fica quando o pleno sai de cena: a TELA não pode atrasar da POSIÇÃO VERDADEIRA, e a
+	# folha é a própria cláusula do módulo — `esquadra.gd:925` pula a escrita só quando o bloco já está a
+	# menos de um centésimo do traço pintado. Um bloco que respira anda 0,007 u no quadro de ponta e
+	# regrava a cada dois quadros; em nenhum instante o traço se afasta do mundo mais que a folga, e é
+	# isso — não folga mais um passo — que a janela precisa provar.
+	_assert("a pintura nunca fica mais que uma folga atras da muralha: a clausula do modulo em acao",
+		desvio_pintura <= FOLGA_DE_PINTURA + FOLGA_PASSO,
+			"maior atraso de tela %.5f u contra a folga de pintura %.2f u (margem %.5f); passo de um quadro: " % [
+				desvio_pintura, FOLGA_DE_PINTURA, FOLGA_PASSO] \
+				+ "aliado %.5f u, hostil %.5f u; hostil pagou %d escritas em %d quadros" % [
+					passo_max, passo_max_h, escritas_hostil, QUADROS])
+	# E o custo, agora com a origem: entre duas escritas de um bloco o caminho andado tem de passar da
+	# folga, senao a segunda escrita nao teria motivo. Da soma dos caminhos sai o teto do lote parado.
+	_assert("a muralha que so respira paga no maximo o caminho pela folga de pintura",
+		escritas_hostil <= int(curso_hostil / FOLGA_DE_PINTURA) + BLOCOS_POR_LADO,
+			"%d escritas hostis contra %.1f u andados / %.2f de folga + %d do primeiro quadro" % [
+				escritas_hostil, curso_hostil, FOLGA_DE_PINTURA, BLOCOS_POR_LADO])
 	_assert("%.3f ms por quadro de massa - medida impressa, nao portada" % (custo_ms / float(QUADROS)),
 		true, "%d ms nos %d quadros, %d casas/ms; %d escritas de bloco contra %d de teto" % [
 			int(custo_ms), QUADROS, int(casas_ms), escritas, QUADROS * 2 * BLOCOS_POR_LADO])
@@ -1080,45 +1337,78 @@ func _initialize() -> void:
 			Esquadra.ALCANCE_DE_BLOCO, Esquadra.FACHADA_DA_MURALHA, Esquadra.DISTANCIA_DE_CONTATO,
 			Esquadra.PASSO_ESQUADRAO_Y])
 
-	# ── 12. o lance da massa tem canal de desenho ────────────────────────────────────────────
+	# ── 12. o lance da massa tem canal de desenho, UM POR CASCO PINTADO ─────────────────────────
 	# A lei aqui é o CANAL, não o pixel: sob `--headless` o `set_instance_transform` é descartado e a
 	# leitura volta identidade, então acender o visor é pergunta de `massa_visivel.gd`. O que dá para
-	# assinar de cabeça fria é que a fila armada espelha o ledger lance a lance, que ela varre a
-	# largura da muralha (não o meio do campo), que a ordem da ponte converge também no desenho, que o
-	# jitter não sorteia e que o pulso apaga a fila no impacto.
+	# assinar de cabeça fria é que a fila armada espelha o ledger casa a casa, que um bloco que cobra
+	# paga vinte e quatro bocas e não uma, que o atraso de cada lance é a casa dele e que a onda inteira
+	# cabe numa cadência, que a ordem da ponte converge o BLOCO visado (não um ponto único), que o custo
+	# é um nó reescrito por quadro, que nada sorteia e que o pulso apaga a fila no impacto.
 	var q_ponte := _marchar_na_ponte(jogo)
 	var tr_no: MultiMeshInstance3D = jogo.massa_tracos
 	var tr_mm: MultiMesh = tr_no.multimesh
 	var mat_tr: StandardMaterial3D = tr_no.material_override
-	_assert("a salva da massa e um no com uma instancia por bloco, luminoso por material",
+	_assert("a salva da massa e um no com uma instancia por casa desenhada, luminoso por material",
 		is_instance_valid(tr_no) and tr_mm.instance_count == TRACOS_MAXIMOS \
 				and tr_mm.transform_format == MultiMesh.TRANSFORM_3D and tr_mm.use_colors \
 				and mat_tr.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED \
 				and mat_tr.vertex_color_use_as_albedo,
-		"%d instancias para %d blocos, unshaded + cor por instancia, travessia de %d quadros" % [
-			tr_mm.instance_count, 2 * BLOCOS_POR_LADO, q_ponte])
+		"%d instancias para %d casas de %d blocos, unshaded + cor por instancia, travessia de %d quadros" % [
+			tr_mm.instance_count, TRACOS_MAXIMOS, 2 * BLOCOS_POR_LADO, q_ponte])
 	var caixas := 0
 	for filho in jogo.get_children():
 		if filho is MultiMeshInstance3D:
 			caixas += 1
-	_assert("o preco de duzentos e quarenta lances visiveis e UM no a mais na cena", caixas == 4,
+	_assert("o preco de cinco mil setecentos e sessenta lances visiveis e UM no a mais na cena",
+		caixas == 4,
 		"%d MultiMeshInstance3D na cena (ceu + dois corpos da massa + tracos)" % caixas)
 	jogo.esquadra.soltar_fogo()
 	jogo._salva_da_massa()
 	var fila_mm: Array[Dictionary] = jogo._tracos_voando
+	var espelho: Array[Dictionary] = jogo.esquadra.tiros_da_salva()
 	var ledger_mm := int(jogo.esquadra.pares_da_ultima_salva.size())
-	_assert("todo lance cobrado tem um traco e todo traco tem um lance",
-		fila_mm.size() == ledger_mm and fila_mm.size() > 0,
-		"%d tracos armados contra %d pares do ledger na salva %d" % [
-			fila_mm.size(), ledger_mm, int(jogo.esquadra.salva_numero)])
+	var casas_mm := _casas_esperadas(jogo.esquadra.pares_da_ultima_salva)
+	_assert("o cano e o casco: quem cobra paga uma lance por casa viva, nao um por bloco",
+		fila_mm.size() == casas_mm and casas_mm > ledger_mm and casas_mm > 0,
+		"%d tracos armados para %d casas vivas, contra %d blocos que cobraram na salva %d" % [
+			fila_mm.size(), casas_mm, ledger_mm, int(jogo.esquadra.salva_numero)])
+	_assert("a fila pintada e o espelho da conta, lance a lance",
+		_selo_da_fila(fila_mm) == _selo_da_fila(espelho),
+		"%d lances com selo identico de %d caracteres entre desenho e conta" % [
+			fila_mm.size(), _selo_da_fila(espelho).length()])
+	_assert("o atraso de cada lance e a casa dele: a leva sai em fila, nao junto",
+		_casas_fora_da_onda(fila_mm, espelho) == 0,
+		"%d de %d lances com atraso diferente de casa x %.3f s" % [
+			_casas_fora_da_onda(fila_mm, espelho), fila_mm.size(), PASSO_ONDA])
+	var bloco_mm: Dictionary = jogo.esquadra.pares_da_ultima_salva[0]["origem"]
+	_assert("a boca do cano e o proprio casco pintado: as bocas de um bloco sao as suas casas",
+		_bocas_distintas(espelho, int(bloco_mm["id"])) == Esquadra.casas_vivas(bloco_mm) \
+				and str(_bocas_de_um_bloco(espelho, int(bloco_mm["id"]))) \
+					== str(_casas_no_mundo(bloco_mm)),
+		"%d bocas distintas no bloco %d, iguais as %d casas pintadas dele" % [
+			_bocas_distintas(espelho, int(bloco_mm["id"])), int(bloco_mm["id"]),
+			Esquadra.casas_vivas(bloco_mm)])
 	var destinos := _faixa_x_dos_pontos(fila_mm, "para")
 	_assert("o fogo desenhado varre a largura da muralha hostil, nao o meio do campo",
 			float(destinos["max"]) - float(destinos["min"]) > 150.0,
 			"destinos entre x %.1f e %.1f u, %.1f u de largura coberta" % [
 				destinos["min"], destinos["max"], float(destinos["max"]) - float(destinos["min"])])
+	var onda_zero := _lances_no_ar(fila_mm, 0.0)
+	var onda_meia := _lances_no_ar(fila_mm, 11.5 * PASSO_ONDA)
+	var onda_cheia := _lances_no_ar(fila_mm, 23.0 * PASSO_ONDA + 0.001)
+	_assert("dentro do bloco a salva e onda: nada no ar no zero, metade no meio, tudo no fim",
+		onda_zero == 0 and onda_meia > 0 and onda_meia < fila_mm.size() \
+				and onda_cheia == fila_mm.size(),
+		"%d / %d / %d lances no ar em t = 0 / %.3f s / %.3f s de uma fila de %d" % [
+			onda_zero, onda_meia, onda_cheia, 11.5 * PASSO_ONDA, 23.0 * PASSO_ONDA + 0.001,
+			fila_mm.size()])
+	_assert("a leva inteira cabe numa cadencia: onda mais voo fecham antes da salva seguinte",
+		TRACO_PULSO < 1.6 and PASSO_ONDA > 0.0,
+		"pulso de %.3f s (onda %.3f s + voo %.2f s) contra cadencia de 1,60 s" % [
+			TRACO_PULSO, 23.0 * PASSO_ONDA, TRACO_SEG])
 	var boca_estavel := _selo_da_fila(fila_mm)
 	jogo._armar_tracos()
-	_assert("o jitter de boca nao sorteia: rearmar a mesma fila devolve os mesmos pontos",
+	_assert("nada sorteia: rearmar a mesma salva devolve os mesmos vinte e quatro canos por bloco",
 		boca_estavel == _selo_da_fila(jogo._tracos_voando),
 		"%d tracos rearmados com selo identico de %d caracteres" % [
 			jogo._tracos_voando.size(), boca_estavel.length()])
@@ -1127,26 +1417,205 @@ func _initialize() -> void:
 			float(fachada_j["max"])), jogo.esquadra.lista_de("hostil"))
 	jogo.esquadra.mandar_fogo((visado_j["pos"] as Vector3) + Vector3(3.0, 0.0, 0.0))
 	jogo._salva_da_massa()
-	_assert("concentrando pela ponte, o desenho converge: um destino so para a muralha aliada",
-		_pontos_distintos(jogo._tracos_voando, true) == 1 \
-				and int(jogo._tracos_voando.size()) > 1,
-		"%d tracos aliados, %d destino; o hostil segue com %d" % [
-			int(jogo._tracos_voando.size()), _pontos_distintos(jogo._tracos_voando, true),
-			_pontos_distintos(jogo._tracos_voando, false)])
+	var conc_j: Array[Dictionary] = jogo.esquadra.tiros_da_salva()
+	_assert("concentrando pela ponte, o desenho converge no bloco visado: um alvo, vinte e quatro bocas",
+		_selo_da_fila(conc_j) == _selo_da_fila(jogo._tracos_voando) \
+				and _blocos_alvo_distintos(conc_j, true) == 1 \
+				and _pontos_distintos(conc_j, true) > 1,
+		"%d tracos aliados sobre %d bloco visado, repartidos em %d casco de destino" % [
+			int(conc_j.size()), _blocos_alvo_distintos(conc_j, true),
+			_pontos_distintos(conc_j, true)])
 	jogo.esquadra.soltar_fogo()
 	jogo._salva_da_massa()
-	_assert("soltando a ordem, o desenho volta a ter um rumo por bloco",
-		_pontos_distintos(jogo._tracos_voando, true) > 1,
-		"%d tracos aliados espalhados em %d destinos" % [
-			int(jogo._tracos_voando.size()), _pontos_distintos(jogo._tracos_voando, true)])
-	jogo._atualizar_tracos(TRACO_SEG + 0.1)
-	_assert("o traco morre no impacto: sem salva nova nao ha lance novo no quadro",
-		jogo._tracos_voando.is_empty() and float(jogo._traco_t) >= 1.0,
-		"fila zerada apos %.2f s de voo, progresso %.2f" % [TRACO_SEG, float(jogo._traco_t)])
-	jogo._atualizar_tracos(1.0)
+	var conc_s: Array[Dictionary] = jogo.esquadra.tiros_da_salva()
+	_assert("soltando a ordem, o desenho volta a ter um bloco visado por bloco que atira",
+		_selo_da_fila(conc_s) == _selo_da_fila(jogo._tracos_voando) \
+				and _blocos_alvo_distintos(conc_s, true) > 1,
+		"%d tracos aliados espalhados sobre %d blocos visados" % [
+			int(conc_s.size()), _blocos_alvo_distintos(conc_s, true)])
+	jogo._tracos_escritas = 0
+	jogo._armar_tracos()
+	var quadros_do_pulso := int(ceilf(TRACO_PULSO * 60.0))
+	for kp in range(quadros_do_pulso):
+		jogo._atualizar_tracos(1.0 / 60.0)
+	_assert("o preco do lote e UM no reescrito por quadro: nada de no por lance",
+		jogo._tracos_escritas == (quadros_do_pulso + 1) * TRACOS_MAXIMOS,
+		"%d escritas em %d quadros mais a armacao = (%d + 1) x %d do lote" % [
+			jogo._tracos_escritas, quadros_do_pulso, quadros_do_pulso, TRACOS_MAXIMOS])
+	_assert("o traco morre no impacto: no fim do pulso nao ha lance novo no quadro",
+		jogo._tracos_voando.is_empty() and float(jogo._traco_t) >= TRACO_PULSO,
+		"fila zerada depois de %d quadros (%.2f s), relogio do pulso em %.3f s" % [
+			quadros_do_pulso, float(quadros_do_pulso) / 60.0, float(jogo._traco_t)])
+	jogo._armar_tracos()
+	jogo._atualizar_tracos(TRACO_PULSO + 0.1)
 	_assert("quadro escuro nao rearma sozinho: o pulso nao vira chuva continua",
-		jogo._tracos_voando.is_empty() and float(jogo._traco_t) >= 1.0,
-		"um segundo depois, %d tracos na fila" % jogo._tracos_voando.size())
+		jogo._tracos_voando.is_empty() and float(jogo._traco_t) >= TRACO_PULSO,
+		"um pulso inteiro depois de rearmar, %d tracos na fila" % jogo._tracos_voando.size())
+
+	# ── 13. a muralha respira: o pouso deixou de ser parada ────────────────────────────────────────
+	# O comandante pediu naves andando durante a batalha. A lei assinada aqui é de custódia de posto,
+	# não de vaga: cada bloco ORBITA o próprio lugar na grade, e a fase é escolhida pelo ar que existe
+	# em cada eixo. Em boreste só há 2,48 u entre um bloco e o vizinho, então a fase é do ANDAR: os
+	# blocos de uma fileira deslizam juntos e a distância de fileira — a régua do ar da família 2 —
+	# fica literalmente constante. Em altura há 8,53 u, e é aí que os seis esquadrões podem respirar
+	# defasados de 60 graus. Em z a deriva não entra: é o eixo do contato, e a fachada que as
+	# famílias 2 e 10 assinam é medida centro a centro. E quem recebe destino da ponte para no ponto,
+	# em vez de balançar em volta dele.
+	var pico_x := 0.0
+	var pico_y := 0.0
+	var z_da_deriva := 0.0
+	var pior_espe_x := 0.0
+	var pior_espe_y := 0.0
+	var pior_perseg := 0.0
+	var pior_px := 0.0
+	var pior_py := 0.0
+	var pior_pz := 0.0
+	var estacao_z_min := INF
+	var estacao_z_max := -INF
+	var pior_ar := INF
+	var pior_fileira := 0.0
+	var sobreposicoes := 0
+	var vivos_amostra := 0
+	for kr in range(QUADROS_DO_CICLO_DA_DERIVA):
+		jogo._atualizar_esquadras(1.0 / 60.0)
+		var ra := _respiro(jogo.esquadra, "aliado")
+		var rh := _respiro(jogo.esquadra, "hostil")
+		vivos_amostra = int(ra["vivos"]) + int(rh["vivos"])
+		pico_x = maxf(pico_x, maxf(float(ra["max_x"]), float(rh["max_x"])))
+		pico_y = maxf(pico_y, maxf(float(ra["max_y"]), float(rh["max_y"])))
+		pior_perseg = maxf(pior_perseg, maxf(float(ra["perseg"]), float(rh["perseg"])))
+		pior_px = maxf(pior_px, maxf(float(ra["perseg_x"]), float(rh["perseg_x"])))
+		pior_py = maxf(pior_py, maxf(float(ra["perseg_y"]), float(rh["perseg_y"])))
+		pior_pz = maxf(pior_pz, maxf(float(ra["perseg_z"]), float(rh["perseg_z"])))
+		# A estacao tambem anda nesta janela, e e ela - nao a respira - que move o eixo do contato.
+		# Medir o curso da estacao em z e o que separa as duas causas.
+		for ld4 in ["aliado", "hostil"]:
+			var ez: float = (jogo.esquadra.estacao(ld4) as Vector3).z
+			estacao_z_min = minf(estacao_z_min, ez)
+			estacao_z_max = maxf(estacao_z_max, ez)
+		# O vetor que o modulo montou neste quadro, conferido contra o espelho da sonda casa a casa:
+		# boreste com a fase do andar, altura com a fase do esquadrao, z zerado por construcao.
+		for ev in range(Esquadra.ESQUADROES_NO_LADO):
+			var dv: Vector3 = jogo.esquadra._derivas[ev]
+			var esp := _deriva_esperada(jogo.esquadra, ev)
+			z_da_deriva = maxf(z_da_deriva, absf(dv.z))
+			pior_espe_x = maxf(pior_espe_x, absf(dv.x - esp.x))
+			pior_espe_y = maxf(pior_espe_y, absf(dv.y - esp.y))
+		if kr % 30 == 0:
+			var ar_r := _ar_da_respiracao(jogo.esquadra)
+			pior_ar = minf(pior_ar, float(ar_r["ar_min"]))
+			pior_fileira = maxf(pior_fileira, float(ar_r["pior_x"]))
+			sobreposicoes += int(ar_r["sobrepostos"])
+	# A cauda que a propria lei gera: quem persegue um posto que anda, sob o teto de aceleracao da
+	# ficha, fica atras dele por `v_de_ponta / aceleracao`, e so isso. O numero teorico sai impresso
+	# ao lado do medido para a diferenca ficar lida na janela, nao coberta por uma tolerancia.
+	var vx_de_ponta := Esquadra.DERIVA_X * TAU / Esquadra.DERIVA_CICLO
+	var vy_de_ponta := Esquadra.DERIVA_Y * TAU / Esquadra.DERIVA_CICLO * 0.5
+	var acel := float(Voo.FICHA_BLOCO["aceleracao"])
+	_assert("nenhum bloco de linha estaciona: persegue o posto do proprio andar em boreste e altura",
+		pior_px <= vx_de_ponta / acel + FOLGA_DERIVA \
+				and pior_py <= vy_de_ponta / acel + FOLGA_DERIVA \
+				and vivos_amostra == 2 * BLOCOS_POR_LADO,
+			"cauda lida %.3f u em boreste (teorica %.3f u) e %.3f u em altura (teorica %.3f u), folga %.2f, " % [
+				pior_px, vx_de_ponta / acel, pior_py, vy_de_ponta / acel, FOLGA_DERIVA] \
+				+ "total %.3f u sobre %d blocos vivos dos %d da partida" % [
+					pior_perseg, vivos_amostra, 2 * BLOCOS_POR_LADO])
+	_assert("a deriva tem teto por eixo: boreste nao passa de %.1f u, altura de %.1f u" % [
+			Esquadra.DERIVA_X, Esquadra.DERIVA_Y],
+		pico_x <= Esquadra.DERIVA_X + FOLGA_DERIVA \
+				and pico_y <= Esquadra.DERIVA_Y + FOLGA_DERIVA,
+		"pico do ciclo %.2f u em x (teto %.1f + folga %.2f), %.2f u em y (teto %.1f)" % [
+			pico_x, Esquadra.DERIVA_X, FOLGA_DERIVA, pico_y, Esquadra.DERIVA_Y])
+	_assert("respirar de verdade: no meio de seis esquadroes defasados de 60 graus o boreste ja chegou perto do teto",
+		pico_x >= 0.9 * Esquadra.DERIVA_X and pico_y >= 0.9 * Esquadra.DERIVA_Y,
+		"pico lido %.2f u de %.1f u em boreste e %.2f u de %.1f u em altura" % [
+			pico_x, Esquadra.DERIVA_X, pico_y, Esquadra.DERIVA_Y])
+	_assert("a respira nao mexe no eixo do contato: nenhum vetor de deriva tem boreste em z",
+		z_da_deriva == 0.0 and pior_espe_x <= FOLGA and pior_espe_y <= FOLGA,
+		"maior componente em z lido nos %d vetores do ciclo: %.6f u; e espelho por eixo bate no modulo " % [
+			Esquadra.ESQUADROES_NO_LADO, z_da_deriva] \
+			+ "em boreste %.6f u e em altura %.6f u" % [pior_espe_x, pior_espe_y])
+	# O que sobra em z nao e deriva, e marcha: a estacao percorreu os %.1f u abaixo nesta janela, e um
+	# bloco que persegue um posto que anda a v u/s fica atras dele por no maximo v / aceleracao. e a
+	# conta da propria ficha, nao uma tolerancia escolhida aqui.
+	var v_estacao_z := (estacao_z_max - estacao_z_min) / (float(QUADROS_DO_CICLO_DA_DERIVA) / 60.0)
+	_assert("o atraso em z do ciclo e a cauda da marcha, nao a respira: v da estacao sobre a aceleracao da ficha",
+		pior_pz <= v_estacao_z / acel + FOLGA_DERIVA,
+			"cauda em z lida %.3f u contra %.3f u de v/a (estacao a %.2f u/s, ficha a %.1f u/s2) + folga %.2f" % [
+				pior_pz, v_estacao_z / acel, v_estacao_z, acel, FOLGA_DERIVA])
+	_assert("respirar nao fecha o ar entre cascos: a lei da familia 2 continua valendo no ciclo todo",
+		sobreposicoes == 0 and pior_ar >= AR_MINIMO,
+		"%.2f u de ar no par mais junto (piso da lei %.2f), %d sobreposicoes no ciclo" % [
+			pior_ar, AR_MINIMO, sobreposicoes])
+	_assert("o boreste e fase de andar: dentro de um andar a distancia de fileira nao muda nunca",
+		pior_fileira <= FOLGA,
+		"pior erro de distancia em x entre blocos do mesmo andar: %.4f u sobre a folga %.1f u" % [
+			pior_fileira, FOLGA])
+	var ordenado: Dictionary = jogo.esquadra.lista_de("aliado")[7]
+	var ponto_da_ponte: Vector3 = (ordenado["pos"] as Vector3) + Vector3(9.0, 0.0, -6.0)
+	ordenado["destino"] = ponto_da_ponte
+	ordenado["com_destino"] = true
+	for mq in range(QUADROS_DO_CICLO_DA_DERIVA):
+		jogo._atualizar_esquadras(1.0 / 60.0)
+	_assert("quem recebe destino da ponte para no ponto, e nao passa a respirar em volta dele",
+		(ordenado["pos"] as Vector3).distance_to(ponto_da_ponte) \
+				<= Voo.CAPTURA_DE_POUSO + FOLGA_DERIVA,
+		"bloco %d a %.3f u do ponto comandado (captura de pouso %.2f u + folga %.2f u)" % [
+			int(ordenado["id"]), (ordenado["pos"] as Vector3).distance_to(ponto_da_ponte),
+			Voo.CAPTURA_DE_POUSO, FOLGA_DERIVA])
+	ordenado["com_destino"] = false
+
+	# ── 13b. com a estação parada, respirar não vira proa ──────────────────────────────────────
+	# O regime que o olho da ponte pega e o ledger não pega: no contato a estação já não anda, e o
+	# único resíduo entre o bloco e o próprio posto é o deslize de boreste da deriva — três centésimos
+	# de unidade, quase puro lado. Se a proa sai do vetor de perseguição, o bloco gira para acompanhar
+	# isso e apresenta o través ao inimigo: `massa_visivel.gd` leu a boca do MESMO bloco encolher de
+	# 630 px para 236 px no mesmo grau de lente, e a fresta entre dois blocos virar branco. A lei não
+	# é nova, é a que `main.gd` já grava para os doze cascos: destino absoluto manda o curso
+	# (`_pilotar`), custódia de posto guarda a atitude da linha (`_empuxar`). Aqui ela entra para os
+	# duzentos e quarenta blocos.
+	var e_parada := _nova_esquadra()
+	var nuc_par_a := _nucleos(true)
+	var nuc_par_h := _nucleos(false)
+	_marchar_ate_contato(e_parada, nuc_par_a, nuc_par_h)
+	for aq in range(AQUECIMENTO_DA_PROA):
+		e_parada.passo(1.0 / 60.0, nuc_par_a, nuc_par_h)
+	var pior_proa := 0.0
+	var pior_proa_h := 0.0
+	var pior_residuo := 0.0
+	for kq in range(QUADROS_DO_CICLO_DA_DERIVA):
+		e_parada.passo(1.0 / 60.0, nuc_par_a, nuc_par_h)
+		for lado_p in ["aliado", "hostil"]:
+			for bp in e_parada.lista_de(lado_p):
+				if not bool(bp["vivo"]):
+					continue
+				var desvio := absf(wrapf(float(bp["rumo"]) - Esquadra.rumo_da_linha(lado_p),
+					-PI, PI))
+				if lado_p == "aliado":
+					pior_proa = maxf(pior_proa, desvio)
+					# O contrafactual lido no mesmo quadro, sem segunda simulação. Com a estação
+					# parada e a boca de pouso (0,02 u) engolindo o resto, o único resíduo que a lei
+					# velha via entre o bloco e o posto é o passo que o próprio posto deu no quadro
+					# — puro boreste, porque a deriva não tem componente em z. É o curso que o leme
+					# obedecia, e é ele que deitava a muralha de través.
+					var esq_p := int(bp["esquadrao"])
+					var passo_posto := _deriva_esperada(e_parada, esq_p, e_parada.tempo) \
+						- _deriva_esperada(e_parada, esq_p, e_parada.tempo - 1.0 / 60.0)
+					if passo_posto.length_squared() > 1e-12:
+						pior_residuo = maxf(pior_residuo,
+							absf(wrapf(Voo.rumo_de(passo_posto), -PI, PI)))
+				else:
+					pior_proa_h = maxf(pior_proa_h, desvio)
+	# O teto não é escolha desta sonda: é o passo do próprio leme num quadro. Guardada a atitude, o
+	# leme não tem para onde girar, e a única coisa que ainda pode mover o `rumo` é um degrau de
+	# `giro_maximo * delta`.
+	var degrau_do_leme := float(Voo.FICHA_BLOCO["giro_maximo"]) / 60.0
+	_assert("a estacao parada nao vira proa: quem respira de custodia guarda a fachada da linha",
+		pior_proa <= degrau_do_leme and pior_proa_h <= degrau_do_leme,
+			"maior desvio de proa lido no ciclo: %.2f graus aliado e %.2f graus hostil, teto %.2f " % [
+				rad_to_deg(pior_proa), rad_to_deg(pior_proa_h), rad_to_deg(degrau_do_leme)] \
+				+ "graus (um degrau do leme do bloco); o curso que o residuo mandaria seria %.1f graus" % [
+					rad_to_deg(pior_residuo)])
 
 	print("SONDA-ESQUADRA: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for nota in notes:

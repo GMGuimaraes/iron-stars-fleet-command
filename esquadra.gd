@@ -116,6 +116,28 @@ const INSTANCIAS_POR_LADO := BLOCOS_NO_LADO * CASAS
 ## Lotiação de um bloco, em cascos de linha. A casa vale ⌈100 / 24⌉ = 5 navios; a última pode
 ## valer menos e é ela que some primeiro.
 const NAVIOS_NO_BLOCO := 100
+## ---- A muralha que respira ----
+## Amplitude da custódia de posto, em u por eixo, e o ciclo em segundos. As duas amplitudes são
+## medidas no ar que existe: no boreste o vizinho mais próximo está a 13,0 u de centro a centro com
+## 10,52 u de caixa (2,48 u de ar), na altura os dois andares estão a 12,0 u com 3,47 u de caixa
+## (8,53 u de ar). Por isso o boreste respira por ANDAR e a altura por ESQUADRÃO:
+##
+## * em x, todos os blocos do mesmo andar têm a mesma fase, então a distância de fileira nunca muda —
+##   um deslocamento por esquadrão fecharia o ar de 2,48 u na emenda entre formações (medido: 1,94 u,
+##   e a lei do ar da família 2 da sonda reprova);
+## * em y, os seis esquadrões respiram defasados de 60°, porque é aí que há folga: mesmo que os dois
+##   andares se aproximem ao mesmo tempo, sobram 8,53 − 0,9 = 7,63 u de ar.
+##
+## Em `z` a deriva não entra de propósito: é o eixo do contato, e a fachada que as famílias 2 e 10
+## assinam é medida centro a centro. O ciclo de 9 s dá ~0,4 u/s de ponta, um sexto da marcha de
+## 6,0 u/s, para a deriva ler como vida de formatura e nunca como manobra: quem muda de ground é a
+## ordem da ponte, nunca este sinusóide.
+const DERIVA_X := 0.6
+const DERIVA_Y := 0.45
+const DERIVA_CICLO := 9.0
+## O deslocamento de cada esquadrão neste instante, recalculado uma vez por `passo`. O componente em
+## x só depende do andar, o em y depende do esquadrão — é a divisão acima aplicada.
+var _derivas: Array[Vector3] = []
 ## Marcha da massa, em u/s: um bloco cruza a faixa do próprio esquadrão (32 u de largura) em cinco
 ## segundos, o bastante para a manobra ser lida no visor sem a linha virar formiga.
 const MARCHA_DE_BLOCO := 6.0
@@ -180,6 +202,11 @@ var _rendidas_na_ultima_salva := 0
 ## divergir de `lancados`, a tela está mostrando fogo que a conta não cobrou -- ou escondendo fogo
 ## que cobrou. Quem escreve é `troca_salva`, e quem lê é `_armar_tracos_da_massa` em `main.gd`.
 var pares_da_ultima_salva: Array[Dictionary] = []
+## Relógio da muralha, em segundos de `passo()`. É o que alimenta a deriva de custódia: com a fase
+## lida do tempo acumulado pelo próprio módulo, a sonda pode adiantar a muralha quadro a quadro sem
+## depender do relógio do motor nem de sorteio. Zera junto com a batalha, senão a segunda partida
+## começaria com os blocos espalhados na fase do fim da anterior.
+var tempo := 0.0
 ## Ordem do comandante sobre a massa: quando a ponte concentra fogo, os blocos aliados largam o
 ## próprio vizinho e apontam todos para o bloco hostil mais próximo desta posição. É a única leitura
 ## que a massa faz do jogo dos doze cascos, e é leitura de ORDEM, nunca de estado: nenhum `hp`,
@@ -224,9 +251,16 @@ static func posto_no_lado(esq: int, indice: int, ancora: Vector3) -> Vector3:
 		(float(br) - float(LINHAS_NO_ESQUADRAO - 1) / 2.0) * PASSO_BLOCO_Z)
 
 
+## A proa da linha: o aliado olha para -z, o hostil para +z, e é a mesma convenção de `Voo.eixo`. É
+## a atitude que um bloco em custódia de posto guarda enquanto desliza — a muralha respira de frente
+## para o inimigo, não de través.
+static func rumo_da_linha(lado: String) -> float:
+	return 0.0 if lado == "aliado" else PI
+
+
 func _novo_bloco(id: int, esq: int, indice: int, lado: String, pos: Vector3) -> Dictionary:
 	return {"id": id, "esquadrao": esq, "formacao": indice, "lado": lado, "pos": pos,
-		"vel": Vector3.ZERO, "rumo": 0.0 if lado == "aliado" else PI, "giro": 0.0,
+		"vel": Vector3.ZERO, "rumo": rumo_da_linha(lado), "giro": 0.0,
 		"navios": float(NAVIOS_NO_BLOCO),
 		# Placa de esquadra: `escudo_max` em zero é a forma que a lei lê como "não recomponha".
 		"escudo": Escudo.ESCUDO_DE_BLOCO, "escudo_max": 0.0, "escudo_cai": 0.0,
@@ -344,6 +378,10 @@ func montar(nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 	perdas_aliadas = 0
 	perdas_hostis = 0
 	presas = 0
+	# A deriva morre com a batalha velha: sem isto a segunda partida começaria com cada esquadrão
+	# na fase do fim da anterior, e o relógio da muralha não é estado que deva atravessar um RECOMEÇAR.
+	tempo = 0.0
+	_derivas = []
 	# A ordem da ponte não herda de partida nenhuma, e a fila do desenho morre com a batalha velha:
 	# remonta sem isto seria a tela mostrar lances de blocos que já não existem.
 	fogo_concentrado = false
@@ -417,20 +455,45 @@ func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 	centro_aliado = _centro_de(nucleos_aliados)
 	centro_hostil = _centro_de(nucleos_hostis)
 	recuo_hostil = _recuo_alvo()
+	tempo += delta
+	if _derivas.size() != ESQUADROES_NO_LADO:
+		_derivas.resize(ESQUADROES_NO_LADO)
+	for e in range(ESQUADROES_NO_LADO):
+		var base := tempo * TAU / DERIVA_CICLO
+		var andar := int(float(e) / float(COLUNAS_NO_LADO))
+		var fase_x := base + float(andar) * TAU / float(CAMADAS_NO_LADO)
+		var fase_y := base + float(e) * TAU / float(ESQUADROES_NO_LADO)
+		_derivas[e] = Vector3(cos(fase_x) * DERIVA_X, sin(fase_y * 0.5) * DERIVA_Y, 0.0)
 	for lado in ["aliado", "hostil"]:
 		for b in lista_de(lado):
 			if not bool(b["vivo"]):
 				continue
 			var posto := posto_no_lado(int(b["esquadrao"]), int(b["formacao"]), estacao(lado))
-			# Ordem da ponte ganha do posto de formação: o bloco com destino escrito anda até o
-			# ponto que o comandante apontou e segura lá, em vez de ser puxado de volta pela
-			# estação. Mesma lei para os dois casos, então nem o posto nem o destino teleportam.
+			# Ordem da ponte ganha do posto de formação: o bloco persegue o ponto que o comandante
+			# apontou e segura lá, em vez de ser puxado de volta pela estação. Mesma lei para os dois
+			# casos, então nem o posto nem o destino teleportam.
 			if bool(b["com_destino"]):
 				posto = b["destino"] as Vector3
+			else:
+				# Custódia de posto: o bloco nunca estaciona de vez, ele orbita o próprio lugar na
+				# grade. Boreste com a fase do ANDAR e altura com a fase do ESQUADRÃO — a divisão está
+				# escrita na régua de `DERIVA_X`: é o eixo em que os vizinhos têm só 2,48 u de ar, e
+				# deslizá-los em fases diferentes fecharia a fileira na emenda entre formações. Uma
+				# formação que se move como um corpo é o que faz a muralha ler como frota em vez de
+				# nuvem de mosquitos. Em `z` a deriva não entra de propósito: é o eixo do contato, e a
+				# lei de aproximação (`DISTANCIA_DE_CONTATO`, `FACHADA_DA_MURALHA`) é medida centro a
+				# centro; balançar vante e trás mudaria a fachada que as sondas assinam.
+				posto += _derivas[int(b["esquadrao"]) % _derivas.size()]
 			var partida: Vector3 = b["pos"]
 			var marcha := MARCHA_DE_BLOCO * (0.35 + float(b["MOTORES"]) / 100.0 * 0.65)
+			# Proa comandada, só na custódia: o único resíduo que um bloco de linha persegue é o
+			# deslize da própria respira — trinta centímetros de boreste — e girar para acompanhar
+			# isso apresentaria o través ao inimigo e encolheria a silhueta do bloco no visor
+			# (`massa_visivel.gd` mediu a boca cair de 630 px para 236 px no mesmo grau de lente).
+			# Quem recebeu destino da ponte continua virando para o ponto apontado.
+			var proa := NAN if bool(b["com_destino"]) else rumo_da_linha(lado)
 			var voo := Voo.marchar(partida, b["vel"] as Vector3, float(b["rumo"]), posto,
-				delta, marcha, Voo.FICHA_BLOCO)
+				delta, marcha, Voo.FICHA_BLOCO, proa)
 			b["pos"] = voo["pos"]
 			b["vel"] = voo["vel"]
 			b["rumo"] = voo["rumo"]
@@ -684,6 +747,36 @@ func troca_salva() -> Dictionary:
 	rendidos = _rendidas_na_ultima_salva
 	return {"lancados": lancados, "feridos": feridos, "afundados": afundados,
 		"rendidos": rendidos, "salva": salva_numero}
+
+
+## A fila do desenho: um LANCE POR CASA viva de cada bloco que atirou. É a leitura visual da
+## lotação — o bloco de cem navios tem vinte e quatro cascos desenhados, e vinte e quatro bocas de
+## fogo: cada tiro sai do casco em que o olho vê a nave e aponta para UM casco do bloco visado, não
+## para o centro dele. Não é uma segunda conta de dano: o ledger continua um golpe por bloco, em
+## `troca_salva` acima, e esta fila é derivada dele na mesma ordem, casa a casa — então a sonda pode
+## cobrar "um traço por casa viva de quem cobrou" sem que a tela jamais mostre fogo que a conta não
+## cobrou, nem esconda fogo que cobrou. Aritmética pura de índice `(casa + id + salva) % casas_alvo`:
+## sorteio aqui comeria um dado do `visual_rng` dos doze cascos e mudava toda a batalha.
+func tiros_da_salva() -> Array[Dictionary]:
+	var tiros: Array[Dictionary] = []
+	for par in pares_da_ultima_salva:
+		var origem: Dictionary = par["origem"]
+		var alvo: Dictionary = par["alvo"]
+		var casas := casas_vivas(origem)
+		# Bloco que afundou nesta mesma salva tem casa zero; o lance dele existe e tem de ir a algum
+		# lugar, senão a fila deixaria de espelhar o ledger.
+		var casas_alvo := maxi(1, casas_vivas(alvo))
+		var rot := Basis.from_euler(Vector3(0.0, float(origem["rumo"]), 0.0))
+		var rot_alvo := Basis.from_euler(Vector3(0.0, float(alvo["rumo"]), 0.0))
+		var base: Vector3 = origem["pos"]
+		var base_alvo: Vector3 = alvo["pos"]
+		var id := int(origem["id"])
+		for c in range(casas):
+			tiros.append({"de": base + (rot * casa_local(c)),
+				"para": base_alvo + (rot_alvo * casa_local((c + id + salva_numero) % casas_alvo)),
+				"aliado": String(par["lado"]) == "aliado", "casa": c,
+				"bloco": id, "alvo_bloco": int(alvo["id"])})
+	return tiros
 
 
 ## Um golpe no eixo escolhido. Devolve `true` se o bloco afundou.

@@ -211,17 +211,44 @@ func _marcar_esquadrao(e: Esquadra, esq: int) -> Array[Dictionary]:
 ## "perto dele": `move_toward` devolve o ponto exato quando o passo cobre a falta, então o pouso é
 ## uma igualdade e a régua que para a um décimo de unidade está parando no meio do último passo.
 ## Devolve os quadros gastos, que é a prova de que houve travessia e não partida colada.
-func _marchar_ate_destinos(e: Esquadra, nuc_a: Array, nuc_h: Array) -> int:
+func _marchar_ate_destinos(e: Esquadra, nuc_a: Array, nuc_h: Array,
+  sem_respirar := false) -> int:
 	var q := 0
 	var longe := true
 	while longe and q < TETO_DE_QUADROS:
-		e.passo(1.0 / 60.0, nuc_a, nuc_h)
+		if sem_respirar:
+			_quadro_sem_respirar(e, nuc_a, nuc_h)
+		else:
+			e.passo(1.0 / 60.0, nuc_a, nuc_h)
 		longe = false
 		for b in e.selecionados():
 			if _pos(b).distance_to(_dest(b)) > POUSO_EXATO:
 				longe = true
 		q += 1
 	return q
+
+## Precondition da fatia 3.5, declarada no passo e não afrouxada na régua: esta sonda mede SEMÂNTICA
+## de ordem — a quantos blocos a pintura atribui a ordem, e quão perto do posto o bloco volta sem
+## ela. Com a muralha respirando, todo bloco vivo está sujo em todo quadro, "vinte e não cento e
+## vinte" passa a ler 120 e "parado não custa escrita" passa a ler 120: a asserção reprovaria o
+## desenho, não a lei. Congelar a fase cravando `tempo` antes do passo transforma a sinusóide num
+## offset constante — o bloco pousa nele e para de se mexer — e os números cobrados voltam a ser os
+## de antes da fatia. A respiração em si é assinada pela família 13 de `tools/probes/esquadra.gd`.
+func _quadro_sem_respirar(e: Esquadra, nuc_a: Array, nuc_h: Array) -> void:
+	e.tempo = 0.0
+	e.passo(1.0 / 60.0, nuc_a, nuc_h)
+
+## A deriva congelada pelo `_quadro_sem_respirar`: os mesmos quatro números que `passo()` usa, refeitos
+## das constantes publicadas com o relógio na fase cravada acima. Espelho, não API nova — é contra
+## esse posto que a lei do retorno cobra, porque é esse posto que a grade manda guardar.
+func _posto_respirado(e: Esquadra, b: Dictionary) -> Vector3:
+	var esq := int(b["esquadrao"])
+	var base := e.tempo * TAU / Esquadra.DERIVA_CICLO
+	var andar := int(float(esq) / float(Esquadra.COLUNAS_NO_LADO))
+	var fase_x := base + float(andar) * TAU / float(Esquadra.CAMADAS_NO_LADO)
+	var fase_y := base + float(esq) * TAU / float(Esquadra.ESQUADROES_NO_LADO)
+	var deriva := Vector3(cos(fase_x) * Esquadra.DERIVA_X, sin(fase_y * 0.5) * Esquadra.DERIVA_Y, 0.0)
+	return Esquadra.posto_no_lado(esq, int(b["formacao"]), e.estacao("aliado")) + deriva
 
 ## A maior distância percorrida por um bloco sob ordem: é o "andou" que a lei de inércia exige, e o
 ## "chegou" que a translação cobra contra o posto de formação.
@@ -352,14 +379,21 @@ func _initialize() -> void:
 		e3.com_destino() == BLOCOS_NO_ESQUADRAO, "%d sob destino" % e3.com_destino())
 	var andado_100 := 0.0
 	for i in range(100):
-		e3.passo(1.0 / 60.0, nuc_a, nuc_h)
+		_quadro_sem_respirar(e3, nuc_a, nuc_h)
 	# No meio da marcha a régua tem de cobrar os VINTE que andam — e não os cento e vinte: os cem
 	# blocos sem ordem estão colados no próprio posto, e uma pintura que os repintasse a cada quadro
 	# desmentiria a lei de cima com um número bonito.
+	# O assentamento da fase congelada: cravar `tempo` não zera a deriva, ela vira um offset fixo de
+	# até 0,6 u em boreste, e os cem blocos sem ordem andam esse offset nos primeiros quadros. Essa
+	# pintura paga o deslocamento uma vez — por isso é conferido, não jogado fora — e a medida de
+	# embaixo é o QUADRO SEGUINTE, quando a muralha já está colada no posto respirado por tabela e só
+	# os vinte sob ordem ainda têm o que escrever.
+	var assentamento := e3.pintar(mm3, "aliado", false)
+	_quadro_sem_respirar(e3, nuc_a, nuc_h)
 	var durante := e3.pintar(mm3, "aliado", false)
 	for b in e3.selecionados():
 		andado_100 = maxf(andado_100, _pos(b).distance_to(_dest(b)))
-	var quadros := _marchar_ate_destinos(e3, nuc_a, nuc_h)
+	var quadros := _marchar_ate_destinos(e3, nuc_a, nuc_h, true)
 	var chegada: Array = []
 	var pior := 0.0
 	for b in e3.selecionados():
@@ -381,14 +415,19 @@ func _initialize() -> void:
 	# última escrita da travessia e custa os vinte. A lei "parado não custa escrita" é a pintura
 	# SEGUINTE, um quadro depois de nada ter andado — medir a primeira seria cobrar de uma frota que
 	# ainda está sendo desenhada onde o olho nunca a viu.
-	e3.passo(1.0 / 60.0, nuc_a, nuc_h)
-	e3.passo(1.0 / 60.0, nuc_a, nuc_h)
-	e3.passo(1.0 / 60.0, nuc_a, nuc_h)
+	_quadro_sem_respirar(e3, nuc_a, nuc_h)
+	_quadro_sem_respirar(e3, nuc_a, nuc_h)
+	_quadro_sem_respirar(e3, nuc_a, nuc_h)
 	var assentada := e3.pintar(mm3, "aliado", false)
-	e3.passo(1.0 / 60.0, nuc_a, nuc_h)
+	_quadro_sem_respirar(e3, nuc_a, nuc_h)
 	var parado := e3.pintar(mm3, "aliado", false)
 	_assert("a passada forcada da largada pinta os cento e vinte blocos do lado",
 		largada == BLOCOS_POR_LADO, "%d tocados quando tudo e sujo de proposito" % largada)
+	_assert("a fase congelada assenta a muralha uma única vez: os cento e vinte pagam o offset",
+		assentamento == BLOCOS_POR_LADO,
+			"%d tocados no primeiro quadro depois de cravar o relógio, quando os cem sem ordem andam " % [
+				assentamento] \
+				+ "o offset fixo da deriva e os vinte ainda estão em marcha")
 	_assert("em marcha, a ordem custa exatamente os vinte que andam, nao os cento e vinte",
 		durante == BLOCOS_NO_ESQUADRAO, "%d tocados com %d u ainda por percorrer" % [
 			durante, andado_100])
@@ -403,22 +442,28 @@ func _initialize() -> void:
 	var q2 := 0
 	var longe := true
 	while longe and q2 < TETO_DE_QUADROS:
-		e3.passo(1.0 / 60.0, nuc_a, nuc_h)
+		_quadro_sem_respirar(e3, nuc_a, nuc_h)
 		longe = false
 		for b in e3.lista_de("aliado"):
-			var p_formacao := Esquadra.posto_no_lado(int(b["esquadrao"]), int(b["formacao"]),
-				e3.estacao("aliado"))
-			if _pos(b).distance_to(p_formacao) > FOLGA:
+			if _pos(b).distance_to(_posto_respirado(e3, b)) > FOLGA:
 				longe = true
 		q2 += 1
 	var volta_pior := 0.0
+	var volta_pior_nua := 0.0
 	for b in e3.lista_de("aliado"):
 		var posto_livre := Esquadra.posto_no_lado(int(b["esquadrao"]), int(b["formacao"]),
 			e3.estacao("aliado"))
-		volta_pior = maxf(volta_pior, _pos(b).distance_to(posto_livre))
-	_assert("sem ordem escrita, os cento e vinte encostam de novo no posto da grade",
+		volta_pior = maxf(volta_pior, _pos(b).distance_to(_posto_respirado(e3, b)))
+		volta_pior_nua = maxf(volta_pior_nua, _pos(b).distance_to(posto_livre))
+	# O contrafactual da referência: se o posto respirado fosse a mesma coisa que o posto nu, esta
+	# linha não teria o que contar. Ele conta — o resto nu é a própria deriva cravada, e a tolerância
+	# FOLGA continua a mesma de antes da fatia: mudou o alvo da régua, não a folga.
+	_assert("a grade recaptura quem estava sob ordem, e o posto que ela guarda é o respirado",
 		q2 < TETO_DE_QUADROS and volta_pior < FOLGA,
-		"maior resto de posto %.4f u em %d quadros de volta" % [volta_pior, q2])
+			"maior resto de posto %.4f u em %d quadros de volta; contra o posto nu o mesmo resto e " % [
+				volta_pior, q2] \
+				+ "%.4f u, que é a deriva congelada, e a folga cobrada segue %.2f u" % [
+					volta_pior_nua, FOLGA])
 
 	# ── 5. a ordem relativa fecha o anel e nao toca no andar ────────────────────────────────
 	var e4 := _nova_esquadra()

@@ -11,9 +11,12 @@ extends SceneTree
 ##    sem: se apagar 5 760 cascos não muda nenhum pixel, a massa está fora da tela (culling, caixa
 ##    autorgada errada, material sem albedo de vértice) e nenhuma contabilidade salva isso.
 ## 2) O VAIO É LIDO ENTRE CASCOS. A régua não é "tem brilho no meio do quadro": é a luminância de
-##    cada uma das vinte e quatro casas projetadas contra a luminância do ponto exato entre duas
-##    casas vizinhas. Casa mais viva que vão, em mediana e nos dois eixos, é o paralelepípedo
-##    organizado que o pedido pediu. Manchão sem costura — o enxame — passa no item 1 e reprova aqui.
+##    cada uma das vinte e quatro casas projetadas do bloco mais **lotado** da muralha contra a
+##    luminância do ponto exato entre duas casas vizinhas. O sujeito é escolhido, não sorteado: um
+##    bloco mordido tem casas escondidas, e a mediana de um amostrado assim cai no céu e reprova a
+##    régua por culpa do atrito, não do alinhamento. Casa mais viva que vão, em mediana e nos dois
+##    eixos, é o paralelepípedo organizado que o pedido pediu. Manchão sem costura — o enxame — passa
+##    no item 1 e reprova aqui.
 ##    A mesma régua, uma escala acima: o ponto exato entre os centros de dois blocos vizinhos cai na
 ##    fresta de 2,48 u entre as duas silhuetas, e tem de ler escuro. É o ar que separa "fileiras de
 ##    blocos" de "parede contínua", e sem ele a muralha inteira é um só manchão grande.
@@ -39,14 +42,15 @@ extends SceneTree
 ##    variou de 3,9 a 11,9 entre rodadas, o que faria um portão reprovar por barulho. Trinta e duas
 ##    acomoda a variação e ainda quebra alto se a esquadra deixar de ser lote. "Dois draw calls",
 ##    como prometiam os cabeçalhos antigos, é falso.
-## 6) A SALVA É DESENHADA NO QUADRO INTEIRO, NÃO NO MEIO DO CAMPO. O ledger de
+## 6) A SALVA É DESENHADA NO QUADRO INTEIRO, E UMA BOCA POR CASCO. O ledger de
 ##    `tools/probes/esquadra.gd` família 12 prova contabilidade; o que falta provar é pixel, e pixel
 ##    só existe aqui. A ponte olha o campo pelo eixo do voo, então um lance que anda em `z` quase não
 ##    muda de tamanho na tela: o que a lente vê é uma fila de pontos que encolhem, não um risco
 ##    comprido. A régua é coluna por coluna — o MAIOR ganho de luminância entre o quadro com o nó dos
-##    traços ligado e o MESMO quadro congelado com ele desligado, a salva parada em 45% do voo. Vinte
-##    lances no centro acendem um punhado de colunas no meio; duzentos e quarentas acendem uma faixa
-##    larga, e as duas situações não se confundem nem por ruído. O preço continua sendo UM nó: as
+##    traços ligado e o MESMO quadro congelado com ele desligado, a salva parada em 0,45 s do pulso.
+##    Vinte e quatro canos por bloco acendem 5 760 pixels de boca, e o que se cobra é a largura da
+##    faixa varrida e a densidade de colunas acesas: um punhado de traços no centro deixa as bordas
+##    escuras, e as duas situações não se confundem nem por ruído. O preço continua sendo UM nó: as
 ##    primitivas do quadro sobem com a salva no ar e as chamadas de desenho, não.
 ##
 ## Uso (janela real, sem --headless):
@@ -88,8 +92,9 @@ const TETO_MS := 8.0
 ## massa deixar de ser lote.
 const DESENHOS_TETO := 32.0
 ## ---- Leis da salva desenhada (lei 6) ----
-## Grade da varredura, em pixels. Um traço de 0,55 u a 60 u da lente tem poucos pixels de boca e a
-## varredura não pode amostrar mais grosso que isso sem perder lance.
+## Grade da varredura, em pixels. O traço tem 8 u de comprimento e 0,55 u de boca
+## (`main.gd:TRACO_COMPRIMENTO`), a 60 u da lente: a boca são poucos pixels e a varredura não pode
+## amostrar mais grosso que isso sem perder lance.
 const PASSO_VARREDURA := 2
 ## Ganho de luminância que conta como pixel de traço. O céu estrelado, sozinho, não chega aqui: os
 ## dois quadros da régua são o MESMO tabuleiro congelado, com um nó ligado ou desligado.
@@ -102,17 +107,20 @@ const TRACO_VARREDURA_MIN := 0.45
 ## grade e os blocos de uma mesma vertical se sobrepõem em x, então o teto natural é bem abaixo de
 ## um por bloco; dez por cento é dezenas de lances lendo no quadro.
 const TRACO_COLUNAS_MIN := 0.10
-## Onde estacionar o voo para a foto: 45% é o meio do campo, longe das duas bocas e do impacto.
+## Onde estacionar o pulso para a foto, EM SEGUNDOS — a unidade de `_traco_t` mudou com a onda
+## interna. A última casa acende em 0,276 s e o primeiro lance morre em 0,55 s: 0,45 s é o meio
+## dessa janela, o único instante em que os 5 760 canos estão no ar ao mesmo tempo.
 const TRACO_T_DE_LEITURA := 0.45
 ## Distância da leitura, em u atrás do centro da muralha aliada. É a pose da ponte, não um drone:
 ## ver a asserção do enquadramento.
 const DISTANCIA_DA_LEITURA := 60.0
-## Teto de chamadas de desenho dos duzentos e quarentas traços. Um nó por lance cobraria 240; em
-## lote o que se paga é uma passada, mais o que o tonemapping quiser.
+## Teto de chamadas de desenho dos cinco mil setecentos e sessenta traços. UM nó por lance cobraria
+## 5 760; em lote o que se paga é uma passada, mais o que o tonemapping quiser.
 const TRACOS_DESENHOS_TETO := 12.0
-## Primitivas mínimas que o nó dos traços acrescenta ao quadro: 240 instâncias de doze triângulos
-## cada, com folga. É o nó submetido ao renderizador, não o pixel — o pixel é a lei de cima.
-const TRACO_PRIM_MIN := 2400.0
+## Primitivas mínimas que o nó dos traços acrescenta ao quadro: 5 760 instâncias de doze triângulos
+## cada = 69 120, com vinte por cento de folga para o que o culler não submete. É o nó enviado ao
+## renderizador, não o pixel — o pixel é a lei de cima.
+const TRACO_PRIM_MIN := 55000.0
 ## Quantos segundos de marcha a sonda pode simular antes de desistir de chegar ao alcance.
 const MARCHA_MAXIMA := 120
 
@@ -162,18 +170,24 @@ static func _casa_no_mundo(b: Dictionary, c: int) -> Vector3:
 	var rot := Basis.from_euler(Vector3(0.0, float(b["rumo"]), 0.0))
 	return (b["pos"] as Vector3) + rot * Esquadra.casa_local(c)
 
-## O vizinho de boreste na grade do lado: deslocado exatamente `PASSO_BLOCO_X` em x, mesmo andar e
-## mesma linha. A grade e continua (65 = 5 x 13), entao ate blocos de dois esquadroes se tocam aqui.
-static func _vizinho_de_boreste(e: Esquadra, bloco: Dictionary) -> Dictionary:
-	var p: Vector3 = bloco["pos"]
+## O vizinho de boreste na grade do lado, achado pelo POSTO e nao pela posicao pintada. Desde a
+## muralha que respira dois blocos de esquadroes vizinhos tem a mesma fase em boreste (a fase e do
+## ANDAR) mas fases diferentes em altura, e uma busca por posicao atual perderia o par por causa de
+## menos de um metro de deriva. A fresta medida continua a dos centros verdadeiros — o que muda e so
+## a identificacao do par.
+static func _vizinho_de_boreste(e, bloco: Dictionary) -> Dictionary:
+	var ancora: Vector3 = e.estacao("aliado")
+	var posto_a := Esquadra.posto_no_lado(int(bloco["esquadrao"]), int(bloco["formacao"]), ancora)
 	var melhor: Dictionary = {}
 	var menor_d := INF
 	for b in e.lista_de("aliado"):
 		if b == bloco:
 			continue
-		var d: Vector3 = (b["pos"] as Vector3) - p
-		if absf(d.x - Esquadra.PASSO_BLOCO_X) < 0.5 and absf(d.y) < 0.5 and absf(d.z) < 0.5:
-			var q := d.length()
+		if Esquadra.casas_vivas(b) != Esquadra.CASAS:
+			continue
+		var d := Esquadra.posto_no_lado(int(b["esquadrao"]), int(b["formacao"]), ancora) - posto_a
+		if absf(d.x - Esquadra.PASSO_BLOCO_X) < 0.01 and absf(d.y) < 0.01 and absf(d.z) < 0.01:
+			var q: float = (b["pos"] as Vector3).distance_to(bloco["pos"] as Vector3)
 			if q < menor_d:
 				menor_d = q
 				melhor = b
@@ -204,7 +218,7 @@ func _contraste(img: Image, camera: Camera3D, bloco: Dictionary, passo: Vector3)
 	var vaos: Array[float] = []
 	var ganhos := 0
 	var pares := 0
-	for c in range(Esquadra.CASAS):
+	for c in range(Esquadra.casas_vivas(bloco)):
 		var mundo := _casa_no_mundo(bloco, c)
 		# Cada casa é medida duas vezes, uma contra o vizinho de cada lado: em perspectiva uma das
 		# faces pode ficar coberta, e o par que sobra ainda conta. Sem par fora da tela.
@@ -388,10 +402,34 @@ func _initialize() -> void:
 	# instrumento de sonda, não jogabilidade: o que se fotografa é o `MultiMesh` que o jogo já
 	# pintou, visto pela câmera da ponte, com a FOV que a roda entrega.
 	jogo.process_mode = Node.PROCESS_MODE_DISABLED
+	# Precondition da fatia 3.5, declarada no instrumento e nao afrouxada na regua: a secao 1 rodou a
+	# batalha viva, e com o lance por casa desenhada sao 5 760 canos no ar em cada pulso. Congelar o
+	# jogo congela `_traco_t` junto, entao os tracos da ultima salva ficam estacionados no meio do
+	# voo exatamente sobre a fresta entre dois blocos — a amostra do vao le 1,000 (branco puro), o
+	# quadro de controle sem a massa acende igual, e a lei da emenda lida reprovaria o desenho da
+	# salva em vez de reprovar a muralha. Apagar o nos dos tracos durante esta secao e o que devolve
+	# a regua ao que ela mede: silhueta de casco e o ar entre cascos. A salva tem secao e leis
+	# proprias (a 3 abaixo), e elas rearmam o nos.
+	jogo.massa_tracos.visible = false
+	# Precondition do SUJEITO, declarada aqui e nao na regua: a secao 1 deixou a muralha morderada
+	# (painel `MASSA 120/120` conta bloco VIVO, e vivo com cinco casas ainda e vivo), e casa sem
+	# navio e pintada com base nula exatamente sobre o centro do bloco — vazio. Escolhido pelo maior
+	# z sem essa conta, o sujeito caiu num bloco morderado e a mediana das vinte e quatro casas le
+	# ceu em vinte e uma amostras: a regua de costura ia reprovar o atrito em vez de reprovar o
+	# desenho. O sujeito e o bloco mais LOTADO, desempatado pelo mais adiantado, e a amostragem
+	# abaixo caminha so sobre as casas que tem silhueta no ar.
 	var bloco: Dictionary = {}
+	var casas_do_sujeito := 0
+	var lotados := 0
 	for b in jogo.esquadra.lista_de("aliado"):
-		if bloco.is_empty() or float((b["pos"] as Vector3).z) > float((bloco["pos"] as Vector3).z):
+		var c := Esquadra.casas_vivas(b)
+		if c == Esquadra.CASAS:
+			lotados += 1
+		if bloco.is_empty() or c > casas_do_sujeito \
+				or (c == casas_do_sujeito \
+					and float((b["pos"] as Vector3).z) > float((bloco["pos"] as Vector3).z)):
 			bloco = b
+			casas_do_sujeito = c
 	var alvo: Vector3 = bloco["pos"]
 	jogo.bridge_rig.global_position = alvo + Vector3(0.0, 0.0, 46.0)
 	jogo.bridge_rig.rotation = Vector3.ZERO
@@ -421,9 +459,13 @@ func _initialize() -> void:
 	_salvar(sem_massa, "massa_apagada")
 	jogo.massa_aliada.visible = true
 	jogo.massa_hostil.visible = true
+	jogo.massa_tracos.visible = true
 	var sem_contraste := _contraste(sem_massa, cam, bloco, olho_x)
 	_assert("o bloco está no visor: a projeção das vinte e quatro casas cai dentro da tela",
-		com_massa["pares"] >= 20, "%d pares casa/vão projetados de 24 casas" % com_massa["pares"])
+		com_massa["pares"] >= 20 and casas_do_sujeito == Esquadra.CASAS,
+			("%d pares casa/vão projetados de %d casas no ar, sujeito lotado (existem %d blocos com as " % [
+				com_massa["pares"], casas_do_sujeito, lotados])
+				+ ("%d casas na muralha)" % Esquadra.CASAS))
 	_assert("apagar a massa apaga pixels: ela está desenhada, nao apenas contada",
 		absf(_media_luz(largo) - _media_luz(fechado)) >= 0.0
 			and _media_luz(fechado) > _media_luz(sem_massa) + 0.002,
@@ -451,8 +493,10 @@ func _initialize() -> void:
 	# O ar entre BLOCOS, medido no pixel e nao no inventario: o ponto exato do meio entre o centro
 	# deste bloco e o do vizinho de boreste cai na fresta entre as duas silhuetas — a casa extrema
 	# para em 4,8 + meia boca 0,456 = 5,26 de um lado e 13 − 5,26 = 7,74 do outro, e o meio (6,5)
-	# esta no vazio dos 2,49 u. Muralha sem emenda, pega continua, teria o mesmo ponto tao vivo
-	# quanto uma casa.
+	# esta no vazio dos 2,48 u. Muralha sem emenda, pega continua, teria o mesmo ponto tao vivo
+	# quanto uma casa. Com a respira, a distancia em boreste dentro do mesmo andar e literalmente
+	# constante (a fase do boreste e do andar) — o que a sonda perde e o par identificado pela
+	# posicao, nao a fresta.
 	var vizinho := _vizinho_de_boreste(jogo.esquadra, bloco)
 	var luz_vao := -1.0
 	if not vizinho.is_empty():
@@ -461,22 +505,28 @@ func _initialize() -> void:
 	_assert("a fresta entre dois blocos vizinhos e escura: a muralha tem emenda lida",
 		not vizinho.is_empty() and luz_vao >= 0.0 \
 			and com_massa["mediana_casa"] - luz_vao >= CONTRASTE_MINIMO,
-		"vão entre blocos %.3f contra casa mediana %.3f (ganho %.3f, piso %.2f), vizinho a %.1f u" % [
-			luz_vao, com_massa["mediana_casa"], com_massa["mediana_casa"] - luz_vao,
-			CONTRASTE_MINIMO, Esquadra.PASSO_BLOCO_X])
+			"vao entre blocos %.3f contra casa mediana %.3f (ganho %.3f, piso %.2f), vizinho lido a " % [
+				luz_vao, com_massa["mediana_casa"], com_massa["mediana_casa"] - luz_vao,
+				CONTRASTE_MINIMO]
+				+ "%.2f u de centro a centro (posto nominal %.2f u)" % [
+					(bloco["pos"] as Vector3).distance_to(vizinho["pos"] as Vector3),
+					Esquadra.PASSO_BLOCO_X])
 	_assert("a roda amplia a silhueta do bloco, nao só a moldura",
 			boca_largo > img_boca_min(largo) and boca_fechado > boca_largo * 2.5
 				and boca_fechado > float(fechado.get_width()) * BOCA_FECHADO_MIN,
-			"boca do bloco %.0f px a %0.0f graus e %.0f px a %0.0f graus, quadro de %dx%d" % [
+			"boca do bloco %.0f px a %0.0f graus e %.0f px a %0.0f graus, quadro de %dx%d, proa do " % [
 				boca_largo, graus_largo, boca_fechado, graus_fechado,
-				largo.get_width(), largo.get_height()])
+				largo.get_width(), largo.get_height()]
+				+ "bloco medida %.1f graus (a linha manda %.0f)" % [
+					rad_to_deg(float(bloco["rumo"])), rad_to_deg(Esquadra.rumo_da_linha("aliado"))])
 
 	# ── 3. a salva desenhada: o quadro em que a muralha inteira atira ──────────────────────────
 	# O portão tem de ser preparado, não assumido. No primeiro quadro as fachadas estão a 130 u uma
 	# da outra e o alcance de 73 u não alcança nada: armar salva em campo vazio devolve zero pares e
 	# um quadro escuro, e escuro por falta de alvo é indistinguível de escuro por traço invisível.
 	# Então a sonda remonta a esquadra, anda as muralhas com `passo` (que marcha e não atira, não
-	# gasta um casco) até o vão caber no alcance, arma a salva à mão e congela o voo em 45%.
+	# gasta um casco) até o vão caber no alcance, arma a salva à mão e congela o pulso em 0,45 s — a
+	# janela em que a onda já acendeu as vinte e quatro casas e o primeiro lance ainda não morreu.
 	jogo._remontar_esquadras()
 	var andados := 0
 	while andados < MARCHA_MAXIMA:
@@ -503,7 +553,11 @@ func _initialize() -> void:
 	await _frames(4)
 	var com_tracos := get_root().get_texture().get_image()
 	_salvar(com_tracos, "salva_voando")
-	var lances := int(jogo.esquadra.pares_da_ultima_salva.size())
+	# Congelar o pulso no meio da janela viva (0,45 s, entre a última casa acender e o primeiro lance
+	# morrer) é o que põe os 5 760 canos no ar de uma vez. `lances` nao e mais o tamanho da fila: a
+	# fila agora e quatro casas por bloco cobrado, e a sonda le as duas contas separadas.
+	var blocos_cobrados := int(jogo.esquadra.pares_da_ultima_salva.size())
+	var tracos_armados := int(jogo._tracos_voando.size())
 	var caros := await _medir_quadros(QUADROS_FPS)
 	jogo.massa_tracos.visible = false
 	await _frames(3)
@@ -515,9 +569,11 @@ func _initialize() -> void:
 	var custo_primitivas := float(caros["primitivas"]) - float(baratos["primitivas"])
 	var custo_desenhos_traco := float(caros["desenhos"]) - float(baratos["desenhos"])
 	_assert("a marcha chegou ao alcance: sem par no ledger não ha o que desenhar",
-		lances >= 200,
-		"%d lances no ledger depois de %d s de marcha, vão das fachadas %.1f u contra alcance %.1f u"
-		% [lances, andados, vao_final, Esquadra.ALCANCE_DE_BLOCO])
+		blocos_cobrados >= 200 and tracos_armados == blocos_cobrados * Esquadra.CASAS,
+			"%d blocos cobraram e %d tracos armados (%d casas por bloco) depois de %d s de marcha, " % [
+				blocos_cobrados, tracos_armados, Esquadra.CASAS, andados] \
+				+ "vao das fachadas %.1f u contra alcance %.1f u" % [
+					vao_final, Esquadra.ALCANCE_DE_BLOCO])
 	_assert("apagar o nó dos traços apaga pixels: a salva está desenhada, nao apenas contada",
 		float(fogo["colunas"]) >= float(fogo["total"]) * TRACO_COLUNAS_MIN
 			and fogo["pico"] >= PISTA_MINIMA,
@@ -526,18 +582,18 @@ func _initialize() -> void:
 			fogo["pico"], PISTA_MINIMA])
 	_assert("o fogo varre a largura do visor, nao so o meio do campo",
 		fogo["varredura"] >= TRACO_VARREDURA_MIN,
-		"aceso de x=%d a x=%d num quadro de %d px (%.0f%% da largura), %d lances no ledger"
-		% [fogo["primeira"], fogo["ultima"], com_tracos.get_width(),
-			100.0 * float(fogo["varredura"]), lances])
+			"aceso de x=%d a x=%d num quadro de %d px (%.0f%% da largura), %d tracos no ar" % [
+				fogo["primeira"], fogo["ultima"], com_tracos.get_width(),
+				100.0 * float(fogo["varredura"]), tracos_armados])
 	_assert("o nó dos traços é submetido ao renderizador com a salva no ar",
 		custo_primitivas >= TRACO_PRIM_MIN,
-		("%.0f primitivas por quadro com a salva no ar contra %.0f apagada (%+.0f por quadro, "
-		+ "piso %.0f = 240 caixas de 12 triângulos)") % [caros["primitivas"],
-			baratos["primitivas"], custo_primitivas, TRACO_PRIM_MIN])
-	_assert("o preco de duzentos e quarentas lances no ar e uma passada de desenho",
+			("%.0f primitivas por quadro com a salva no ar contra %.0f apagada (%+.0f por quadro, "
+			+ "piso %.0f = 5 760 caixas de 12 triangulos)") % [caros["primitivas"],
+				baratos["primitivas"], custo_primitivas, TRACO_PRIM_MIN])
+	_assert("o preco de cinco mil setecentos e sessenta lances no ar e UMA passada de desenho",
 		custo_desenhos_traco >= 0.0 and custo_desenhos_traco <= TRACOS_DESENHOS_TETO,
-		("%.1f chamadas por quadro com a salva no ar contra %.1f com ela apagada; um nó por lance "
-		+ "custaria 240") % [caros["desenhos"], baratos["desenhos"]])
+			("%.1f chamadas por quadro com a salva no ar contra %.1f com ela apagada; um no por "
+			+ "lance cobraria 5 760") % [caros["desenhos"], baratos["desenhos"]])
 
 	print("SONDA-MASSA-VISIVEL: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for nota in notes:

@@ -195,6 +195,84 @@ O custo real, escrito: **doze sondas** passaram a declarar na montagem um tabule
 20,0 mordia nela em vez de chegar a `hp`. A sonda da lei, `tools/probes/escudo.gd`, fecha com
 **55 conferências** e `quebras=0`.
 
+## 4.5 Fatia 3.5 — o lance por casco desenhado e a muralha que respira
+
+Fatiado à parte, antes da 4, porque o pedido veio do olho e não do roteiro: «cada nave do bloco tem
+que atirar também, se o bloco tem 10 naves deve sair cada tiro de sua respectiva nave, em forma de
+onda, a primeira atira depois a seguinte, tudo isso de forma rápida equivalendo a uma leva», e
+ainda «fazer as naves se moverem durante a batalha». As duas frases viram duas leis, e a segunda
+arrastou uma terceira que ninguém pediu.
+
+**Lei 1 — um cano por casa desenhada, em onda.** O `MultiMesh` dos traços passou de 240 para
+`TRACOS_DA_MASSA` = **5 760** instâncias (`INSTANCIAS_POR_LADO × 2`), e o atraso de cada lance é
+`casa × PASSO_DA_ONDA` com `PASSO_DA_ONDA` = **0,012 s**: a onda fecha em **0,276 s** e somada aos
+**0,55 s** de voo dá `TRACO_PULSO_SEG` = **0,826 s** de pulso dentro dos 1,6 s da cadência — leva,
+não chuva, e o portão é o pulso morrer antes do próximo armar. **A conta não mudou**: o ledger
+continua cobrando um lance por bloco (`DANO_DE_BLOCO` 2,2, 240 blocos, mesma inércia de `rng` e
+`visual_rng`); o que mudou é o desenho, que passou a ter um cano por casa. Prova lida: **5 760
+traços armados para 5 760 casas vivas, contra os 240 blocos que cobraram na salva**, e o espelho
+pintado contra o espelho da conta fecham no **mesmo selo de 385 528 caracteres** — com o jitter de
+boca ainda função pura de `(id, salva, casa)`, porque sorteio aqui comeria o `visual_rng` dos doze
+cascos. Concentrar pelo clique converge o desenho junto: **4 072 traços aliados sobre 1 bloco
+visado** (16 destinos diferentes, porque nem todo bloco alcança o alvo único) contra **5 752 sobre
+30 blocos** com a ordem solta. O preço continua sendo **um** nó: **293 760 escritas** em cinquenta
+quadros mais a armação, que é `51 × 5 760` exato, contra os 5 760 nós que um nó por lance cobraria.
+
+**Lei 2 — a muralha respira.** `DERIVA_X` **0,6 u** em boreste com a fase do **andar**, `DERIVA_Y`
+**0,45 u** em altura com a fase do **esquadrão**, **zero em z**, ciclo `DERIVA_CICLO` = **9,0 s**.
+Lido no meio de seis esquadrões defasados de 60°: pico **0,60 u de 0,6** em boreste, **0,46 u de
+0,5** em altura, **0,000000 u** de componente em z nos seis vetores. Duas cláusulas pagas: quem
+recebe destino da ponte **não respira** (para a **0,000 u** do ponto, dentro da boca de pouso de
+0,02 u mais a folga de 0,35 u), e a respira **não fecha o ar entre cascos** (par mais junto
+**2,48 u** sobre o piso de 2,40, **0 sobreposições** no ciclo). O custo é de escrita, e por isso tem
+teto: **23 160 escritas hostis** em duzentos quadros contra **1 697,8 u andados ÷ 0,01 + 120**.
+
+**Lei 3 — a proa fica com a linha, não com o resíduo.** Esta não foi pedida; foi a quebra que a lei
+2 trouxe. O bloco perseguia o posto pela lei de voo, o posto desliza **de lado**, e o resíduo de
+perseguição aponta para través: girar para ele deitava a muralha. No pixel, a boca do bloco caiu de
+**630 px para 236 px** no mesmo grau de lente — a lei da roda reprovaria por um cláusula de rumo que
+ninguém escreveu. A saída foi separar as duas doutrinas que `main.gd` já separa nos doze cascos
+(`_pilotar` obedece destino absoluto, `_empuxar` guarda atitude comandada): `Voo.marchar` ganhou
+`proa_comandada` (padrão `NAN`, todo chamador antigo intacto) e `Esquadra.rumo_da_linha(lado)` virou
+a atitude de custódia. A família 13b cobra os dois lados e imprime o contrafactual no mesmo quadro:
+maior desvio de proa **0,00 graus** aliado e **0,00 hostil** contra teto de **0,48 graus** (um
+degrau do leme em um quadro), e **o curso que o resíduo mandaria guardar é 90,0 graus**.
+
+**O que a fatia ensinou sobre instrumento, não sobre jogo.** Três das quatro quebras desta rodada
+eram de sonda, e as três foram consertadas declarando precondition, nunca afrouxando régua:
+
+1. **Congelar congela o desenho.** A seção de vão da `massa_visivel` congelou a batalha com 5 760
+   canos no meio do voo, estacionados exatamente sobre a fresta: o vão leu **1,000** de luminância e
+   a lei da emenda lida ia reprovar o desenho da salva em vez de reprovar a muralha. A seção agora
+   apaga o nó dos traços durante a medição de silhueta, e a seção da salva rearma o nó.
+2. **A rampa é cláusula da lei de pintura.** Com o `rumo` parado de girar, o «pleno todo quadro» que
+   a família 8 cobrava deixou de existir: os primeiros **120 quadros** andam menos dos **0,01 u** da
+   porta de sujeira, e isso é a física funcionando. A asserção passou a contar a rampa
+   (`MARCHA_DE_BLOCO / aceleracao × 60`), imprime os parcos que caem dentro dela com o deslocamento
+   de cada um e continua cobrando **0 parcos depois**: primeiro quadro pleno **4**, **4 parcos
+   dentro da rampa, 0 depois**, **46 320 escritas** no total.
+3. **O sujeito da régua tem de estar desenhado.** Escolhido só pelo maior z, o bloco medido pela
+   sonda de janela caiu num dos **18 de 120** que a seção de batalha já tinha mordido — e casa sem
+   navio é pintada com base nula sobre o centro do bloco, ou seja vazio. A mediana leu **0,036** de
+   céu em vinte e uma de vinte e quatro amostras. O instrumento agora escolhe o bloco mais **lotado**
+   e amarra a amostragem às casas que têm silhueta: **48 pares de 24 casas no ar, 102 blocos
+   lotados na muralha**, e a régua voltou a ler **casa 0,795 contra vão 0,036 em 47 de 48 pares** —
+   os mesmos dígitos que o README jurava antes da fatia, o que é a prova de que a lei não mudou.
+
+Uma quarta foi pega fora das asserções, relendo o PNG: o `05g_chapa_de_fora` do `fotograma` estaciona
+o casco em z −190 para escapar da parede da ponte, e esse z hoje é **dentro** do campo da massa. O
+quadro acordou com um bloco hostil atravessado na moldura e a média subiu de **0,0133 para 0,2297** —
+verde pago pelo brilho de outra pessoa. O posto de fotografia saiu do campo pelo y.
+
+**Fechamento.** Bateria completa em **30 sondas com `quebras=0` e zero linha de erro**, e as três
+sondas de olho em janela real também: `massa_visivel` **16 conferências** (49,8 fps com a massa
+contra 50,7 sem, mediana de 3 pares A/B **+0,04 ms** contra teto de 8,0; **738 318 primitivas**
+contra 116 236; **1,9 chamadas** para os 240 blocos; boca **105 px a 78° / 694 px a 14°**; salva
+acendendo **351 de 720 colunas** e varrendo **x 114 a 1336 de 1440 px**), `fotograma` **95** e
+`comando_olho` **13**. A sonda da lei, `tools/probes/esquadra.gd`, passou de 72 para **89
+conferências**. Aprovação de timing e de leitura do quadro continua sendo do comandante, não da
+sonda.
+
 ## 5. Fatia 4 — fogo por coluna, fogo amigo, alcance 3D
 
 Escolhido: só o bloco mais adiantado de cada coluna dispara, os demais ficam obstruídos, e o que

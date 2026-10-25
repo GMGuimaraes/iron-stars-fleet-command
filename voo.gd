@@ -130,10 +130,17 @@ static func vetor_ate(pos: Vector3, destino: Vector3, ficha: Dictionary, teto: f
 ## Perseguição de posto pela porta da lei: resolve o comando, gira para o curso, integra, e pousa em
 ## cima do destino quando entra na boca. Devolve o estado inteiro (`pos`, `vel`, `rumo`, `giro`) para
 ## quem precisa carregar os quatro no bloco ou no casco.
+##
+## `proa_comandada` é o curso que o leme deve guardar em vez do curso até o destino, e o padrão NAN
+## deixa todos os chamadores antigos onde estavam. Serve a um caso só: um posto que anda devagar de
+## lado faz o resíduo de perseguição apontar para través, e quem gira para ele larga a fachada da
+## linha — a mesma distinção que `main.gd` já faz entre `_pilotar` (destino absoluto) e `_empuxar`
+## (atitude comandada).
 static func marchar(pos: Vector3, vel: Vector3, rumo: float, destino: Vector3, delta: float,
-		teto: float, ficha: Dictionary) -> Dictionary:
+		teto: float, ficha: Dictionary, proa_comandada := NAN) -> Dictionary:
 	var vetor := vetor_ate(pos, destino, ficha, teto)
-	var estado := quadro(pos, vel, rumo, vetor, rumo_de(vetor), delta, teto, ficha)
+	var curso := proa_comandada if not is_nan(proa_comandada) else rumo_de(vetor)
+	var estado := quadro(pos, vel, rumo, vetor, curso, delta, teto, ficha)
 	if (estado["pos"] as Vector3).distance_to(destino) <= CAPTURA_DE_POUSO:
 		estado["pos"] = destino
 		estado["vel"] = Vector3.ZERO
