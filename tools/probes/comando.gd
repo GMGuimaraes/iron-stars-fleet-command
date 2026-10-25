@@ -61,7 +61,11 @@ extends SceneTree
 ##    sonda de cabeça fria pega isso porque em janela o enquadramento errado parece apenas "o mapa".
 ##    A troca por TAB é UM `make_current()`: o do olho que entra já tira o outro. Em TATICO a roda iça
 ##    a ALTURA e o `campo_zoom` não se mexe; de volta à PONTE a roda fecha a FOV contratada
-##    (78° → 14°) e a altura içada fica onde estava. A lente tática é fixa por construção: os dois
+##    (78° → 14°) e a altura içada fica onde estava. A roda tem porta e ela é do cursor, não do modo:
+##    sobre a moldura do painel ela pertence à lista e nenhum dos dois eixos se move, e SHIFT ou CTRL
+##    chamam o olho de volta de qualquer lugar — cobrado nos dois modos, com o ponto injetado lido do
+##    `Rect2` do próprio painel porque o canto (0,0) por defeito ficava de fora dele por sorte.
+##    A lente tática é fixa por construção: os dois
 ##    limites de altura mudam o `position`, nunca o `fov`. O arrasto anda CONTRA o cursor na conta exata
 ##    de `_unidades_por_pixel_tatico()` e nunca anda em `y`, e bate nos quatro cantos da caixa do olho
 ##    para o comandante nunca perder a esquadra por ter arrastado demais. A dobradiça de seis pixels
@@ -633,6 +637,11 @@ func _initialize() -> void:
 	var roda := InputEventMouseButton.new()
 	roda.button_index = MOUSE_BUTTON_WHEEL_UP
 	roda.pressed = true
+	# A roda agora tem geografia: sem modificador ela só manda no olho fora da moldura do painel.
+	# Injetar o gesto no canto (0,0) por defeito faria esta família passar por acidente, então o
+	# ponto vem lido do retângulo real do nó, do lado de fora dele.
+	var caixa_painel: Rect2 = j.painel.get_global_rect()
+	roda.global_position = Vector2(caixa_painel.end.x + 180.0, caixa_painel.position.y + 30.0)
 	for i in range(10):
 		j._input(roda)
 	j._trocar_modo_camera()
@@ -732,11 +741,47 @@ func _initialize() -> void:
 	var roda_baixa := InputEventMouseButton.new()
 	roda_baixa.button_index = MOUSE_BUTTON_WHEEL_DOWN
 	roda_baixa.pressed = true
+	roda_baixa.global_position = roda.global_position
 	for i in range(60):
 		o._input(roda_baixa)
 	_assert("a roda encosta nos dois limites de altura e nao passa",
 		absf(float(o.tatico_altura) - TATICO_ALTURA_MIN) < 1e-6,
 		"altura %.0f (piso %.0f)" % [float(o.tatico_altura), TATICO_ALTURA_MIN])
+	# A porta do painel vale para os dois modos, e aqui ela é cobrada no sentido contrário ao do zoom:
+	# rolada dentro da moldura, a roda do TATICO não iça o olho nenhum. Os dois positivos seguintes
+	# são o atalho pedido pelo comandante — SHIFT iça e CTRL desce de qualquer lugar, inclusive por
+	# cima da lista — e o CTRL também devolve o olho ao piso, para as asserções seguintes medirem a
+	# mesma altura de antes do desvio.
+	var painel_do_olho: Rect2 = o.painel.get_global_rect()
+	var dentro_do_painel := painel_do_olho.position + painel_do_olho.size * 0.5
+	var roda_painel := InputEventMouseButton.new()
+	roda_painel.pressed = true
+	roda_painel.button_index = MOUSE_BUTTON_WHEEL_UP
+	roda_painel.global_position = dentro_do_painel
+	var altura_na_moldura := float(o.tatico_altura)
+	for i in range(20):
+		o._input(roda_painel)
+	_assert("sobre o painel a roda do TATICO também é da lista: o olho não iça",
+		absf(float(o.tatico_altura) - altura_na_moldura) < 1e-9 \
+			and painel_do_olho.has_point(dentro_do_painel) \
+			and not painel_do_olho.has_point(roda.global_position),
+		"pisando o piso, 20 voltas dentro da moldura x %.0f-%.0f y %.0f-%.0f devolveram altura %.0f" % [
+			painel_do_olho.position.x, painel_do_olho.end.x, painel_do_olho.position.y,
+			painel_do_olho.end.y, float(o.tatico_altura)])
+	roda_painel.shift_pressed = true
+	for i in range(20):
+		o._input(roda_painel)
+	var altura_shift := float(o.tatico_altura)
+	roda_painel.shift_pressed = false
+	roda_painel.ctrl_pressed = true
+	roda_painel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	for i in range(60):
+		o._input(roda_painel)
+	_assert("SHIFT+roda sobre o painel iça o olho, CTRL+roda desce de volta ao piso",
+		altura_shift > TATICO_ALTURA_MAX - 1e-6 \
+			and absf(float(o.tatico_altura) - TATICO_ALTURA_MIN) < 1e-6,
+		"com SHIFT dentro da moldura -> %.0f (teto %.0f); com CTRL e 60 voltas -> %.0f (piso %.0f)" % [
+			altura_shift, TATICO_ALTURA_MAX, float(o.tatico_altura), TATICO_ALTURA_MIN])
 	var altura_presa := float(o.tatico_altura)
 	o._trocar_modo_camera()
 	_assert("o segundo TAB devolve o olho para a sala", o.campo_modo == "PONTE" \

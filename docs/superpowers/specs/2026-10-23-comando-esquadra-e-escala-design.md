@@ -349,6 +349,38 @@ espaço vazio, só as estrelas. A sonda da lei, `tools/probes/esquadra.gd`, pass
 conferências**, com a família 14 nova. Aprovação de timing, de leitura do quadro e do equilíbrio do
 fogo continua sendo do comandante, não da sonda.
 
+## 5.5 A roda do mouse tem duas portas (correção pedida a olho, não fatia nova)
+
+Defeito relatado pelo comandante: «a roda do mouse está dando zoom quando estou mexendo nos
+comandos». A causa é a escolha feita na fatia 1: `_input` **não consome** a roda, para os
+`ScrollContainer` do painel continuarem rolando. Consequência medida — os dois canais escrevem
+no mesmo gesto, e quem içava a lente era o comandante que só queria ver o grupo de manobra.
+
+Escolhido pelo jogador: **os dois juntos**. Fora da moldura do painel a roda é do olho, como
+sempre foi; sobre a moldura a roda é da lista e `campo_zoom` e a altitude ficam onde estavam;
+**SHIFT+roda ou CTRL+roda** chamam o olho de volta de qualquer lugar. O modificador destrava o
+gesto, a direção continua sendo da roda — «aproximar» e «afastar» são dois sentidos do mesmo
+atalho, não dois botões, que é por isso o pedido original («shift para zoom, control para
+zoom-out») virou um só par. O escopo do efeito não se mexe: em **PONTE** a roda fecha a FOV
+contratada (`campo_zoom` de 0 a 1 → 78° a 14°), em **TATICO** ela move a **altitude** do olho e
+nunca o `campo_zoom`.
+
+A porta é geografia, não modo: `painel` passou a ser guardado no nó de montagem e
+`_roda_e_do_olho(event)` decide por `get_global_rect().has_point(event.global_position)`, com o
+modificador vencendo a geografia. Leis cobradas por sonda, com a moldura **lida do próprio nó**
+e não escrita à mão — painel em **x 24–420, y 94–714**, o ponto de dentro **(222, 404)** e o de
+fora **(600, 124)**: roda simples fora leva o zoom de 0,40 ao **1,00** (teto), roda simples por
+cima do painel não move **nada** (0,40 → 0,40), SHIFT com o cursor em cima do painel fecha a
+lente em 1,00 e CTRL devolve ao 0,00. Em TATICO, a mesma trinca sobre o painel: altitude no
+**piso 24,0 u**, **teto 320,0 u** com SHIFT, **piso 24,0 u** outra vez com CTRL.
+
+A armadilha desta correção é de instrumento e custa registrar: as duas sondas injetavam
+`InputEventMouseButton` com `global_position` **default (0,0)**, que cai **fora** da moldura do
+painel. Sob a lei nova elas teriam continuado verdes provando o caso velho sem querer. Hoje o
+ponto de cada teste é derivado do `Rect2` do painel e a asserção confere o retângulo antes de
+confiar na medida. Contas da rodada: `tools/probes/esquadra.gd` **100** conferências (era 97) e
+`tools/probes/comando.gd` **66** (era 63), cada uma com as três portas cobradas.
+
 ## 6. Fatia 5 — doutrina e capitânia por esquadrão
 
 Escolhido: almirante (jogador) → general → capitão de esquadrão. Sem ordem do jogador, cada

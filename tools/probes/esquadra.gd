@@ -60,7 +60,10 @@ extends SceneTree
 ##    fileira, e ele vem da malha, nunca do cabeçalho, `use_colors` +
 ##    `vertex_color_use_as_albedo` ligados (esquecer um dos dois é a massa inteira cinza), caixa de
 ##    desenho autorgada cobrindo o campo, a roda levando a FOV de 78° a 14° com aperto nas duas
-##    pontas, e o letreiro da massa sendo `Label` — os 35 botões de `menu.gd` não se mexem.
+##    pontas FORA da moldura do painel, a mesma roda não mudando nada sobre ela sem modificador, e
+##    SHIFT/CTRL trazendo o olho de volta de qualquer lugar. Os três casos são a lei da porta (ver
+##    `_roda_e_do_olho` em `main.gd`), e o letreiro da massa sendo `Label` — os 35 botões de
+##    `menu.gd` não se mexem.
 ## 10) A LARGADA TEM CAMPO E ELE É CRUZADO MARCHANDO. As duas fachadas nascem a 154,0 u uma da outra e
 ##     fecham no `DISTANCIA_DE_CONTATO` (40 u) sob a lei da massa: o bloco arranca a `a × delta²`
 ##     (0,00084 u no quadro um), anda meio teto no quadro 60 e teto cheio no quadro 120, e o maior
@@ -1239,7 +1242,7 @@ func _initialize() -> void:
 		true, "%d ms nos %d quadros, %d casas/ms; %d escritas de bloco contra %d de teto" % [
 			int(custo_ms), QUADROS, int(casas_ms), escritas, QUADROS * 2 * BLOCOS_POR_LADO])
 
-	# ── 9. a ponte mostra a massa e a roda da zoom ──────────────────────────────────────────
+	# ── 9. a ponte mostra a massa, e a roda tem duas portas ────────────────────────────────────
 	var no_a: MultiMeshInstance3D = jogo.massa_aliada
 	var no_h: MultiMeshInstance3D = jogo.massa_hostil
 	var na_cena := 0
@@ -1300,6 +1303,13 @@ func _initialize() -> void:
 	var roda := InputEventMouseButton.new()
 	roda.button_index = MOUSE_BUTTON_WHEEL_UP
 	roda.pressed = true
+	# A posição da roda é lida da moldura do painel, não chutada: a lei nova é de geografia, e uma
+	# sonda que injeta o gesto no canto (0,0) por defeito passa por acaso — o defeito dela é exatamente
+	# o lugar onde o painel não estava. CENTRO e FOLGA saem do retângulo real do nó.
+	var caixa_painel: Rect2 = jogo.painel.get_global_rect()
+	var dentro_do_painel := caixa_painel.position + caixa_painel.size * 0.5
+	var fora_do_painel := Vector2(caixa_painel.end.x + 180.0, caixa_painel.position.y + 30.0)
+	roda.global_position = fora_do_painel
 	for i in range(20):
 		jogo._input(roda)
 	var aperto_topo := float(jogo.campo_zoom)
@@ -1311,14 +1321,51 @@ func _initialize() -> void:
 	clique.button_index = MOUSE_BUTTON_LEFT
 	clique.pressed = true
 	jogo._input(clique)
+	# ── a porta do painel, pedida pelo comandante em carne viva ────────────────────────────────
+	# Rodar a lista e ver a ponte fechar a lente por cima do dedo é o defeito que esta família cobra.
+	# O caso negativo é o que prova a porta: sem modificador, SOBRE a moldura, nem `campo_zoom` se
+	# move. Os dois positivos seguintes são o atalho pedido — SHIFT e CTRL vencem a geografia, e a
+	# direção continua sendo a da roda (SHIFT sobe, CTRL desce), porque "dois botões" sem sentido
+	# próprio seria um terceiro gesto para a mesma lente.
+	jogo.campo_zoom = 0.4
+	var roda_painel := InputEventMouseButton.new()
+	roda_painel.pressed = true
+	roda_painel.global_position = dentro_do_painel
+	roda_painel.button_index = MOUSE_BUTTON_WHEEL_UP
+	for i in range(20):
+		jogo._input(roda_painel)
+	var zoom_sobre_painel := float(jogo.campo_zoom)
+	roda_painel.shift_pressed = true
+	for i in range(20):
+		jogo._input(roda_painel)
+	var zoom_shift := float(jogo.campo_zoom)
+	roda_painel.shift_pressed = false
+	roda_painel.ctrl_pressed = true
+	roda_painel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	for i in range(40):
+		jogo._input(roda_painel)
+	var zoom_ctrl := float(jogo.campo_zoom)
 	_assert("a roda leva a FOV da ponte de setenta e oito graus a quatorze",
 		fov_larga > PONTE_FOV_LARGO - 0.01 and fov_fechada < PONTE_FOV_FECHADO + 0.01,
 		"zoom 0 -> %.1f, zoom 1 -> %.1f, zoom 0,5 -> %.1f" % [fov_larga, fov_fechada, fov_meia])
-	_assert("a roda aperta nas duas pontas e so a roda manda no zoom",
+	_assert("a roda fora do painel aperta nas duas pontas e so ela manda no zoom",
 		is_equal_approx(aperto_topo, 1.0) and is_equal_approx(aperto_fundo, 0.0) \
-			and is_equal_approx(float(jogo.campo_zoom), 0.0),
-		"20 voltas para cima -> %.2f, 40 para baixo -> %.2f, o clique não mexe no zoom da ponte (%.2f)" % [
-			aperto_topo, aperto_fundo, jogo.campo_zoom])
+			and is_equal_approx(float(jogo.campo_zoom), 0.0) \
+			and caixa_painel.has_point(dentro_do_painel) \
+			and not caixa_painel.has_point(fora_do_painel),
+		"20 voltas para cima -> %.2f, 40 para baixo -> %.2f, o clique não mexe no zoom da ponte (%.2f), painel em x %.0f-%.0f y %.0f-%.0f com os dois pontos testados em (%.0f,%.0f) e (%.0f,%.0f)" % [
+			aperto_topo, aperto_fundo, jogo.campo_zoom, caixa_painel.position.x,
+			caixa_painel.end.x, caixa_painel.position.y, caixa_painel.end.y,
+			dentro_do_painel.x, dentro_do_painel.y, fora_do_painel.x, fora_do_painel.y])
+	_assert("sobre o painel a roda sem modificador é da lista: o zoom fica onde estava",
+		is_equal_approx(zoom_sobre_painel, 0.4),
+		"20 voltas para cima dentro da moldura devolveram %.2f (largada em 0,40)" % zoom_sobre_painel)
+	_assert("SHIFT+roda sobre o painel vence a geografia e aproxima do mesmo jeito",
+		is_equal_approx(zoom_shift, 1.0),
+		"de 0,40 com SHIFT pressionado -> %.2f" % zoom_shift)
+	_assert("CTRL+roda sobre o painel vence a geografia e afasta, na direção da roda",
+		is_equal_approx(zoom_ctrl, 0.0),
+		"do teto com CTRL pressionado e 40 voltas para baixo -> %.2f" % zoom_ctrl)
 	_assert("o letreiro da massa e um Label: os 35 botoes de menu.gd nao se mexem",
 		jogo.massa_label is Label and String(jogo.massa_label.text).contains("MASSA"),
 		"%s" % jogo.massa_label.text)

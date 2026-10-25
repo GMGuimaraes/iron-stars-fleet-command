@@ -813,6 +813,9 @@ var grupo_aberto := "FORMAÇÕES"
 ## O corpo do painel mora num `ScrollContainer`: abrir um grupo abaixo da dobra sem rolar até ele
 ## deixaria o comandante clicando num cabeçalho que não mostra o que abriu.
 var painel_scroll: ScrollContainer
+## A moldura do painel, guardada só para a roda saber onde ela pisa: sobre esta caixa o gesto é da
+## lista, fora dela é do olho. Ver `_roda_e_do_olho`.
+var painel: PanelContainer
 ## Leitura da IA hostil, atualizada a cada salva: postura da frota, alvo concentrado e a
 ## frase que a ponte devolve ao comandante. Com `hostile_posture == "AVANÇAR"` a frota
 ## hostil se comporta como antes deste recurso — nenhuma fórmula paralela, só a decisão
@@ -898,21 +901,30 @@ func _input(event: InputEvent) -> void:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		elif event.keycode == KEY_TAB:
 			_trocar_modo_camera()
-	# Zoom de campo na roda. É `_input` e não `_unhandled_input` de propósito: a roda também rola
-	# as listas do painel, e o zoom não quer o gesto exclusivo — ele só lê, nunca toma o evento.
-	# O escopo é do modo: em TATICO a roda içe o olho, e `campo_zoom` não é tocado por ela — a
-	# ponte continua com a FOV contratada mesmo depois de o comandante voar para cima.
+	# A roda tem duas portas, e a dona do gesto é decidida pelo lugar do cursor, não pelo modo: sobre
+	# o painel a roda é da lista — o comandante rolando grupos não quer a ponte fechando a lente em
+	# cima dele — e fora dela a roda é do olho. SHIFT ou CTRL chamam o olho de volta de qualquer
+	# lugar, que é o atalho pedido por quem quer içar sem tirar a mão do painel. O escopo do gesto
+	# continua sendo do modo: em TATICO a roda move a ALTURA do olho e nunca o `campo_zoom`; em PONTE
+	# ela fecha a FOV contratada da sala.
 	elif event is InputEventMouseButton and event.pressed:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			if campo_modo == "TATICO":
-				_mover_altura_tatica(TATICO_ALTURA_PASSO)
-			else:
-				campo_zoom = clampf(campo_zoom + 0.1, 0.0, 1.0)
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			if campo_modo == "TATICO":
-				_mover_altura_tatica(1.0 / TATICO_ALTURA_PASSO)
-			else:
-				campo_zoom = clampf(campo_zoom - 0.1, 0.0, 1.0)
+		var botoes := event as InputEventMouseButton
+		if botoes.button_index == MOUSE_BUTTON_WHEEL_UP or botoes.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			if _roda_e_do_olho(botoes):
+				var sobe := botoes.button_index == MOUSE_BUTTON_WHEEL_UP
+				if campo_modo == "TATICO":
+					_mover_altura_tatica(TATICO_ALTURA_PASSO if sobe else 1.0 / TATICO_ALTURA_PASSO)
+				else:
+					campo_zoom = clampf(campo_zoom + (0.1 if sobe else -0.1), 0.0, 1.0)
+
+## A porta da roda. Um modificador vence a geografia — com SHIFT ou CTRL o gesto é sempre do olho, e
+## a direção continua sendo a da roda, porque "aproximar" e "afastar" são dois sentidos do mesmo
+## atalho, não dois botões. Sem modificador, quem manda é o cursor: dentro da moldura do painel a
+## roda pertence ao `ScrollContainer`, e `campo_zoom` e a altitude ficam onde estavam.
+func _roda_e_do_olho(event: InputEventMouseButton) -> bool:
+	if event.shift_pressed or event.ctrl_pressed:
+		return true
+	return not (is_instance_valid(painel) and painel.get_global_rect().has_point(event.global_position))
 
 ## O comando por clique mora em `_unhandled_input`, não em `_input`: um botão do painel é dono do
 ## próprio gesto, e uma ordem escrita por cima da interface seria o comandante movendo a esquadra
@@ -2624,9 +2636,11 @@ func _build_ui() -> void:
 	speed_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_row.add_child(speed_label)
 	# O zoom de campo mora no letreiro porque mora na roda do mouse: sem aviso, o comandante rolaria
-	# a roda e concluiria que a ponte ignora o gesto.
+	# a roda e concluiria que a ponte ignora o gesto. O aviso é da porta, não só do gesto — a roda
+	# mudou de dono sobre o painel, e um letreiro que diz "roda = zoom" mentiria para quem está
+	# rolando a lista.
 	massa_label = Label.new()
-	massa_label.text = "MASSA: 120/120 blocos aliados • 120/120 hostis • roda do mouse = zoom • [TAB] = olho tático, clique = ordem"
+	massa_label.text = "MASSA: 120/120 blocos aliados • 120/120 hostis • roda fora do painel = zoom, SHIFT/CTRL+roda de qualquer lugar • [TAB] = olho tático, clique = ordem"
 	massa_label.add_theme_font_size_override("font_size", 12)
 	top_row.add_child(massa_label)
 	pause_button = _add_button(top_row, "PAUSAR [ESPAÇO]", _toggle_pause)
@@ -2637,6 +2651,7 @@ func _build_ui() -> void:
 	panel.size = Vector2(396, 620)
 	panel.add_theme_stylebox_override("panel", _panel_style(Color(0.016, 0.024, 0.04, 0.9), Color(0.1, 0.42, 0.62)))
 	layer.add_child(panel)
+	painel = panel
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(372, 600)
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
