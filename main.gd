@@ -2004,7 +2004,7 @@ func _executar_ordem(tocada: Dictionary, com_turno: bool) -> void:
 					_dizer("BLOCO %d // %d navios no ar, seleção de um; SHIFT+clique pega o esquadrão inteiro." % [id, int(bloco["navios"])])
 		else:
 			esquadra.mandar_fogo(tocada["pos"] as Vector3)
-			_dizer("FOGO CONCENTRADO // bloco hostil %d comandado: todo bloco aliado que o alcança larga o próprio vizinho e atira nele. SOLTAR FOGO no painel devolve a linha." % int(tocada["id"]))
+			_dizer("FOGO CONCENTRADO // bloco hostil %d comandado: todo bloco aliado que o alcança larga o próprio vizinho e converge na casa da frente desta muralha — é casco a casco, sem disco de área. SOLTAR FOGO no painel devolve a linha." % int(tocada["id"]))
 	elif tipo == "CASCO":
 		esquadra.limpar_selecao()
 		var i := int(tocada["indice"])

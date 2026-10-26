@@ -299,6 +299,93 @@ func _initialize() -> void:
 		pendentes_c3 == 0, "%d recados pendentes no fim do pulso da salva %d" % [
 			pendentes_c3, salva_da_morte])
 	jogo_c3.queue_free()
+	# ── D. COMANDO: concentrar é escolha de casa, não dano de área ──
+	# As três asserções comparam as duas montadas na SALVA UM, onde nenhum corpo mudou ainda: é o
+	# único quadro em que os dois regimes são a mesma laje, e portanto o único em que "a ordem não
+	# inventa tiro" quer dizer alguma coisa. Depois da salva um os dois ledgers divergem por
+	# construção, e comparar `tiros_da_salva().size()` entre montadas aprovaria um número que não é
+	# lei nenhuma.
+	var largada_d := _nova_esquadra()
+	var largada_c := _nova_esquadra()
+	_marchar(largada_d)
+	_marchar(largada_c)
+	# A ordem é dada a três unidades acima do centro do bloco da frente: é o ponto que a ponte
+	# tocaria, e `_vizinho_de` devolve o próprio bloco — a mira tem de convergir nele, não no vizinho.
+	largada_c.mandar_fogo((largada_c.blocos_hostis[0]["pos"] as Vector3) + Vector3(0.0, 3.0, 0.0))
+	var antes_d := _casas_da_largada(largada_d)
+	var antes_c := _casas_da_largada(largada_c)
+	largada_d.troca_salva()
+	largada_c.troca_salva()
+	_assert("a ordem não inventa nem esconde tiro: um traço por casa viva de cada bloco cobrado",
+		_cobrados_e_tracos(largada_d, antes_d) and _cobrados_e_tracos(largada_c, antes_c),
+		"%d traços no disperso contra %d no concentrado, cada um igual às casas cobradas do seu ledger" % [
+			largada_d.tiros_da_salva().size(), largada_c.tiros_da_salva().size()])
+	var distintos_d := _casas_alvo_distintas(largada_d)
+	var distintos_c := _casas_alvo_distintas(largada_c)
+	var pior_d := _max_casas_por_atacante(largada_d)
+	var pior_c := _max_casas_por_atacante(largada_c)
+	# A digital da mira é POR ATRANCAnte, não do campo inteiro: contar casas distintas somando a
+	# muralha já era aprovado antes da mira, porque a ordem da ponte concentra BLOCOS-alvo (30 atacantes
+	# sobre 3 blocos = 72 casas) sem tocar na escolha de casa dentro deles. O que a lapidação 2 compra
+	# é o passo seguinte: os vinte e quatro canos de UM bloco pousam na MESMA casa da frente.
+	_assert("os canos de um bloco convergem na casa da frente sob a ordem, e se espalham sem ela",
+		pior_c > 0 and pior_c < pior_d,
+		"um atacante pousa em %d casa(s) distintas no concentrado contra %d no disperso // campo: "
+			% [pior_c, pior_d] + "%d contra %d" % [distintos_c, distintos_d])
+	# O preço, em salvas: a primeira casa de um bloco apaga mais cedo sob a ordem da ponte. São as
+	# duas montadas do mesmo tabuleiro, e é este o número que o comandante julga de olho.
+	var dispersa := _nova_esquadra()
+	var convergente := _nova_esquadra()
+	_marchar(dispersa)
+	_marchar(convergente)
+	convergente.mandar_fogo((convergente.blocos_hostis[0]["pos"] as Vector3)
+		+ Vector3(0.0, 3.0, 0.0))
+	var salva_d := _salva_da_primeira_morte_aliada(dispersa)
+	var salva_c := _salva_da_primeira_morte_aliada(convergente)
+	_assert("concentrar fogo apaga a primeira casa antes de dispersar, no mesmo tabuleiro",
+		salva_c > 0 and salva_d > 0 and salva_c < salva_d,
+		"concentrado na salva %d, disperso na salva %d" % [salva_c, salva_d])
+	# ── E. CAIXA: a casa que sai é a que levou o tiro, não a que a ordem escolheu ──
+	# Contrafactual: matar casas do MEIO (andar de baixo, coluna da esquerda) tem de abrir a caixa por
+	# um eixo que o `range(casas)` antigo jamais tocaria — ele só despia o topo.
+	# Medido: a caixa é a UNIÃO das casas vivas (`caixa_do_bloco`, esquadra.gd:686-709), então uma casa
+	# interior apagada não move volume nenhum. O que move é a coluna inteira de um eixo — e é ela que a
+	# cobra. A casa do meio continua coberta pela asserção seguinte: apaga, sai da pintura, e as
+	# demais ficam de pé.
+	var e_e := _nova_esquadra()
+	var b := e_e.blocos_aliados[3]
+	var caixa_cheia := e_e.caixa_do_bloco(b)
+	var alvo_c := 1 + Esquadra.CASAS_X * Esquadra.CASAS_Z   # uma casa do andar do meio
+	var tiros_meio := 0
+	for k in range(400):
+		e_e._golpe_na_casa(b, alvo_c, Esquadra.TIRO_DE_CASA)
+		tiros_meio = k + 1
+		if not Esquadra.casa_viva(b, alvo_c):
+			break
+	_assert("a casa do meio apagada sai da listagem e as demais continuam de pé e pintáveis",
+		not Esquadra.casa_viva(b, alvo_c)
+			and Esquadra.casas_no_bloco(b) == Esquadra.CASAS - 1
+			and Esquadra.casas_vivas_de(b).has(0),
+		"casa %d apagada em %d tiros // %d casas vivas de %d" % [alvo_c, tiros_meio,
+			Esquadra.casas_no_bloco(b), Esquadra.CASAS])
+	var coluna: Array[int] = []
+	var por_camada := Esquadra.CASAS_X * Esquadra.CASAS_Z
+	for c in range(Esquadra.CASAS):
+		if ((c % por_camada) % Esquadra.CASAS_X) == 0:   # a fileira mais à esquerda da malha
+			coluna.append(c)
+	for c in coluna:
+		for k in range(400):
+			e_e._golpe_na_casa(b, c, Esquadra.TIRO_DE_CASA)
+			if not Esquadra.casa_viva(b, c):
+				break
+	var caixa_rala := e_e.caixa_do_bloco(b)
+	_assert("a coluna da esquerda apagada abre a caixa no eixo X, sem tocar na altura",
+		Esquadra.casas_no_bloco(b) == Esquadra.CASAS - coluna.size() - 1
+			and caixa_rala.size.x < caixa_cheia.size.x
+			and is_equal_approx(caixa_rala.size.y, caixa_cheia.size.y)
+			and is_equal_approx(caixa_rala.size.z, caixa_cheia.size.z),
+		"%d casas da coluna + a do meio apagadas de %d // caixa %s -> %s" % [coluna.size(),
+			Esquadra.CASAS, str(caixa_cheia.size), str(caixa_rala.size)])
 	print("SONDA-CASAS: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for n in notes:
 		print("  " + n)
@@ -392,3 +479,73 @@ func _armar_morte_solitaria(e: Esquadra) -> int:
 			if vida_final > 0.0 and vida_final <= limiar and bool(bloco_a["vivo"]) and intacto:
 				armadas += 1
 	return armadas
+
+
+## Fotografia das casas vivas antes da primeira salva, indexada pelo `id` do bloco. O ledger resolve
+## sobre o retrato do quadro anterior, então é ASSIM que ele vê cada bloco, e é assim que a conta de
+## traços tem de ser conferida — conferir depois da salva seria contar corpos que o fogo já mudou.
+func _casas_da_largada(e: Esquadra) -> Dictionary:
+	var out := {}
+	for lado_f in ["aliado", "hostil"]:
+		for b_f in e.lista_de(lado_f):
+			out[int(b_f["id"])] = Esquadra.casas_no_bloco(b_f)
+	return out
+
+
+## A régua honesta de "um traço por casa cobrada": soma as casas vivas de cada bloco que o ledger
+## cobrou, na fotografia acima, e compara com o tamanho da fila. `> 0` é o guarda do vazio: uma salva
+## que não cobra nada tem fila zero e bateria zero, e aprovaria a igualdade por não provar nada.
+func _cobrados_e_tracos(e: Esquadra, antes: Dictionary) -> bool:
+	var cobradas := 0
+	for par in e.pares_da_ultima_salva:
+		cobradas += int(antes[int((par["origem"] as Dictionary)["id"])])
+	return cobradas > 0 and e.tiros_da_salva().size() == cobradas
+
+
+## Quantas casas do lado visado receberam lance aliado nesta salva. É a digital da convergência:
+## vinte e quatro bocas contra a mesma frente dão um número pequeno, vinte e quatro bocas em leque
+## dão vinte e quatro. A chave é (bloco, casa) e não só a casa: dois blocos visados com a mesma casa
+## apagada são duas mortes na tela, não uma.
+func _casas_alvo_distintas(e: Esquadra) -> int:
+	var vistas := {}
+	for t in e.tiros_da_salva():
+		if bool(t["aliado"]):
+			vistas["%d:%d" % [int(t["alvo_bloco"]), int(t["casa_alvo"])]] = true
+	return vistas.size()
+
+
+## Quantas casas distintas UM bloco atacante espalha os próprios lances — o pior caso da muralha.
+## É a medida da mira: sem ela um bloco cobre as 24 casas do alvo num sopro (a dispersão bijetora
+## `casa_alvo = (casa + id + salva) % vivas`); com ela, os vinte e quatro canos pousam na casa da
+## frente e só passam à vizinha quando aquela apaga.
+func _max_casas_por_atacante(e: Esquadra) -> int:
+	var por_bloco := {}
+	for t in e.tiros_da_salva():
+		if not bool(t["aliado"]):
+			continue
+		var origem := int(t["bloco"])
+		if not por_bloco.has(origem):
+			por_bloco[origem] = {}
+		por_bloco[origem]["%d:%d" % [int(t["alvo_bloco"]), int(t["casa_alvo"])]] = true
+	var pior := 0
+	for atacante in por_bloco:
+		pior = maxi(pior, (por_bloco[atacante] as Dictionary).size())
+	return pior
+
+
+## Em que salva a montada apaga a PRIMEIRA casa de qualquer bloco hostil, contando só pelos lances
+## que ela mesma mandou (`aliado && matou` no ledger). Devolve -1 se não apagar em `limite` salvas.
+## O teto é 400 porque foi medido: o plano propunha 120 ("disperso dá ~1 lance por casa por salva, a
+## casa morre no 35º golpe"), e com 120 os DOIS lados voltavam `-1` — a família C.1 já assinou a
+## primeira morte da marcha inteira na salva 185, porque boca < 1 e a placa comem lances antes da vida.
+## Esta régua substitui o instrumento que o plano desenhava (olhar um bloco fixo, `blocos_hostis[0]`):
+## medido por `_tmp_mira.gd`, esse bloco recebe ZERO lances aliados nas 400 salvas do regime de linha
+## (`no_alvo=0`, 60 pares de alvo contra os 30 do visado) porque quem alcança atira no vizinho mais
+## próximo, não no bloco 0. Cobrar a morte dele era cobrar uma casa que ninguém mira.
+func _salva_da_primeira_morte_aliada(e: Esquadra, limite := 400) -> int:
+	for s in range(limite):
+		e.troca_salva()
+		for t in e.tiros_da_salva():
+			if bool(t["aliado"]) and bool(t["matou"]):
+				return s + 1
+	return -1

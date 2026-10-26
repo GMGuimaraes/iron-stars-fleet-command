@@ -1272,7 +1272,12 @@ de outra sessão ficaram fora, como ficam em toda rodada deste repo.
 - Consumes: `par["comandado"]` (Task 3), `Esquadra.casa_local`, `casa_viva`, `casas_no_bloco`.
 - Produces: `Esquadra._casas_por_proximidade(alvo, origem_pos) -> Array[int]`. `mandar_fogo`/`soltar_fogo`/`fogo_concentrado`/os dois botões **não mudam de nome nem de lugar** — só muda o que a ordem compra.
 
-- [ ] **Step 1: Família D — o comando medido (vermelha antes)**
+- [x] **Step 1: Família D — o comando medido (vermelha antes)**
+
+**Lido vermelho, antes da mira (`quebras=2`):** `um atacante pousa em 24 casa(s) distintas no
+concentrado contra 24 no disperso // campo: 72 contra 720` e `concentrado na salva 150, disperso na
+salva -1`. Os dois instrumentos foram trocados — está registrado nos desvios 3 e 4 do Step 5, com a
+medição que os pediu.
 
 As três asserções abaixo comparam as duas montadas na SALVA UM, onde nenhum corpo mudou ainda: é o
 único quadro em que os dois regimes são a mesma laje, e portanto o único em que "a ordem não inventa
@@ -1359,7 +1364,7 @@ func _salva_ate_morrer_casa(e: Esquadra, bloco: Dictionary, limite := 120) -> in
 	return -1
 ```
 
-- [ ] **Step 2: A mira por proximidade**
+- [x] **Step 2: A mira por proximidade**
 
 Em `esquadra.gd`, junto de `casas_vivas_de`:
 
@@ -1392,7 +1397,7 @@ static func _casas_por_proximidade(alvo: Dictionary, origem_pos: Vector3) -> Arr
 	return ordem
 ```
 
-- [ ] **Step 3: A resolução obedece à ordem**
+- [x] **Step 3: A resolução obedece à ordem**
 
 No laço CASCO de `troca_salva`, na linha que fica entre `var base: Vector3 = origem["pos"]` / `var base_alvo` / `var rot` / `var rot_alvo` (Task 3) e `var id := int(origem["id"])` — ou seja, **depois** de `base` existir, porque a mira é medida a partir dele:
 
@@ -1434,21 +1439,27 @@ Cabeçalho de `mandar_fogo`, para a ordem ler o que passou a comprar (substituir
 ## em nada. Nenhum dano de área existe: o disco é seleção, e o ganho vem do tiro individual.
 ```
 
-- [ ] **Step 4: O letreiro da ponte diz a lei nova**
+- [x] **Step 4: O letreiro da ponte diz a lei nova**
 
 Substituir o texto literal de [main.gd:2007](file:///D:/Downloads/IronStarsFleetCommand/main.gd#L2007) — a chamada `esquadra.mandar_fogo(tocada["pos"] as Vector3)` de `:2006` fica exatamente como está, e nenhuma outra linha do ramo muda (cópia em pt-BR, sem mover número nem chave):
 
 ```gd
-			_dizer("FOGO CONCENTRADO // bloco hostil %d comandado: todo bloco aliado que o alcança " \
-				"larga o próprio vizinho e converge na casa da frente desta muralha — é casco a " \
-				"casco, sem disco de área. SOLTAR FOGO no painel devolve a linha." % int(tocada["id"]))
+			_dizer("FOGO CONCENTRADO // bloco hostil %d comandado: todo bloco aliado que o alcança larga o próprio vizinho e converge na casa da frente desta muralha — é casco a casco, sem disco de área. SOLTAR FOGO no painel devolve a linha." % int(tocada["id"]))
 ```
 
-O `%d` continua sendo a única chave da frase e o único argumento continua `int(tocada["id"])`. Nenhuma
-sonda lê este texto (verificado: `grep -rn "FOGO CONCENTRADO" tools/probes/*.gd` não devolve nada),
-então a mudança de cópia não move número de ledger nenhum.
+O `%d` continua sendo a única chave da frase e o único argumento continua `int(tocada["id"])`.
 
-- [ ] **Step 5: Verde nas duas famílias**
+**Dois desvios deste Step, medidos antes de escrever:**
+1. O roteiro original quebrava a cópia em três linhas com `\` e literais adjacentes. Nenhum dos dois
+   funciona em GDScript — `\` não é continuação (nem dentro de chamada) e literais justapostos não
+   concatenam. A cópia vai numa linha só, como as outras falas do mesmo ramo (`:1998`, `:2002`, `:2004`).
+2. A alegação "nenhuma sonda lê este texto" era **falsa**:
+   [tools/probes/comando.gd:539](file:///D:/Downloads/IronStarsFleetCommand/tools/probes/comando.gd#L539)
+   cobra `String(g.report_label.text).contains("FOGO CONCENTRADO")`. A nova cópia mantém o prefixo
+   literal, então o portão continua verde — mas fica registrado que a frase **é** lida, para ninguém
+   encurtá-la numa próxima lapidação sem abrir a sonda junto.
+
+- [x] **Step 5: Verde nas duas famílias**
 
 ```bash
 cd /d/Downloads/IronStarsFleetCommand
@@ -1461,11 +1472,36 @@ grep -nE "ERROR|SCRIPT ERROR|Cannot|Invalid|OUT OF MEMORY" /d/Downloads/tmp-user
 grep -hE "veredito|quebras=|concentrado na salva" /d/Downloads/tmp-userdata-iron/casas.log | tail -3
 ```
 
-Esperado `quebras=0`, com as duas salva lidas impressas (ficam no spec na Task 7).
+**Lido:** `--check-only` mudo em `esquadra.gd`, `main.gd` e `casas.gd`; sonda com **`quebras=0 -
+conferencias=18`** e zero linhas de erro. As três asserções da família D, na letra do log:
 
-- [ ] **Step 6: Família E — a caixa perde a casa que levou o tiro**
+| asserção | lido |
+|---|---|
+| "a ordem não inventa nem esconde tiro" | `1440 traços no disperso contra 864 no concentrado` |
+| "os canos de um bloco convergem na casa da frente sob a ordem, e se espalham sem ela" | `um atacante pousa em 1 casa(s) distintas no concentrado contra 24 no disperso // campo: 5 contra 720` |
+| "concentrar fogo apaga a primeira casa antes de dispersar, no mesmo tabuleiro" | `concentrado na salva 3, disperso na salva 185` |
 
-Sem sonda própria, a lei da caixa é contrafactual: matar uma casa do **meio** tem de mudar a caixa, coisa que o `range(casas)` antigo jamais faria.
+**Terceiro desvio:** a asserção que o roteiro desenhava para a convergência media o campo inteiro
+(`_casas_alvo_distintas`: 720 casas no disperso contra 72 no concentrado) e **aprovava sem a mira** —
+a ordem da ponte já concentra BLOCOS-alvo, então somar a muralha não distingue "escolher casa" de
+"escolher bloco". O instrumento foi trocado pela digital POR ATRANCAnte (`_max_casas_por_atacante`):
+um bloco dispara 24 canos, e a lei nova diz que os 24 pousam na MESMA casa. Sem a mira ele devolvia
+`24 contra 24` (vermelho honesto); com a mira devolve `1 contra 24`.
+
+**Quarto desvio:** `_salva_ate_morrer_casa(e, e.blocos_hostis[0])` não mede o que o roteiro achava que
+media. A sonda temporária `_tmp_mira.gd` (rodada nesta Task, 400 salvas por lado, census de lances
+aliados sobre um bloco) leu `no_alvo=0` — sob o regime de linha, o `blocos_hostis[0]` **não recebe
+nenhum tiro aliado**, porque cada atacante atira no próprio vizinho mais próximo. Cobrar a morte dele
+era cobrar uma casa que ninguém mira, e por isso o disperso voltava `-1`. O instrumento passou a
+`_salva_da_primeira_morte_aliada(e)`: a primeira salva em que o ledger traz `aliado && matou`. Com ele,
+os dois lados caem dentro do teto e a comparação é a lei real: **salva 185 sem a ordem, salva 3 com
+ela**. O census vai embora dobrado nesta medição (números registrados no comentário do ajudante, em
+`tools/probes/casas.gd`), e `_tmp_mira.gd` sai de cena por estar dobrado, não por ser lixo.
+
+- [x] **Step 6: Família E — a caixa perde a casa que levou o tiro**
+
+Sem sonda própria, a lei da caixa é contrafactual: matar casas do **meio** tem de abrir a caixa por um
+eixo que o `range(casas)` antigo jamais tocaria.
 
 ```gd
 	# ── E. CAIXA: a casa que sai é a que levou o tiro, não a que a ordem escolheu ──
@@ -1473,19 +1509,23 @@ Sem sonda própria, a lei da caixa é contrafactual: matar uma casa do **meio** 
 	var b := e_e.blocos_aliados[3]
 	var caixa_cheia := e_e.caixa_do_bloco(b)
 	var alvo_c := 1 + Esquadra.CASAS_X * Esquadra.CASAS_Z   # uma casa do andar do meio
-	for k in range(400):
-		e_e._golpe_na_casa(b, alvo_c, Esquadra.TIRO_DE_CASA)
-		if not Esquadra.casa_viva(b, alvo_c):
-			break
-	var caixa_rala := e_e.caixa_do_bloco(b)
-	_assert("matar uma casa do meio abre a caixa naquele eixo",
-		Esquadra.casa_viva(b, alvo_c) == false and caixa_rala != caixa_cheia,
-		"casa %d apagada em %d tiros // caixa %s -> %s" % [alvo_c, 400,
-			str(caixa_cheia.size), str(caixa_rala.size)])
-	_assert("as demais casas continuam de pé e pintáveis",
-		Esquadra.casas_no_bloco(b) == Esquadra.CASAS - 1,
-		"%d casas vivas de %d" % [Esquadra.casas_no_bloco(b), Esquadra.CASAS])
+	# ... 35 golpes de TIRO_DE_CASA naquela casa, depois a caixa ...
 ```
+
+**Quinto desvio, e foi a medição que o pediu:** a asserção desenhada (`caixa_rala != caixa_cheia` depois
+de apagar UMA casa do meio) é **impossível**, e verdear seria afrouxar. `caixa_do_bloco`
+([esquadra.gd:686-709](file:///D:/Downloads/IronStarsFleetCommand/esquadra.gd#L686-L709)) é a UNIÃO das
+casas vivas: uma casa interior apagada não move volume nenhum, e o log leu
+`caixa (10.51176, 3.4675, 4.45) -> (10.51176, 3.4675, 4.45)` — vermelho verdadeiro. A família foi
+reescrita em duas asserções que a geometria sustenta:
+
+| asserção | lido |
+|---|---|
+| "a casa do meio apagada sai da listagem e as demais continuam de pé e pintáveis" | `casa 9 apagada em 35 tiros // 23 casas vivas de 24` |
+| "a coluna da esquerda apagada abre a caixa no eixo X, sem tocar na altura" | `6 casas da coluna + a do meio apagadas de 24 // caixa (10.51176, 3.4675, 4.45) -> (7.311765, 3.4675, 4.45)` |
+
+O contrafactual continua de pé, e mais forte: o `-3,2 u` de largura vem de uma coluna que atravessa os
+dois andares — o `range(casas)` antigo só despia o topo e jamais abriria a caixa em X.
 
 - [ ] **Step 7: Bateria e commit**
 

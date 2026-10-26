@@ -378,6 +378,38 @@ static func casas_vivas_de(bloco: Dictionary) -> Array[int]:
 	return out
 
 
+## Ordem das casas do alvo, da mais perto de quem atira até a mais longe, medida de centro de casa
+## em centro de casa, com empate resolvido por índice (nunca sorteio). É a mira do fogo concentrado:
+## o lance converge onde o olho vê a frente da muralha, e a casa da frente arromba antes da de trás.
+## Custo por par sob a ordem: CASAS leituras de caixa-local e no máximo CASAS² comparações de
+## distância — nenhum dado chamado, e o `rumo` do alvo entra porque a casa da frente de um bloco
+## virado é outra casa.
+static func _casas_por_proximidade(alvo: Dictionary, origem_pos: Vector3) -> Array[int]:
+	var rot := Basis.from_euler(Vector3(0.0, float(alvo["rumo"]), 0.0))
+	var ordem: Array[int] = []
+	var dist: Array[float] = []
+	for c in range(CASAS):
+		if float(alvo["casas"][c]["vida"]) > 0.0:
+			ordem.append(c)
+			dist.append((alvo["pos"] as Vector3 + rot * casa_local(c)).distance_squared_to(
+				origem_pos))
+	# Seleção direta, e é de propósito: 24 elementos, estável, sem alocação de fechador e com o
+	# empate resolvido pela ordem local — `dist[j] < dist[menor]` nunca troca iguais.
+	for i in range(ordem.size()):
+		var menor := i
+		for j in range(i + 1, ordem.size()):
+			if dist[j] < dist[menor]:
+				menor = j
+		if menor != i:
+			var tc := ordem[i]
+			ordem[i] = ordem[menor]
+			ordem[menor] = tc
+			var td := dist[i]
+			dist[i] = dist[menor]
+			dist[menor] = td
+	return ordem
+
+
 ## Os dois agregados que a casa passou a mandar: `navios` é a soma das vidas, `escudo` é a soma das
 ## placas. Chamado por quem escreve numa casa — nunca por quem lê.
 static func _recalcular_agregados(bloco: Dictionary) -> void:
@@ -990,7 +1022,11 @@ static func _alvo_do_bloco(bloco: Dictionary, alvos: Array[Dictionary],
 
 
 ## Ordem da ponte: a massa aliada larga o próprio vizinho e concentra no bloco hostil mais próximo
-## desta posição. `soltar_fogo` devolve a esquadra ao regime de linha, um alvo por bloco.
+## desta posição. `soltar_fogo` devolve a esquadra ao regime de linha, um alvo por bloco. Desde a
+## lapidação 2 a ordem escolhe casa, não disco: os lances de um bloco convergem na casa da frente do
+## bloco visado, arrombam a placa dela e a apagam à vista, e só passam para a vizinha quando ela cai.
+## Disperso é o contrário — um lance por casa, cada placa come o seu tiro. Nenhum dano de área existe:
+## o disco é seleção, e o ganho vem do tiro individual.
 func mandar_fogo(posicao: Vector3) -> void:
 	fogo_concentrado = true
 	alvo_comandado = posicao
@@ -1236,12 +1272,30 @@ func troca_salva() -> Dictionary:
 		var base: Vector3 = origem["pos"]
 		var base_alvo: Vector3 = bate["pos"]
 		var id := int(origem["id"])
+		# A mira só existe para o lado comandado: `comandado` já é `false` para o hostil (a lei de
+		# linha inimiga é intocável), então o ramo sem mira é o regime de sempre — um lance por casa,
+		# a muralha inteira gasta por igual, e nenhuma casa da frente cai antes das outras.
+		var mira: Array[int] = []
+		if bool(par["comandado"]):
+			mira = _casas_por_proximidade(bate, base)
+		var cursor := 0
 		var afundou_o_bloco := false
 		# Um traço por casa viva de quem disparou, em QUALQUER eixo: o rodízio de setores troca o que
 		# a salva cobra, não o fogo que a muralha desenha. A diferença para a lei velha é que a fila
 		# agora é escrita aqui, no mesmo laço que baixou a vida — desenho e conta são o mesmo número.
 		for c in cascos:
-			var casa_alvo := vivas_bate[(c + id + salva_numero) % vivas_bate.size()]
+			var casa_alvo := 0
+			if mira.is_empty():
+				casa_alvo = vivas_bate[(c + id + salva_numero) % vivas_bate.size()]
+			else:
+				# O cursor só anda para a frente, e anda quando a casa dele apagou: é assim que o
+				# mesmo bloco cava a casa da frente antes de passar para a de trás. Andar à frente é
+				# o que mantém o lance sobre corpo VIVO — bater em casa morta seria o caso-limite em
+				# que `_casa_seguindo` redistribui o dano para a vizinha e a tela recebe a notícia
+				# errada, porque o traço desenha a casa apontada.
+				while cursor + 1 < mira.size() and not casa_viva(bate, mira[cursor]):
+					cursor += 1
+				casa_alvo = mira[cursor]
 			var matou := false
 			if casca_cobrada:
 				# Tiro cheio, sem o fator `vida/VIDA_DA_CASA` da lei velha: medido na Task 3, com o
