@@ -58,7 +58,7 @@ Ordem das tarefas: **1** corpo + agregados (tudo ainda morre junto) → **2** ca
 - Consumes: nada novo.
 - Produces: `Esquadra.VIDA_DA_CASA`, `Esquadra.PLACA_DA_CASA`, `Esquadra.TIRO_DE_CASA`; bloco com `casas: Array[Dictionary]` (`vida`, `placa`, `morta_em`, `a_noticiar`); `Esquadra.casa_viva(bloco, c) -> bool`; `Esquadra.casas_no_bloco(bloco) -> int`; `Esquadra.casas_vivas_de(bloco) -> Array[int]`; `Esquadra._recalcular_agregados(bloco) -> void`; `Esquadra.zerar_placas(bloco) -> void`; `esquadra.fixar_lotacao(bloco, navios) -> void`; `esquadra._golpe_na_casa(alvo, c, dano) -> bool`; `Escudo.morder_casa(casa, dano) -> float`. Os campos `navios` e `escudo` do bloco passam a ser **lidos**, não escritos — e é por isso que `zerar_placas` existe: `tools/probes/esquadra.gd:274-278` e `:302-310` despem a placa de todo bloco na montagem, e a partir daqui um `bloco["escudo"] = 0.0` solto é reescrito pela primeira mordida, deixando o portão aprovando o vazio. (As outras onze escritas de `["escudo"]` nas sondas são dos doze cascos nomeados de `game.fleet`/`game.enemies`, que não são massa e mantêm a lei de casco de antes.)
 
-- [ ] **Step 1: Medir a derivação antes de tocar em código**
+- [x] **Step 1: Medir a derivação antes de tocar em código**
 
 Antes de escrever qualquer asserção, confirmar a medição que este plano usa como justificativa. Rodar Python (double = o `float` de GDScript):
 
@@ -71,12 +71,24 @@ for k in range(1,25):
     for i in range(k): s+=v
     c=math.ceil(min(1.0,max(0.0,s/100.0))*24)
     if c!=k: print('DESVIO',k,repr(s),c)
-print('placas',repr(sum([4.4/24]*24)),'vidas24',repr(sum([v]*24)))"
+sp=0.0; sv=0.0
+for i in range(24): sp+=4.4/24; sv+=v
+print('placas',repr(sp),'vidas',repr(sv))"
 ```
 
-Esperado: desvios em k = 5, 6, 7, 20, 21, 22, 23; `placas` = `4.400000000000003`; `vidas24` = `100.0`. Anotar os três na mensagem de commit da Step 6 — é a evidência de que `casas_vivas` não pode continuar lendo o agregado, e de que a soma de placas **não** é bit a bit `4,4` (por isso o bloco nasce com a constante, não com a soma).
+Medido nesta rodada (Python 3.14.8): desvios em **k = 5, 6, 7, 20, 21, 22, 23**; `placas` =
+`4.400000000000003`; `vidas` = `100.00000000000003`.
 
-- [ ] **Step 2: Escrever as famílias A e B da sonda nova (vermelha por construção)**
+**Armadilha medida ao escrever este passo:** a versão anterior do laço usava `sum([4.4/24]*24)` e
+devolvia `4.4` exato, porque `sum()` do Python 3.12+ aplica soma compensada (Neumaier). O `for … +=`
+acima é a aritmética real do GDScript, e é ela que os portões têm de espelhar. Nenhum `sum()` de
+Python serve de evidência para este plano.
+
+Anotar os três na mensagem de commit da Step 6 — é a evidência de que `casas_vivas` não pode continuar
+lendo o agregado, e de que a soma de placas **não** é bit a bit `4,4` (por isso o bloco nasce com a
+constante, não com a soma).
+
+- [x] **Step 2: Escrever as famílias A e B da sonda nova (vermelha por construção)**
 
 Criar `tools/probes/casas.gd` com o esqueleto da casa (veredito no formato que a bateria lê) e as duas famílias. Nada de `main.tscn` aqui: corpo e conta são puros.
 
@@ -251,7 +263,7 @@ grep -hE "veredito|quebras=" /d/Downloads/tmp-userdata-iron/casas.log | tail -1
 
 Se a sonda nem carrega (`Invalid get index 'VIDA_DA_CASA'`), é o vermelho esperado.
 
-- [ ] **Step 3: Dar casca à casa em `escudo.gd`**
+- [x] **Step 3: Dar casca à casa em `escudo.gd`**
 
 Acrescentar no fim de `escudo.gd`, sem tocar nas quatro cotas nem em `morder`/`quadro`/`nasce`:
 
@@ -270,7 +282,7 @@ static func morder_casa(casa: Dictionary, dano: float) -> float:
 	return dano - placa
 ```
 
-- [ ] **Step 4: Dar corpo à casa em `esquadra.gd`**
+- [x] **Step 4: Dar corpo à casa em `esquadra.gd`**
 
 Cotas, logo depois de `const DANO_DE_BLOCO := 2.2`:
 
@@ -457,7 +469,7 @@ E o caminho `CASCO` de `_aplicar_golpe` (substituir as linhas que mordiam `Escud
 		return true
 ```
 
-- [ ] **Step 5: Rodar A e B até o verde**
+- [x] **Step 5: Rodar A e B até o verde**
 
 ```bash
 cd /d/Downloads/IronStarsFleetCommand
@@ -476,7 +488,7 @@ grep -hE "veredito|quebras=" /d/Downloads/tmp-userdata-iron/casas.log | tail -1
 
 Esperado: `quebras=0`, `35 golpes x 24 casas = 840 tiros` impresso, zero linha de erro. `--check-only` prova só parse — erro de runtime aparece aqui, não nele.
 
-- [ ] **Step 6: Não quebrar a bateria por causa desta tarefa**
+- [x] **Step 6: Não quebrar a bateria por causa desta tarefa**
 
 ```bash
 bash /d/Downloads/tmp-userdata-iron/bateria.sh 2>&1 | tail -40
@@ -484,7 +496,7 @@ bash /d/Downloads/tmp-userdata-iron/bateria.sh 2>&1 | tail -40
 
 Ler **só depois** do sentinel `BATERIA: fim`. Todo log com `quebras=0` e `linhas_de_erro=0`. As candidatas a reprovar são `escudo` (a placa agora é por casa), `esquadra` (família 4, contagem de afundamento) e `massa_visivel` (cabe à Task 6). Se reprovar, o conserto é declarar a precondition em quem cria o estado — `fixar_lotacao`, não o `["navios"] =` solto. Registrar a quebra e o veredito para a Task 6.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd /d/Downloads/IronStarsFleetCommand
@@ -1377,6 +1389,23 @@ git status --short
 - Consumes: `fixar_lotacao`, `casa_viva`, `casas_vivas_de`, `casas_no_bloco`, `fila_da_salva`, `"tiros"` do ledger.
 - Produces: nada de código de jogo — só portões que voltam a falar a língua do corpo.
 
+**Medido na bateria da Task 1 (duas sondas vermelhas, zero linha de erro, 31 logs):**
+
+| sonda | veredito | quebras |
+|---|---|---|
+| `esquadra` | `SONDA-ESQUADRA: veredito - quebras=4 - conferencias=114` | 4 |
+| `escudo` | `SONDA-ESCUDO: veredito - quebras=1 - conferencias=55` | 1 |
+
+As quatro de `esquadra` têm uma causa só — o write solto de `["navios"]`, que hoje é agregado
+derivado e não mexe nos corpos: `:984` e `:987` (família 3, «o topo fecha primeiro» — com 24 corpos
+vivos o corte não desce), `:1038` (família 4, «casco a zero afunda» — `alvo["navios"] = 6.0` não
+esvazia as casas, então a salva de 5,0 distribuída sobre 24 placas de 0,18333 não afoga nada), `:2011`
+e `:2014` (família 14, «a caixa segue a lotação» — 3,467 u de altura nos dois lados, e o morto com
+`size -1.0`). A de `escudo` é
+a cláusula de janela em `:547-550`, que a placa por casa não tem por decisão de spec (§9). Nenhum
+afrouxamento: os cinco writes viram `fixar_lotacao`, e a cláusula da janela passa a declarar a placa
+de casa.
+
 - [ ] **Step 1: Caçar os writes e os loops que assumem `range(casas)`**
 
 ```bash
@@ -1391,7 +1420,7 @@ Cada write vira `fixar_lotacao` (o bloco do teste passa a ter corpos coerentes):
 ```gd
 	meia.fixar_lotacao(meia.blocos_hostis[0], float(NAVIOS_NO_BLOCO) * 0.5)
 	terco.fixar_lotacao(terco.blocos_hostis[0], float(NAVIOS_NO_BLOCO) / 3.0)
-	alvo.fixar_lotacao(alvo, 6.0)
+	g.fixar_lotacao(alvo, 6.0)
 ```
 
 Cada faixa que despia a placa de um **bloco** na montagem (as duas de `esquadra.gd`, `:274-278` e

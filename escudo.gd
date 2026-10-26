@@ -90,3 +90,17 @@ static func quadro(unit: Dictionary, delta: float) -> void:
 	var casca := float(unit.get("escudo", 0.0))
 	if casca < teto:
 		unit["escudo"] = minf(teto, casca + ESCUDO_REGENERA * delta)
+
+
+## Casca de UMA casa da massa. Mesma aritmética de `morder` — morde primeiro, transborda depois —
+## sem janela e sem regeneração: a muralha não tem estaleiro por casco, e `escudo_cai` é lei de
+## casco nomeado. Por isso a placa mordida fica mordida até a casa apagar.
+static func morder_casa(casa: Dictionary, dano: float) -> float:
+	var placa := float(casa["placa"])
+	if dano <= 0.0 or placa <= 0.0:
+		return dano
+	if dano < placa:
+		casa["placa"] = placa - dano
+		return 0.0
+	casa["placa"] = 0.0
+	return dano - placa

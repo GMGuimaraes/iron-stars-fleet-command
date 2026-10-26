@@ -195,6 +195,21 @@ const ROD_DESCENDO := 3
 ## do golpe de um casco de linha: vinte blocos equivalem a ~4 cascos de linha de fogo, e a
 ## contagem da massa chega ao mesmo fim da contagem dos núcleos em dezenas de salvas, não em duas.
 const DANO_DE_BLOCO := 2.2
+## ---- A casa como corpo (lapidação 2) ----
+## Lotação, casca e tiro divididos pelas vinte e quatro casas desenhadas. Somado sobre o bloco, cada
+## uma é exatamente o número de antes — a escala fiel que o comandante escolheu — e o que muda é que
+## agora há onde morrer em partes.
+##
+## A contagem deixou de ser derivação do agregado, e é medido o porquê: `23 × (100 ÷ 24)` fecha
+## `95,83333333333336` em double, `ceilf` sobre isso devolve 24, e a silhueta perderia uma casa que
+## não existe. Dos vinte e quatro estados possíveis de lotação inteira, sete erravam.
+const VIDA_DA_CASA := float(NAVIOS_NO_BLOCO) / float(CASAS)
+## Placa de uma casa. Somadas, são o `ESCUDO_DE_BLOCO` de antes — e a soma dá
+## `4,400000000000003`, por isso o bloco nasce com a constante e só passa a ler a soma depois de
+## levar o primeiro tiro.
+const PLACA_DA_CASA := Escudo.ESCUDO_DE_BLOCO / float(CASAS)
+## O que uma boca de casa cobra por lance. Somado sobre as vinte e quatro, é `DANO_DE_BLOCO`.
+const TIRO_DE_CASA := DANO_DE_BLOCO / float(CASAS)
 ## Distância de FACHADA em que a muralha hostil para de avançar. Tem de ser maior que zero para
 ## bloco nenhum atravessar bloco, e o `ALCANCE_DE_BLOCO` é lido A PARTIR dela: a régua da geometria
 ## amarra os dois números, então mover o contato move o alcance e a muralha inteira continua
@@ -326,10 +341,81 @@ static func rumo_da_linha(lado: String) -> float:
 	return 0.0 if lado == "aliado" else PI
 
 
+## As vinte e quatro casas de um bloco novo, todas cheias e sem notícia pendente. `morta_em` é só
+## leitura de sonda e de olho: nenhum número de dano o lê.
+static func _casas_novas() -> Array[Dictionary]:
+	var casas: Array[Dictionary] = []
+	for c in range(CASAS):
+		casas.append({"vida": VIDA_DA_CASA, "placa": PLACA_DA_CASA, "morta_em": -1.0,
+			"a_noticiar": false})
+	return casas
+
+
+static func casa_viva(bloco: Dictionary, c: int) -> bool:
+	return float(bloco["casas"][c]["vida"]) > 0.0
+
+
+static func casas_no_bloco(bloco: Dictionary) -> int:
+	var n := 0
+	for casa in bloco["casas"]:
+		if float(casa["vida"]) > 0.0:
+			n += 1
+	return n
+
+
+## Índices das casas vivas, na ordem local (o topo é o último). Aloca: usado uma vez por par no
+## ledger, nunca por quadro.
+static func casas_vivas_de(bloco: Dictionary) -> Array[int]:
+	var out: Array[int] = []
+	for c in range(CASAS):
+		if float(bloco["casas"][c]["vida"]) > 0.0:
+			out.append(c)
+	return out
+
+
+## Os dois agregados que a casa passou a mandar: `navios` é a soma das vidas, `escudo` é a soma das
+## placas. Chamado por quem escreve numa casa — nunca por quem lê.
+static func _recalcular_agregados(bloco: Dictionary) -> void:
+	var vidas := 0.0
+	var placas := 0.0
+	for casa in bloco["casas"]:
+		vidas += float(casa["vida"])
+		placas += float(casa["placa"])
+	bloco["navios"] = vidas
+	bloco["escudo"] = placas
+
+
+## Despe a placa de todo o bloco pelo corpo: é a única forma honesta de fazer o agregado `escudo`
+## ler zero, porque depois desta fatia a escrita solta `bloco["escudo"] = 0.0` é desfeita pela
+## primeira mordida (`_recalcular_agregados`). As faixas de montagem das sondas passam por aqui.
+## Vinte e quatro zeros somam zero exato, sem a folga que a soma das placas cobra.
+static func zerar_placas(bloco: Dictionary) -> void:
+	for casa in bloco["casas"]:
+		casa["placa"] = 0.0
+	_recalcular_agregados(bloco)
+
+
+## Escreve a lotação de um bloco pelo caminho novo: pelo corpo das casas, fechando o topo primeiro,
+## que é a mesma ordem que `casa_local` impõe à silhueta. Quem precisa de meia lotação (sonda,
+## cena de teste) passa por aqui e não por `bloco["navios"] =`, que agora é conseqüência.
+func fixar_lotacao(bloco: Dictionary, navios: float) -> void:
+	var resto := clampf(navios, 0.0, float(NAVIOS_NO_BLOCO))
+	for c in range(CASAS):
+		var casa: Dictionary = bloco["casas"][c]
+		var v := clampf(resto, 0.0, VIDA_DA_CASA)
+		casa["vida"] = v
+		casa["placa"] = PLACA_DA_CASA if v > 0.0 else 0.0
+		casa["morta_em"] = -1.0 if v > 0.0 else float(salva_numero)
+		casa["a_noticiar"] = false
+		resto -= v
+	_recalcular_agregados(bloco)
+
+
 func _novo_bloco(id: int, esq: int, indice: int, lado: String, pos: Vector3) -> Dictionary:
 	return {"id": id, "esquadrao": esq, "formacao": indice, "lado": lado, "pos": pos,
 		"vel": Vector3.ZERO, "rumo": rumo_da_linha(lado), "giro": 0.0,
 		"navios": float(NAVIOS_NO_BLOCO),
+		"casas": _casas_novas(),
 		# Placa de esquadra: `escudo_max` em zero é a forma que a lei lê como "não recomponha".
 		"escudo": Escudo.ESCUDO_DE_BLOCO, "escudo_max": 0.0, "escudo_cai": 0.0,
 		"MOTORES": 100.0, "ARMAS": 100.0, "TRIPULACAO": 100.0, "vivo": true, "presa": false,
@@ -518,8 +604,13 @@ func lista_de(lado: String) -> Array[Dictionary]:
 	return blocos_aliados if lado == "aliado" else blocos_hostis
 
 
-## Casas vivas do bloco: o topo fecha primeiro. Sem navio não há casa, e zero casas é o que mata.
+## Casas vivas do bloco: o topo fecha primeiro. Com corpo por casa, a contagem é lida do corpo — a
+## derivação de `navios` ficava uma casa acima da verdade em sete dos vinte e quatro estados (ver a
+## medição nas cotas acima). O caminho de baixo só existe para dicionário sem casa, que é o que as
+## sondas antigas montam para perguntar lotação.
 static func casas_vivas(bloco: Dictionary) -> int:
+	if bloco.has("casas"):
+		return casas_no_bloco(bloco)
 	var frac := clampf(float(bloco["navios"]) / float(NAVIOS_NO_BLOCO), 0.0, 1.0)
 	if frac <= 0.0:
 		return 0
@@ -1150,6 +1241,43 @@ func tiros_da_salva() -> Array[Dictionary]:
 	return tiros
 
 
+## Um lance na casa escolhida. Devolve `true` se o bloco afundou com ele. A casa pode estar apagada
+## — é o caso-limite do spec: o golpe vai para a casa viva seguinte do mesmo bloco, e o traço
+## continua existindo, senão a fila deixaria de espelhar a conta.
+func _golpe_na_casa(alvo: Dictionary, c: int, dano: float) -> bool:
+	if not bool(alvo["vivo"]):
+		return false
+	var vivas := casas_vivas_de(alvo)
+	if vivas.is_empty():
+		return false
+	if float(alvo["casas"][c]["vida"]) <= 0.0:
+		c = _casa_seguindo(vivas, c)
+	var casa: Dictionary = alvo["casas"][c]
+	var transbordo := Escudo.morder_casa(casa, dano)
+	casa["vida"] = maxf(0.0, float(casa["vida"]) - transbordo * 1.4)
+	if float(casa["vida"]) <= 0.0:
+		casa["morta_em"] = float(salva_numero)
+		casa["a_noticiar"] = true
+	_recalcular_agregados(alvo)
+	if float(alvo["navios"]) > 0.0:
+		return false
+	alvo["vivo"] = false
+	if String(alvo["lado"]) == "aliado":
+		perdas_aliadas += 1
+	else:
+		perdas_hostis += 1
+	return true
+
+
+## Primeira casa viva com índice maior ou igual a `c`, com volta ao início. Ordem de índice decide,
+## nunca sorteio.
+static func _casa_seguindo(vivas: Array[int], c: int) -> int:
+	for v in vivas:
+		if v >= c:
+			return v
+	return vivas[0]
+
+
 ## Um golpe no eixo escolhido. Devolve `true` se o bloco afundou.
 func _aplicar_golpe(alvo: Dictionary, eixo: String, dano: float) -> bool:
 	# Cadáver não leva tiro: sem esta guarda o segundo impacto num bloco que acabou de afundar
@@ -1159,18 +1287,30 @@ func _aplicar_golpe(alvo: Dictionary, eixo: String, dano: float) -> bool:
 		return false
 	var lado := String(alvo["lado"])
 	if eixo == "CASCO":
-		# A placa morde o dano cru, o mesmo unidade que `main.gd` usa no canhão de linha: uma salva de
-		# bloco em força cheia são 2,2 de dano, a placa é 4,4, então exatamente duas salvas passam por
-		# cima de `navios` sem encostar num navio. O transbordo é que entra no fator 1,4 de navio.
-		var transbordo := Escudo.morder(alvo, dano)
-		alvo["navios"] = maxf(0.0, float(alvo["navios"]) - transbordo * 1.4)
-		if float(alvo["navios"]) <= 0.0:
-			alvo["vivo"] = false
-			if lado == "aliado":
-				perdas_aliadas += 1
-			else:
-				perdas_hostis += 1
-			return true
+		# Sem casa indicada o golpe é do bloco, e o bloco é a soma das casas: ele é repartido
+		# igualmente pelas vivas. É a leitura honesta de "fogo disperso" — dar o golpe inteiro a uma
+		# casa só afundaria a muralha num lance.
+		var vivas := casas_no_bloco(alvo)
+		if vivas <= 0:
+			return false
+		var por_casa := dano / float(vivas)
+		for casa in alvo["casas"]:
+			if float(casa["vida"]) <= 0.0:
+				continue
+			var transbordo := Escudo.morder_casa(casa, por_casa)
+			casa["vida"] = maxf(0.0, float(casa["vida"]) - transbordo * 1.4)
+			if float(casa["vida"]) <= 0.0:
+				casa["morta_em"] = float(salva_numero)
+				casa["a_noticiar"] = true
+		_recalcular_agregados(alvo)
+		if float(alvo["navios"]) > 0.0:
+			return false
+		alvo["vivo"] = false
+		if lado == "aliado":
+			perdas_aliadas += 1
+		else:
+			perdas_hostis += 1
+		return true
 	elif eixo == "TRIPULACAO":
 		alvo[eixo] = maxf(0.0, float(alvo[eixo]) - dano * 1.1)
 		if float(alvo[eixo]) <= 0.0 and not bool(alvo["presa"]):
