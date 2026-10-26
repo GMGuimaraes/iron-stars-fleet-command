@@ -644,17 +644,6 @@ func noticiar_morte(bloco: Dictionary, c: int) -> void:
 	bloco["casas"][c]["a_noticiar"] = false
 
 
-## Interino da fatia: enquanto a onda não dá o recado traço a traço (task 4), a salva fecha já
-## notificada, e a tela continua apagando a casa no quadro do fechamento.
-func _noticiar_tudo() -> void:
-	for b in blocos_aliados:
-		for casa in b["casas"]:
-			casa["a_noticiar"] = false
-	for b in blocos_hostis:
-		for casa in b["casas"]:
-			casa["a_noticiar"] = false
-
-
 ## ---- Linha de visada da massa ----
 
 ## A caixa de um bloco: o volume dos cascos VIVOS, na atitude do bloco, mais a meia-caixa da malha.
@@ -1285,7 +1274,6 @@ func troca_salva() -> Dictionary:
 	# contra a linha que estava de pé no quadro anterior, e mandar a frente sair da linha antes de
 	# resolver seria cobrar fogo de uma formação que a manobra já desfiz.
 	_rodizar_fileiras()
-	_noticiar_tudo()
 	return {"lancados": lancados, "feridos": feridos, "afundados": afundados,
 		"rendidos": rendidos, "obstruidos": obstruidos, "rebatidos": rebatidos,
 		"tiros": fila_da_salva.size(), "salva": salva_numero}

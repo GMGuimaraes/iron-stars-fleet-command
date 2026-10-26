@@ -2123,12 +2123,19 @@ static func _base_do_traco(dir: Vector3) -> Basis:
 ## é sorteio: se a boca ou o atraso corressem, a massa passaria a consumir o `visual_rng` dos doze
 ## cascos e a cauda de quarenta sorteios que a sonda assina deixaria de ser a mesma — o mesmo motivo
 ## pelo qual os 5 760 lances não gastam um dado de `rng`.
+##
+## Cada traço carrega a casa em que bateu, e se ela apagou: é por isso que a onda, e não a salva, dá
+## a notícia da morte. Antes de armar a onda nova, a velha é drenada — nenhum recado pode passar de
+## uma salva para outra, senão a morte contada seria a de um combate que já não está na tela.
 func _armar_tracos() -> void:
+	_noticiar_pendentes()
 	_tracos_voando.clear()
 	for tiro in esquadra.tiros_da_salva():
 		_tracos_voando.append({"de": tiro["de"], "para": tiro["para"],
 			"aliado": bool(tiro["aliado"]),
-			"atraso": float(int(tiro["casa"])) * PASSO_DA_ONDA})
+			"atraso": float(int(tiro["casa"])) * PASSO_DA_ONDA,
+			"bate": tiro["bate"], "casa_alvo": int(tiro["casa_alvo"]),
+			"matou": bool(tiro["matou"]), "noticiado": false})
 	_traco_t = 0.0
 	_pintar_tracos()
 
@@ -2136,11 +2143,19 @@ func _armar_tracos() -> void:
 ## Avança o pulso e devolve a fila ao nada no fim da onda + voo. Não há leitura de volta: a
 ## transformada de cada quadro é recomposta dos dois pontos guardados, e por isso a sonda pode conferir
 ## o que foi escrito sem depender do `MultiMesh` como memória.
+##
+## O relógio é quem dá o recado, não o desenho. Viver dentro de `_pintar_tracos` amarraria a morte de
+## uma casa ao sucesso de uma escrita de `MultiMesh` — e `_pintar_tracos` sai cedo quando a massa não
+## está montada, o que é exatamente o estado de uma sonda `--headless`, onde a lei ainda tem de valer.
 func _atualizar_tracos(delta: float) -> void:
 	if _traco_t >= TRACO_PULSO_SEG:
 		return
 	_traco_t = minf(TRACO_PULSO_SEG, _traco_t + delta)
+	for t in _tracos_voando:
+		if _traco_t >= float(t["atraso"]) + TRACO_DE_BLOCO_SEG:
+			_noticiar(t)
 	if _traco_t >= TRACO_PULSO_SEG:
+		_noticiar_pendentes()
 		_tracos_voando.clear()
 	_pintar_tracos()
 
@@ -2179,9 +2194,29 @@ func _pintar_tracos() -> void:
 ## Fecha a persiana entre partidas: os traços da batalha anterior não podem atravessar o RECOMEÇAR,
 ## que é a mesma lei que manda remontar a esquadra do zero.
 func _apagar_tracos() -> void:
+	_noticiar_pendentes()
 	_tracos_voando.clear()
 	_traco_t = TRACO_PULSO_SEG
 	_pintar_tracos()
+
+
+## A casa some da tela no quadro em que o traço toca. `noticiado` é o que impede o mesmo recado ser
+## dado nos cinquenta quadros seguintes em que o traço continua encerrado, e o guarda do `matou` é o
+## que faz a onda apagar só quem ela de fato apagou: um traço que bateu em casa viva e não a derrubou
+## deixa a nave na tela com a vida baixa, que é a leitura que o jogador pediu.
+func _noticiar(t: Dictionary) -> void:
+	if not bool(t["matou"]) or bool(t["noticiado"]):
+		return
+	t["noticiado"] = true
+	esquadra.noticiar_morte(t["bate"], int(t["casa_alvo"]))
+
+
+## Rede de segurança da lei acima: todo traço que sai do ar sem tocar — pulso encerrado, persiana do
+## RECOMEÇAR, salva nova armada no meio de uma onda — tem de dar o recado, senão a casa fica pendurada
+## na tela para sempre com `a_noticiar` verdadeiro, e `Esquadra._casa_na_tela` a repinta todo quadro.
+func _noticiar_pendentes() -> void:
+	for t in _tracos_voando:
+		_noticiar(t)
 
 
 func _build_fleets() -> void:

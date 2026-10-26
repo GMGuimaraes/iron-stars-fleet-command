@@ -211,6 +211,94 @@ func _initialize() -> void:
 	_assert("pré-condição da asserção acima: nenhuma casa morreu na salva um",
 		_nenhuma_morte_na_primeira(e_f),
 		"todo `morta_em` ainda em -1,0 depois da primeira salva")
+	# ── C.3 metade de tela: a casa some quando o traço toca, não quando a salva fecha ──
+	# É a lei do jogador: ver a nave apagar NA hora em que o fogo chega. O número do quadro é lido do
+	# pulso desenhado em `main.gd`, e por isso esta metade monta a ponte em vez de contar a Esquadra
+	# nua. O plano chamava esta metade de "C.2"; C.2 já era o bloco de paridade acima, então ela desceu
+	# para C.3 e o desvio está registrado no plano.
+	var jogo_c3: Node3D = await _montar_jogo()
+	var eq_c3: Esquadra = jogo_c3.esquadra
+	# População capturada antes da busca, pela mesma razão de C.1: quem afunda sai de `lista_de()` na
+	# própria salva, e uma varredura pela lista diria "nenhum recado pendurado" sobre os cadáveres.
+	var pop_c3: Array[Dictionary] = []
+	for lado_c3 in ["aliado", "hostil"]:
+		for bloco_c3 in eq_c3.lista_de(lado_c3):
+			pop_c3.append(bloco_c3)
+	_marchar_jogo(jogo_c3)
+	# Pré-condição construída, e é preciso dizer por que ela é construída. Sob a dispersão bijetora
+	# que C.1 acabou de medir, cada casa viva de um bloco recebe EXATAMENTE um lance por atacante por
+	# salva (`casa_alvo = (casa + id + salva) % vivas`), então as 24 casas de um bloco se desgastam
+	# iguais e a primeira morte de um bloco coincide com o afundamento dele. Medido nesta rodada, na
+	# salva 185: 144 traços mataram, nenhum deles sobre um bloco que sobrevivesse à salva. Casa morta
+	# em bloco afundado não tem quadro para medir — ele sai da lista inteiro, e a lei do traço some
+	# junto. A mira por proximidade da task 5 é o que vai produzir a morte solitária no combate real;
+	# até lá, o corpo fraco é armado pela porta de `_golpe_na_casa` que a família B já usa.
+	var fracas_c3 := _armar_morte_solitaria(eq_c3)
+	_assert("a morte solitária foi armada num bloco que continua em jogo (pré-condição de C.3)",
+		fracas_c3 > 0, "%d casa(s) a um lance de morrer, com as outras cheias" % fracas_c3)
+	# A salva que apaga casa tem de ser PROCURADA, não suposta: na salva um nenhum corpo chega aos 35
+	# lances, e o teto de 400 é a janela medida em C.1 (primeira morte na salva 185 da Esquadra nua;
+	# aqui o tabuleiro vem da semente do jogo, então o índice exato muda e a janela não pode encolher).
+	var matou_c3: Array[Dictionary] = []
+	var salva_da_morte := -1
+	while matou_c3.is_empty() and eq_c3.salva_numero < 400:
+		eq_c3.troca_salva()
+		jogo_c3._armar_tracos()
+		for tr_c3 in eq_c3.tiros_da_salva():
+			if bool(tr_c3["matou"]):
+				matou_c3.append(tr_c3)
+		if not matou_c3.is_empty():
+			salva_da_morte = int(eq_c3.salva_numero)
+	_assert("existe salva que apaga casa em combate real (pré-condição do resto de C.3)",
+		not matou_c3.is_empty(), "primeira morte na salva %d" % salva_da_morte)
+	# O corpo medido precisa de um bloco AINDA EM JOGO: afundado, ele sai da lista e `pintar` escreve
+	# zero casas nele, então o "antes" leria falso por um motivo que não é a lei desta asserção.
+	var tra_c3: Dictionary = {}
+	var vivos_c3 := 0
+	for tr2_c3 in matou_c3:
+		if bool((tr2_c3["bate"] as Dictionary)["vivo"]):
+			vivos_c3 += 1
+			if tra_c3.is_empty():
+				tra_c3 = tr2_c3
+	# Os dois números são lidos, não inferidos: a asserção acima exige ao menos um bloco vivo, e o
+	# detalhe abaixo dá a fração inteira. Medido: com a morte armada casa a casa, os dezoito traços
+	# caem em dezoito blocos que seguem na lista, cada um com 23 casas cheias e uma a menos.
+	_assert("a morte medida acontece num bloco que segue na lista (pré-condição de C.3)",
+		not tra_c3.is_empty(), "%d traços mataram na salva %d // %d deles sobre bloco vivo" % [
+			matou_c3.size(), salva_da_morte, vivos_c3])
+	if not tra_c3.is_empty():
+		var casa_c3: Dictionary = (tra_c3["bate"] as Dictionary)["casas"][int(tra_c3["casa_alvo"])]
+		var atraso_c3 := float(int(tra_c3["casa"])) * PASSO_DA_ONDA
+		var toque_c3 := int(ceilf((atraso_c3 + TRACO_DE_BLOCO_SEG) / (1.0 / 60.0)))
+		var pendia_antes := bool(casa_c3["a_noticiar"])
+		var pintada_antes := _casa_pintada(eq_c3, tra_c3)
+		var pintada_depois := true
+		var q_c3 := 0
+		while q_c3 < 600:
+			jogo_c3._atualizar_tracos(1.0 / 60.0)
+			jogo_c3._pintar_massa(false)
+			q_c3 += 1
+			if q_c3 == toque_c3 + 1:
+				pintada_depois = _casa_pintada(eq_c3, tra_c3)
+		# O `+1` no "depois" é resolução de float, não folga de portão: `_traco_t` cresce somando
+		# 1/60, e 33 somas podem parar um hair abaixo de 0,55. O toque ainda tem de ser o quadro
+		# previsto, e o detalhe impresso diz em qual quadro a casa de fato saiu.
+		_assert("a casa apagada está na tela antes do toque e sai dela no toque, e só depois",
+			pendia_antes and pintada_antes and not pintada_depois,
+			"toque no quadro %d // pendente antes=%s, pintada antes=%s, pintada depois=%s" % [
+				toque_c3, str(pendia_antes), str(pintada_antes), str(pintada_depois)])
+	var pendentes_c3 := 0
+	for bloco_p3 in pop_c3:
+		for corpo_p3 in bloco_p3["casas"]:
+			if bool(corpo_p3["a_noticiar"]):
+				pendentes_c3 += 1
+	# Esta é a guarda do dono único do recado: apagado o ralo da salva, a notícia passa a ser dada só
+	# pela onda, e todo traço que sai do ar sem tocar (pulso encerrado, persiana, salva nova) tem de
+	# drenar — senão o corpo morto fica pintado para sempre com `a_noticiar` verdadeiro.
+	_assert("nenhuma notícia de morte sobrevive ao pulso: sem dreno a casa fica pendurada na tela",
+		pendentes_c3 == 0, "%d recados pendentes no fim do pulso da salva %d" % [
+			pendentes_c3, salva_da_morte])
+	jogo_c3.queue_free()
 	print("SONDA-CASAS: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for n in notes:
 		print("  " + n)
@@ -239,3 +327,68 @@ static func _nenhuma_morte_na_primeira(e: Esquadra) -> bool:
 				if float(casa["morta_em"]) > 0.0:
 					return false
 	return true
+
+
+## Monta a ponte e congela o mundo pelo instrumento da casa (`process_mode`, nunca `set_process`): sem
+## o congelamento, o `_process` do jogo arma traços por conta própria no meio da varredura manual de
+## C.3 e a leitura do quadro do toque deixaria de ser a salva que a sonda armou. Diferente de
+## `tools/probes/esquadra.gd:255`, esta montagem NÃO despe placa nem escudo — aqui a casca de pé é
+## justamente a lei sendo medida.
+func _montar_jogo() -> Node3D:
+	var jogo: Node3D = (load("res://main.tscn") as PackedScene).instantiate()
+	get_root().add_child(jogo)
+	jogo.process_mode = Node.PROCESS_MODE_DISABLED
+	await _frames(3)
+	return jogo
+
+
+## Marcha a muralha do jogo montado até o contato pela porta da ponte: `_nucleos_da_esquadra` são os
+## mesmos núcleos que o jogo passa, e a régua é a de fachada da família 7, não um conto de quadros.
+func _marchar_jogo(jogo) -> void:
+	var nuc_a: Array = jogo._nucleos_da_esquadra(true)
+	var nuc_h: Array = jogo._nucleos_da_esquadra(false)
+	var e: Esquadra = jogo.esquadra
+	var q := 0
+	while _fachadas(e) > Esquadra.DISTANCIA_DE_CONTATO + FOLGA_CONTATO and q < QUADROS_DA_TRAVESSIA:
+		e.passo(1.0 / 60.0, nuc_a, nuc_h)
+		q += 1
+
+
+## A casa ainda está na tela? Lido da régua com que `pintar` decide o que escreve
+## (`Esquadra._casa_na_tela`, `esquadra.gd:628`), não do `MultiMesh`: sob `--headless` a instância
+## devolve transformada identidade e o portão passaria aprovado sem um pixel visto. E é lida PELO
+## ÍNDICE DO CORPO, não por contagem: `pintar` escreve `base + c` casa a casa e nunca compacta a fila,
+## então "a casa 19 está desenhada" não é "há 20 casas desenhadas".
+static func _casa_pintada(e: Esquadra, t: Dictionary) -> bool:
+	var bate: Dictionary = t["bate"]
+	for b in e.lista_de(String(bate["lado"])):
+		if int(b["id"]) == int(bate["id"]):
+			return Esquadra._casa_na_tela(b, int(t["casa_alvo"]))
+	return false
+
+
+## Arma a morte solitária que C.3 precisa ver: a casa do meio de cada bloco fica a UM LANCE MÍNIMO
+## de morrer, e as outras 23 continuam cheias, então o bloco sobrevive à própria morte. O golpe é
+## cobrado pela porta de produção (`_golpe_na_casa`), com dano menor que o limiar, para que nenhuma
+## casa atravesse zero durante a armação — atravessar não seria só sujar a medida: `_golpe_na_casa`
+## redistribui o lance de casa morta para a vizinha viva (`_casa_seguindo`), e uma vizinha apagada
+## na armação trocaria a cascata de 24 por uma de 23.
+## O limiar é `TIRO_DE_CASA × 0,25 × 1,4`: a boca mínima do cano (`0.25 + ARMAS/100 × 0.75` com
+## `ARMAS` zero) e o fator de transbordo depois da placa, que a armação gasta casa a casa.
+func _armar_morte_solitaria(e: Esquadra) -> int:
+	var limiar := Esquadra.TIRO_DE_CASA * 0.25 * 1.4
+	var passo := limiar * 0.5
+	var meio := int(Esquadra.CASAS / 2)
+	var armadas := 0
+	for lado_a in ["aliado", "hostil"]:
+		for bloco_a in e.lista_de(lado_a):
+			var casa_a: Dictionary = bloco_a["casas"][meio]
+			var golpes_a := 0
+			while float(casa_a["vida"]) > limiar and golpes_a < 4000:
+				e._golpe_na_casa(bloco_a, meio, passo)
+				golpes_a += 1
+			var vida_final := float(casa_a["vida"])
+			var intacto := Esquadra.casas_no_bloco(bloco_a) == Esquadra.CASAS
+			if vida_final > 0.0 and vida_final <= limiar and bool(bloco_a["vivo"]) and intacto:
+				armadas += 1
+	return armadas

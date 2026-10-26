@@ -958,11 +958,13 @@ git status --short
 - Consumes: `fila_da_salva` com `bate`, `casa_alvo`, `matou` (Task 3); `esquadra.noticiar_morte` (Task 2).
 - Produces: `main._noticiar(traço)`, `main._noticiar_pendentes()`. A lei nova, uma linha: **nenhuma casa apaga sem o traço que a matou ter chegado, e nenhum traço que matou deixa de apagar a casa no quadro em que toca.**
 
-- [ ] **Step 1: Escrever a asserção de tela (vermelha antes)**
+- [x] **Step 1: Escrever a asserção de tela (vermelha antes)**
 
 Acrescentar à família C, depois da metade de conta, usando o jogo montado. A salva tem de ser
 procurada, não suposta: na salva um nenhuma casa morre (são 35 lances sobre a mesma casa), então
 `troca_salva()` uma vez deixaria o `matou[]` vazio e a asserção abaixo aprovaria o vazio.
+**Executado, e o texto abaixo é o roteiro, não o código aprovado — ver "Medido na execução" logo
+depois do Step 4, que é onde os seis desvios estão registrados com os números lidos.**
 
 ```gd
 	# ── C.2 metade de tela: a casa some quando o traço toca, não quando a salva fecha ──
@@ -1064,7 +1066,17 @@ Rodar: reprova a asserção do quadro do toque (`pintada antes=true` esperado, l
 o `_noticiar_tudo()` da salva apaga tudo no fechamento — a casa já saiu da tela trinta e três quadros
 antes do traço chegar.
 
-- [ ] **Step 2: O traço dá o recado**
+**Vermelho lido (como o roteiro previu, no quadro previsto):**
+
+```
+QUEBRA a casa apagada está na tela antes do toque e sai dela no toque, e só depois —
+  toque no quadro 39 // pendente antes=false, pintada antes=false, pintada depois=false
+```
+
+`pendente antes=false` e `pintada antes=false` são o mesmo fato duas vezes: o dreno da salva já tinha
+consumido o recado e apagado a casa, e ela só voltaria a sair de cena no toque, 39 quadros depois.
+
+- [x] **Step 2: O traço dá o recado**
 
 Em `main.gd`, substituir `_armar_tracos` por:
 
@@ -1127,11 +1139,19 @@ func _noticiar_pendentes() -> void:
 		_noticiar(t)
 ```
 
-- [ ] **Step 3: Tirar o dreno interino do ledger**
+**Aplicado com um desvio de canal, e ele é estrutural:** o roteiro punha o `_noticiar(t)` dentro do
+ramo de traço fora do ar de `_pintar_tracos`. `_pintar_tracos` sai no primeiro
+`if not is_instance_valid(massa_tracos) or massa_tracos.multimesh == null`, que é exatamente o estado
+de `--headless`: o recado ficaria preso a uma função que não roda, e a sonda de janela passaria por
+acaso. O recado é do relógio, não da escrita do `MultiMesh`, então ele foi posto no laço de
+`_atualizar_tracos` (mesma cota: `_traco_t >= atraso + TRACO_DE_BLOCO_SEG`) e `_pintar_tracos` não foi
+tocado. `_armar_tracos` e `_apagar_tracos` ficaram como escritos acima.
+
+- [x] **Step 3: Tirar o dreno interino do ledger**
 
 Apagar `func _noticiar_tudo()` de `esquadra.gd` e a linha `_noticiar_tudo()` dentro de `troca_salva`. A notícia agora tem um dono só: a onda.
 
-- [ ] **Step 4: Verde na metade de tela**
+- [x] **Step 4: Verde na metade de tela**
 
 ```bash
 cd /d/Downloads/IronStarsFleetCommand
@@ -1148,13 +1168,75 @@ grep -hE "veredito|quebras=|primeira casa" /d/Downloads/tmp-userdata-iron/casas.
 
 Esperado `quebras=0`. O `_noticiar_pendentes()` de `_armar_tracos` é o que impede a morte da salva anterior de ser contada pela onda nova — se a asserção `pendentes == 0` reprovar, a causa é um dos três canais (pulso, `_apagar_tracos`, `_armar_tracos`) sem drenagem, não a tolerância.
 
-- [ ] **Step 5: Bateria**
+**Medido na execução — seis desvios deste Step, todos com o número lido na sonda:**
+
+1. **A metade chama-se C.3, não C.2.** C.2 já era o bloco de paridade (`navios` = soma das vidas,
+   `casas_vivas` = contagem) que este plano não previu; a metade de tela desceu para C.3 e o próprio
+   código diz por quê.
+2. **A morte é armada, não esperada.** O roteiro mandava marchar e procurar a salva que apaga casa.
+   Procurada sob a dispersão bijetora de `casa_alvo = (casa + id + salva) % vivas`, ela não existe em
+   bloco vivo: cada casa viva recebe **exatamente um** lance por atacante por salva, as 24 casas se
+   desgastam iguais e a primeira morte de um bloco coincide com o afundamento dele. Medido na
+   Esquadra nua (família C.1): primeira morte na **salva 185**, 144 traços mataram, **0** sobre bloco
+   que sobrevivesse à salva. Bloco afundado sai da lista na própria salva e `pintar` escreve zero
+   casas nele — não há quadro antes/depois para medir. `_armar_morte_solitaria()` deixa uma casa a um
+   lance de morrer (240 casas em 240 blocos) e o resto cheio, pela porta de produção
+   `_golpe_na_casa` que a família B já usa. **A Task 5 é o que transforma isto em caso real**: com a
+   mira por proximidade, o desgaste deixa de ser uniforme e a morte solitária acontece sozinha.
+3. **Teto de 400 salvas, não 120.** 120 estava abaixo da morte medida em C.1 (185); com a mira da
+   Task 5 o índice muda, e a janela não pode encolher.
+4. **O recado saiu do `_pintar_tracos` (detalhe do Step 2 acima).** O plano punha `_noticiar(t)` no
+   ramo de traço fora do ar; `_pintar_tracos` retorna cedo quando a massa não está montada, que é o
+   estado de `--headless` — a asserção seria lida de uma função que não roda.
+5. **`_casa_pintada` lê o índice, não a contagem.** O roteiro comparava `casa_alvo < na_tela`, o que
+   pressupõe casas compactadas. `pintar` escreve a casa na instância `base + c` **por índice** e nunca
+   compacta; a autoridade é `Esquadra._casa_na_tela(bloco, c)`, lida direto do corpo apontado. Contar
+   e comparar aprovaria um traço que matou a casa 5 enquanto a casa 3 continua desenhada.
+6. **A asserção do "depois" perdeu o conjunto `not a_noticiar`.** Ele media a mesma lei que a varredura
+   de `pendentes == 0` já percorre, sobre toda a população; mantê-lo dentro do `and` daria duas
+   asserções para um fato e uma delas ficava vermelha por motivo de índice, não de lei.
+
+**Um falso alarme que esta Task registrou, para que ninguém o re-compre:** a primeira leitura do
+veredito imprimiu `18 traços mataram na salva 1 // 1 deles sobre bloco vivo` e parecia dizer que 17
+mortes estavam fora de jogo. Não estavam — o formato passava `int(not tra_c3.is_empty())`, um 0/1,
+onde o texto prometia uma contagem. Um print temporário de diagnóstico (eliminado depois) mediu os
+dezoito traços: `vivo=true`, `rend=false`, `presa=false`, `casas_vivas=23`, `alvo=12`, `morta_em=1` em
+todos os dezoito, dos dois lados. A asserção agora conta de verdade.
+
+**Verde lido (`tools/probes/casas.gd`, zero linhas de erro):**
+
+| grandeza | medida |
+|---|---|
+| veredito | `quebras=0 - conferencias=13` |
+| morte armada | **240** casas a um lance de morrer, com as outras cheias |
+| traços que mataram na salva procurada | **18**, todos em bloco vivo, salva **1** |
+| quadro do toque | **39** (atraso da casa + 0,55 s de voo, a 1/60) |
+| lei dos dois lados | `pendente antes=true, pintada antes=true, pintada depois=false` |
+| recados pendentes no fim do pulso | **0** |
+
+Antes do Step 2+3, a mesma sonda lia `pendente antes=false, pintada antes=false, pintada depois=false`
+— a casa saía da tela 39 quadros antes do fogo chegar, que é o vermelho que o Step 1 queria ver.
+
+- [x] **Step 5: Bateria**
 
 ```bash
 bash /d/Downloads/tmp-userdata-iron/bateria.sh 2>&1 | tail -40
 ```
 
 Ler depois do `BATERIA: fim`. Nada **novo** pode reprovar (as pendências re-medidas são da Task 6).
+
+**Lido na rodada:** 31 sondas, 29 com `quebras=0` e zero linhas de erro, `casas` com
+`quebras=0 - conferencias=13`. Os dois vermelhos são os mesmos corpos de antes desta Task e nenhum
+deles nomeia a onda:
+
+| sonda | quebras | as asserções quebradas (número da **linha do log**, não do `.gd`) |
+|---|---|---|
+| `esquadra` | 4 | "sobrando um terco, o que sumiu foi o topo" (log:20), "com metade fora, o corte cai dentro de uma camada" (log:21), "casco a zero afunda o bloco e a conta de perdas cobra uma vez só" (log:24), "a caixa segue a lotação" (log:101) |
+| `escudo` | 1 | "duas salvas de bloco em força cheia somem na placa sem afogar um navio" (log:52) |
+
+As quatro de `esquadra` e a de `escudo` são a lista escrita no Step 1 da Task 6 (`:984/:987/:1038/2011/2014`
+e a cláusula de janela `escudo.gd:547-550`): contagens de casa/placa que esta lapidação mudou de
+unidade. Nenhuma delas é da notícia da morte.
 
 - [ ] **Step 6: Commit**
 
