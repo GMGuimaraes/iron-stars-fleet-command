@@ -1596,7 +1596,7 @@ a cláusula de janela em `:547-550`, que a placa por casa não tem por decisão 
 afrouxamento: os cinco writes viram `fixar_lotacao`, e a cláusula da janela passa a declarar a placa
 de casa.
 
-- [ ] **Step 1: Caçar os writes e os loops que assumem `range(casas)`**
+- [x] **Step 1: Caçar os writes e os loops que assumem `range(casas)`**
 
 ```bash
 cd /d/Downloads/IronStarsFleetCommand
@@ -1634,11 +1634,11 @@ Cada laço `for c in range(casas_vivas(b))` que amostra **casa por casa** vira:
 			continue
 ```
 
-- [ ] **Step 2: Atualizar as alegações de cabeçalho**
+- [x] **Step 2: Atualizar as alegações de cabeçalho**
 
 `tools/probes/esquadra.gd`: família 3 («O TOPO FECHA PRIMEIRO») passa a dizer que o topo fecha **pelo corpo da casa**, e o `ceilf` do agregado é contrafactual documentado (a sonda `casas` mede os sete estados errados). Família 12 («UM LANCE POR CASCO PINTADO») passa a dizer que a fila **é** o ledger, não derivada dele. `tools/probes/escudo.gd`: a cláusula do bloco declara `ESCUDO_DE_BLOCO 4,4` como a **soma** das vinte e quatro placas de `PLACA_DA_CASA 0,18333`.
 
-- [ ] **Step 3: Rodar as seis sondas tocadas, uma a uma, e ler o veredito delas**
+- [x] **Step 3: Rodar as seis sondas tocadas, uma a uma, e ler o veredito delas**
 
 ```bash
 for p in esquadra escudo comando ia voo; do
@@ -1654,7 +1654,7 @@ done
 
 Sonda vermelha: a correção é declarar a precondition **em quem cria o estado** (`fixar_lotacao`, `_novo_bloco`), nunca afrouxar tolerância.
 
-- [ ] **Step 4: README — varredura de números**
+- [x] **Step 4: README — varredura de números**
 
 Reescrever a cláusula da massa (`README.md:40`) com os números lidos nesta rodada, na língua medida do resto do arquivo:
 
@@ -1670,7 +1670,7 @@ grep -n "4,4\|2,2\|3,08\|35 golpe\|840\|0,18333\|4,16667\|casas_vivas\|24 casa" 
 
 Toda frase que citar número do caminho de fogo tem de bater com a cota ou com a medição desta rodada.
 
-- [ ] **Step 5: Spec — corrigir a frase que a medição derrubou**
+- [x] **Step 5: Spec — corrigir a frase que a medição derrubou**
 
 Em `docs/superpowers/specs/2026-10-25-dano-por-casco-e-morte-visivel-design.md` §3, o bullet do teorema ganha a verdade medida (e a §10 recebe os números das famílias C/D). Substituir a alegação:
 
@@ -1690,7 +1690,7 @@ pela versão medida:
     `tools/probes/casas.gd` mede quantas vezes ela teria errado.
 ```
 
-- [ ] **Step 6: Paridade `.gd` ⟷ `.gd.uid` e commit**
+- [x] **Step 6: Paridade `.gd` ⟷ `.gd.uid` e commit**
 
 ```bash
 cd /d/Downloads/IronStarsFleetCommand
