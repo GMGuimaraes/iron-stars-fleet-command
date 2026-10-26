@@ -1238,7 +1238,7 @@ As quatro de `esquadra` e a de `escudo` são a lista escrita no Step 1 da Task 6
 e a cláusula de janela `escudo.gd:547-550`): contagens de casa/placa que esta lapidação mudou de
 unidade. Nenhuma delas é da notícia da morte.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add main.gd esquadra.gd tools/probes/casas.gd
@@ -1252,6 +1252,12 @@ um dono so. Sonda casas.gd C.2 prova as duas pontas da lei."
 git push origin main
 git status --short
 ```
+
+**Feito, com o roteiro corrigido onde ele mentia sobre si mesmo:** entraram quatro arquivos, não três
+— o próprio plano vai no commit, porque os desvios são parte da entrega. `git push origin main` levou
+`a5d2474..0979373`; a sonda é **C.3**, não C.2, e a mensagem real carrega os números lidos (toque no
+quadro 39, 18 traços sobre bloco vivo, `quebras=0` em 29 das 31 sondas). `_tmp_pista_fria.gd` e o `.uid`
+de outra sessão ficaram fora, como ficam em toda rodada deste repo.
 
 ---
 
