@@ -273,9 +273,7 @@ func _montar_jogo() -> Node3D:
 	# família 12 de `tools/probes/escudo.gd`.
 	for casca_lado in ["aliado", "hostil"]:
 		for casca_bloco in game.esquadra.lista_de(casca_lado):
-			casca_bloco["escudo"] = 0.0
-			casca_bloco["escudo_max"] = 0.0
-			casca_bloco["escudo_cai"] = 0.0
+			Esquadra.zerar_placas(casca_bloco)
 	return game
 
 func _cauda(jogo) -> Array[int]:
@@ -303,9 +301,7 @@ func _nova_esquadra() -> Esquadra:
 	e.montar(_nucleos(true), _nucleos(false))
 	for lado in ["aliado", "hostil"]:
 		for bloco in e.lista_de(lado):
-			bloco["escudo"] = 0.0
-			bloco["escudo_max"] = 0.0
-			bloco["escudo_cai"] = 0.0
+			Esquadra.zerar_placas(bloco)
 	return e
 
 func _novo_mm(e: Esquadra) -> MultiMesh:
@@ -485,7 +481,9 @@ static func _casas_no_mundo(bloco: Dictionary) -> PackedStringArray:
 	var rot := Basis.from_euler(Vector3(0.0, float(bloco["rumo"]), 0.0))
 	var base: Vector3 = bloco["pos"]
 	var partes: PackedStringArray = []
-	for c in range(Esquadra.casas_vivas(bloco)):
+	for c in range(Esquadra.CASAS):
+		if not Esquadra.casa_viva(bloco, c):
+			continue
 		partes.append(str(base + (rot * Esquadra.casa_local(c))))
 	partes.sort()
 	return partes
@@ -976,15 +974,21 @@ func _initialize() -> void:
 			(ext["min"] as Vector3).z, (ext["max"] as Vector3).z])
 
 	# ── 3. o topo fecha primeiro ────────────────────────────────────────────────────────────
+	#  A casa e ordenada camada por camada e `fixar_lotacao` preenche do indice zero para cima: o
+	#  corpo que some e o do topo. O TOPO FECHA PELO CORPO DA CASA, nao pelo agregado -- a prova e que
+	#  `casas_vivas` conta corpos, porque a derivacao antiga (`ceilf(navios / VIDA_DA_CASA)`) nao pousa
+	#  no inteiro: `23 x (100/24) = 95,83333333333336` e o `ceilf` disso devolve 24, uma casa acima do
+	#  corpo. Dos vinte e quatro estados inteiros de lotacao, sete (5, 6, 7, 20, 21, 22, 23) seriam
+	#  lidos uma casa acima. Medido e documentado em `tools/probes/casas.gd`, familia B.
 	var ordem_ok := true
 	for c in range(1, CASAS):
 		if Esquadra.casa_local(c).y < Esquadra.casa_local(c - 1).y - 0.0001:
 			ordem_ok = false
 	var meia := _nova_esquadra()
-	meia.blocos_hostis[0]["navios"] = float(NAVIOS_NO_BLOCO) * 0.5
+	meia.fixar_lotacao(meia.blocos_hostis[0], float(NAVIOS_NO_BLOCO) * 0.5)
 	var casas_meia := Esquadra.casas_vivas(meia.blocos_hostis[0])
 	var terco := _nova_esquadra()
-	terco.blocos_hostis[0]["navios"] = float(NAVIOS_NO_BLOCO) / 3.0
+	terco.fixar_lotacao(terco.blocos_hostis[0], float(NAVIOS_NO_BLOCO) / 3.0)
 	var casas_terco := Esquadra.casas_vivas(terco.blocos_hostis[0])
 	var pintadas_max_y := -INF
 	var escondidas_min_y := INF
@@ -1035,16 +1039,24 @@ func _initialize() -> void:
 		"MOTORES %.1f, ARMAS %.1f, TRIPULACAO %.1f, navios intactos em %.0f" % [alvo["MOTORES"],
 			alvo["ARMAS"], alvo["TRIPULACAO"], alvo["navios"]])
 	var perdas_antes := int(g.perdas_hostis)
-	alvo["navios"] = 6.0
-	var afundou := g._aplicar_golpe(alvo, "CASCO", 5.0)
-	var re_petardo := g._aplicar_golpe(alvo, "CASCO", 5.0)
+	g.fixar_lotacao(alvo, 6.0)
+	var vivas_4 := Esquadra.casas_no_bloco(alvo)
+	var afundou := false
+	var re_petardo := false
+	var golpes := 0
+	while not afundou and golpes < 8:
+		golpes += 1
+		afundou = g._aplicar_golpe(alvo, "CASCO", 5.0)
+		if afundou:
+			re_petardo = g._aplicar_golpe(alvo, "CASCO", 5.0)
 	var segunda_perda := int(g.perdas_hostis) - perdas_antes
 	g._aplicar_golpe(alvo, "TRIPULACAO", 200.0)
+	print("SONDA-ESQUADRA: casco a zero - afunda no golpe %d (vivas na entrada %d), o tiro em cadaver devolve %s e perdas sobe %d" % [golpes, vivas_4, re_petardo, segunda_perda])
 	_assert("casco a zero afunda o bloco e a conta de perdas cobra uma vez so",
 		afundou and not re_petardo and not bool(alvo["vivo"]) and segunda_perda == 1
 			and not bool(alvo["rendicao"]),
-		"afundou=%s, tiro em cadavez=%s, perdas=+%d, cadaver rende-se=%s" % [afundou, re_petardo,
-			segunda_perda, alvo["rendicao"]])
+		"afundou=%s em %d golpes, tiro em cadavez=%s, perdas=+%d, cadaver rende-se=%s" % [afundou,
+			golpes, re_petardo, segunda_perda, alvo["rendicao"]])
 
 	# ── 5. rendicao cruza uma vez so, e o banco e o teto ────────────────────────────────────
 	var r := _nova_esquadra()
@@ -2007,21 +2019,28 @@ func _initialize() -> void:
 			+ "rumo %.1f graus (a caixa e o volume dos cascos pintados, nao uma vontade)" % [
 				rad_to_deg(float(b_cheio["rumo"]))])
 	var b_meio: Dictionary = ca_a[1]
-	var navios_cheios := float(b_meio["navios"])
-	b_meio["navios"] = float(NAVIOS_NO_BLOCO) * 0.5
+	e_cor.fixar_lotacao(b_meio, float(NAVIOS_NO_BLOCO) * 0.5)
 	var cx_meio := e_cor.caixa_do_bloco(b_meio)
 	var casas_meio := Esquadra.casas_vivas(b_meio)
-	b_meio["navios"] = navios_cheios
+	e_cor.fixar_lotacao(b_meio, float(NAVIOS_NO_BLOCO) / 3.0)
+	var cx_terco_14 := e_cor.caixa_do_bloco(b_meio)
+	var casas_terco_14 := Esquadra.casas_vivas(b_meio)
+	e_cor.fixar_lotacao(b_meio, float(NAVIOS_NO_BLOCO))
 	var b_morto: Dictionary = ca_a[2]
 	b_morto["vivo"] = false
 	var cx_morto := e_cor.caixa_do_bloco(b_morto)
 	b_morto["vivo"] = true
-	_assert("a caixa segue a lotacao: meio bloco perde o topo, morto nao tapa lance nenhum",
-		casas_meio == 12 and absf(cx_meio.size.y - (PISO_Y - Esquadra.PASSO_CASA_Y)) <= 0.02 \
+	_assert("a caixa segue a lotacao: cada camada extincta derruba um passo do topo, morto nao tapa",
+		casas_meio == 12 and casas_terco_14 == 8 \
+				and absf(cx_meio.size.y - (PISO_Y - Esquadra.PASSO_CASA_Y)) <= 0.02 \
+				and absf(cx_terco_14.size.y - (PISO_Y - 2.0 * Esquadra.PASSO_CASA_Y)) <= 0.02 \
 				and cx_morto.size.x < 0.0 and cx_morto.size.y < 0.0 and cx_morto.size.z < 0.0,
-			"meio bloco: %d casas e %.3f u de altura contra %.3f u do cheio (fecha o topo, nao esburaca o " % [
-				casas_meio, cx_meio.size.y, cx_cheio.size.y] \
-			+ "meio); morto: size %.1f, que e o 'nao existe' do AABB" % [cx_morto.size.x])
+			"metade (doze casas, camadas zero e uma): %d casas e %.3f u de altura; um terco (oito, " % [
+				casas_meio, cx_meio.size.y] \
+			+ "so camada zero): %d casas e %.3f u; cheio: %.3f u -- cada camada extincta custa um " % [
+				casas_terco_14, cx_terco_14.size.y, cx_cheio.size.y] \
+			+ "passo de %.1f u; morto: size %.1f, que e o 'nao existe' do AABB" % [
+				Esquadra.PASSO_CASA_Y, cx_morto.size.x])
 	var leituras := 0
 	for lado14a in ["aliado", "hostil"]:
 		for b14a in e_cor.lista_de(lado14a):

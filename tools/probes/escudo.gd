@@ -24,9 +24,13 @@ extends SceneTree
 ##   vence a batalha.
 ## - `ESCUDO_JANELA 4,0 s` é 2,5 × a cadência da salva: quem perde a casca leva pelo menos duas salvas
 ##   em carne viva antes de a regeneração encher alguma coisa de novo.
-## - `ESCUDO_DE_BLOCO 4,4` é exatamente duas `DANO_DE_BLOCO` (2,2) e o bloco nasce com `escudo_max` em
-##   zero: a placa da muralha segura as duas primeiras salvas de casco e depois o bloco fica exposto
-##   até afundar. Não recomponha é consequência da lei (`teto <= 0`), não uma exceção escrita nela.
+## - `ESCUDO_DE_BLOCO 4,4` é a SOMA das vinte e quatro placas de casa (`PLACA_DA_CASA` = 4,4 ÷ 24 =
+##   0,183333; somadas em double dão 4,400000000000003, medido em `tools/probes/casas.gd`) e é
+##   exatamente duas `DANO_DE_BLOCO` (2,2): a muralha segura as duas primeiras salvas e depois fica
+##   exposta até afundar. O bloco nasce com `escudo_max` em zero — não recomponha é consequência da
+##   lei (`teto <= 0`), não uma exceção escrita nela. A JANELA (`ESCUDO_JANELA`) é do casco nomeado:
+##   a casa sem chapa não abre janela nenhuma (spec §9), e `escudo_cai` do bloco fica no zero do
+##   construtor -- a família 12 cobra exatamente isso.
 ##
 ## O que fica FORA de propósito, e por isso tem família própria: os três canais que não são projétil
 ## (abalroamento, coroa, poço) e o ataque de subsistema. Cada um deles continua com os números velhos
@@ -544,10 +548,21 @@ func _initialize() -> void:
 			float(bloco["escudo_max"])])
 	g12.esquadra._aplicar_golpe(bloco, "CASCO", dano_bloco)
 	g12.esquadra._aplicar_golpe(bloco, "CASCO", dano_bloco)
-	_assert("duas salvas de bloco em força cheia somem na placa sem afogar um navio",
-		absf(float(bloco["navios"]) - navios_0) < FOLGA_REL and float(bloco["escudo"]) == 0.0
-			and absf(float(bloco["escudo_cai"]) - janela) < FOLGA_REL,
-		"navios %0.2f // %s" % [float(bloco["navios"]), _bilhete(bloco)])
+	# Desde a placa por casa a mordida de uma salva de bloco é `2,2 / 24` em cada uma das vinte e
+	# quatro chapas, e o resto que sobra é poeira de double, não resto de lei. A JANELA de colapso,
+	# essa, era do bloco e afundou junto com a placa única: casa que fica sem chapa não entra em
+	# janela nenhuma (spec §9), e `escudo_cai` continua o zero escrito no construtor.
+	var maior_chapa := 0.0
+	for casa_12 in bloco["casas"]:
+		maior_chapa = maxf(maior_chapa, float(casa_12["placa"]))
+	var somada_12 := float(bloco["escudo"])
+	_assert("duas salvas de bloco em força cheia somem na placa de casa sem afogar um navio",
+		absf(float(bloco["navios"]) - navios_0) < FOLGA_REL and somada_12 < 1e-12 \
+				and maior_chapa < 1e-12 and float(bloco["escudo_cai"]) == 0.0,
+			"navios %0.2f // chapa somada " % [float(bloco["navios"])] + str(somada_12) \
+			+ " e a maior placa de casa " + str(maior_chapa) \
+			+ ", que e poeira de double de 22/24 x 24 - 44/24; janela do bloco em zero, que e a " \
+			+ "lei nova, casa sem chapa nao abre janela: " + _bilhete(bloco))
 	g12.esquadra._aplicar_golpe(bloco, "CASCO", dano_bloco)
 	var perda := navios_0 - float(bloco["navios"])
 	_assert("a terceira salva morde o navio: transbordo x 1,4, o fator velho da casa",

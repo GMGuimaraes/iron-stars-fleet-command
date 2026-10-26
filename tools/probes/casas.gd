@@ -132,10 +132,30 @@ func _initialize() -> void:
 					ceilf_errados += 1
 	_assert("em toda casa de todo bloco, `navios` é a soma das vidas e `casas_vivas` é a contagem",
 		desvios == 0, "%d blocos-casa conferidos, %d desvios" % [conferidas, desvios])
-	# A asserção abaixo é a medição da Step 1 escrita como portão: a derivação velha existiu, e agora
-	# é contrafactual documentado — quantas vezes ela teria errado a silhueta neste combate.
-	_assert("a derivação antiga por `ceilf` do agregado teria errado a contagem de casas",
-		ceilf_errados >= 0, "%d leituras do ceilf velho fora do corpo" % ceilf_errados)
+	# O contrafactual, agora como portão e não como frase: a derivação velha (`ceilf(navios ÷ 100 × 24)`)
+	# existiu e ainda é o caminho dos dicionários nus, então ela é exercida sobre os vinte e três estados
+	# inteiros de lotação e cobra a LISTA dos que erram. `>= 0` não reprovaria nada; isto reprova se a
+	# aritmética do agregado se mover. Medido nesta casa: sete estados, e o pior é 23 corpos lidos 24
+	# porque `23 × (100÷24) = 95,83333333333336`.
+	var e_cf := _nova_esquadra()
+	var bloco_cf: Dictionary = e_cf.blocos_hostis[0]
+	var cf_errados: Array[int] = []
+	var pior_23 := -1
+	for k in range(1, Esquadra.CASAS):
+		e_cf.fixar_lotacao(bloco_cf, float(Esquadra.VIDA_DA_CASA) * float(k))
+		var corpo := Esquadra.casas_vivas(bloco_cf)
+		var frac_cf := clampf(float(bloco_cf["navios"]) / float(Esquadra.NAVIOS_NO_BLOCO), 0.0, 1.0)
+		var velho_cf := 0 if frac_cf <= 0.0 else maxi(1, int(ceilf(frac_cf * float(Esquadra.CASAS))))
+		if velho_cf != corpo:
+			cf_errados.append(k)
+			if k == Esquadra.CASAS - 1:
+				pior_23 = velho_cf
+	_assert("a derivação antiga por `ceilf` erra exatamente os sete estados contados, nunca menos",
+		cf_errados == [5, 6, 7, 20, 21, 22, 23] and pior_23 == Esquadra.CASAS,
+			"%d estados fora do corpo: %s, e o estado 23 lido como %d (o agregado a 23 corpos e %.14f)" % [
+				cf_errados.size(), str(cf_errados), pior_23, float(bloco_cf["navios"])])
+	e_cf.fixar_lotacao(bloco_cf, float(Esquadra.NAVIOS_NO_BLOCO))
+	print("SONDA-CASAS: ceilf velho leria fora do corpo %d vezes em %d blocos-casa de combate, e %d dos 23 estados inteiros: %s" % [ceilf_errados, conferidas, cf_errados.size(), str(cf_errados)])
 	# ── C. MORTE VISÍVEL, metade de conta: cada casa apagada tem um traço que a matou ──
 	var e_d := _nova_esquadra()
 	_marchar(e_d)
@@ -255,6 +275,9 @@ func _initialize() -> void:
 	# zero casas nele, então o "antes" leria falso por um motivo que não é a lei desta asserção.
 	var tra_c3: Dictionary = {}
 	var vivos_c3 := 0
+	# O quadro do toque sobe para o escopo da função: os números desta rodada, os mesmos que o README e
+	# o spec citam, saem numa linha só no fim e precisam alcançá-lo.
+	var quadro_do_toque := -1
 	for tr2_c3 in matou_c3:
 		if bool((tr2_c3["bate"] as Dictionary)["vivo"]):
 			vivos_c3 += 1
@@ -270,6 +293,7 @@ func _initialize() -> void:
 		var casa_c3: Dictionary = (tra_c3["bate"] as Dictionary)["casas"][int(tra_c3["casa_alvo"])]
 		var atraso_c3 := float(int(tra_c3["casa"])) * PASSO_DA_ONDA
 		var toque_c3 := int(ceilf((atraso_c3 + TRACO_DE_BLOCO_SEG) / (1.0 / 60.0)))
+		quadro_do_toque = toque_c3
 		var pendia_antes := bool(casa_c3["a_noticiar"])
 		var pintada_antes := _casa_pintada(eq_c3, tra_c3)
 		var pintada_depois := true
@@ -386,6 +410,20 @@ func _initialize() -> void:
 			and is_equal_approx(caixa_rala.size.z, caixa_cheia.size.z),
 		"%d casas da coluna + a do meio apagadas de %d // caixa %s -> %s" % [coluna.size(),
 			Esquadra.CASAS, str(caixa_cheia.size), str(caixa_rala.size)])
+	# Os números que o README e a §10 do spec citam, impressos nesta rodada em vez de morar só na
+	# frase de um portão que passou verde: cada um é o mesmo valor que a asserção acima conferiu.
+	print("SONDA-CASAS: escala %d golpes de bloco = %d lances de casa" % [golpes, tiros])
+	print("SONDA-CASAS: census %d casas apagadas, %d sem traco, %d traco sem morte" % [
+		casas_apagadas, sem_traco, traco_sem_morte])
+	print("SONDA-CASAS: fila da salva um - %d tracos contra %d casas cobradas em %d blocos" % [
+		e_f.tiros_da_salva().size(), cobradas, e_f.pares_da_ultima_salva.size()])
+	print("SONDA-CASAS: morte real na salva %d - %d tracos mataram, %d sobre bloco vivo, apaga no quadro %d" % [
+		salva_da_morte, matou_c3.size(), vivos_c3, quadro_do_toque])
+	print("SONDA-CASAS: mira por atacante - %d casa(s) concentrado contra %d disperso (campo %d contra %d); tracos da salva um %d disperso contra %d concentrado" % [
+		pior_c, pior_d, distintos_c, distintos_d,
+		largada_d.tiros_da_salva().size(), largada_c.tiros_da_salva().size()])
+	print("SONDA-CASAS: primeira casa apagada - salva %d com a ordem contra %d sem ela" % [
+		salva_c, salva_d])
 	print("SONDA-CASAS: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for n in notes:
 		print("  " + n)

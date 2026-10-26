@@ -63,11 +63,17 @@ restante agüenta.
 O que a mudança garante, e o que ela deixa exatamente como está — as duas primeiras são asserção de
 sonda:
 
-* **A derivação antiga de `casas_vivas` continua valendo, agora como teorema.** Cada casa viva
-  carrega `vida ∈ (0, VIDA_DA_CASA]`, então a soma das vivas cai em `(k−1, k]` multiplicadas de
-  `VIDA_DA_CASA`, onde `k` é a contagem de casas vivas, e o `ceilf(frac × CASAS)` de
-  [`esquadra.gd:522-526`](../../esquadra.gd) devolve `k` exatamente. A função não é reescrita: ela
-  deixa de ser a autoridade da morte e passa a ser a leitura dela.
+* **A derivação antiga de `casas_vivas` vira leitura, e a medição derrubou o teorema.** Cada casa
+  viva carrega `vida ∈ (0, VIDA_DA_CASA]`, e o desenho prometia que a soma das vivas caia em
+  `(k−1, k]` múltiplos de `VIDA_DA_CASA`, de modo que `ceilf(frac × CASAS)` devolvesse `k`
+  exatamente. Em double isso não fecha: `23 × (100 ÷ 24)` é **95,83333333333336** e o `ceilf` sobre
+  ele devolve **24**, não 23. Dos vinte e três estados inteiros de lotação, **sete** — **5, 6, 7,
+  20, 21, 22, 23** — seriam lidos uma casa acima do corpo, e nos **4 800** blocos-casa que a sonda
+  percorre em combate a derivação teria errado **390** vezes (`tools/probes/casas.gd`, família B,
+  que hoje cobra a lista exata e não um piso). `casas_vivas` mantém o contrato de retorno e passa a
+  contar os corpos; a derivação pelo agregado fica apenas como caminho dos dicionários nus que as
+  sondas antigas montam. A conseqüência prática é a que importava para a morte visível: o `ceilf`
+  apontaria uma casa a mais do que o corpo tem, e o traço desenhado seria de quem não levou tiro.
 * **A marca suja de pintura continua por bloco.** `pintas` é `{"casas": -1, "pos", "rumo"}`
   ([`esquadra.gd:349`](../../esquadra.gd)) — um inteiro que vale para as vinte e quatro casas, e
   `pintar_cores` já repinta o bloco inteiro quando ele suja. Com casa própria, a casa que apaga suja
@@ -188,12 +194,24 @@ e da casa-alvo, intocada.
 
 | Item | Contagem lida hoje |
 |---|---|
-| Sondas em `tools/probes/` | 33 |
-| Sondas que chamam `troca_salva()` | 3 (`esquadra`, `massa_visivel`, `voo`) |
-| Leituras de `["navios"]` fora de `esquadra.gd` | 33 |
-| Leituras de `navios` em `esquadra.gd` | 21 |
-| Chamadas de `casas_vivas` | 18 |
-| Referências a `ESCUDO_DE_BLOCO` | 4 |
+| Sondas em `tools/probes/` | 34 — **31** rodam na bateria headless, 3 ficam na janela (`comando_olho`, `fotograma`, `massa_visivel`) |
+| Sondas que chamam `troca_salva()` | 4 (`casas`, `esquadra`, `massa_visivel`, `voo`) |
+| Leituras de `["navios"]` fora de `esquadra.gd` | 26 |
+| Leituras de `navios` em `esquadra.gd` | 25 linhas |
+| Chamadas de `casas_vivas` | 18 — o número não se moveu, e é a prova de que o contrato de retorno ficou de pé |
+| Leitura de corpo (`casa_viva` 8, `casas_no_bloco` 10, `casas_vivas_de` 5) | 23 — o que a lei nova exigiu, somado por cima dos 18 |
+| Escrita de `["navios"]` em `tools/probes/` | **0** — as faixas de montagem que escreviam o agregado hoje chamam `fixar_lotacao` / `zerar_placas` |
+| Referências a `ESCUDO_DE_BLOCO` | 7 em `.gd` (o número continua sendo a soma das 24 placas) |
+
+Contado na Task 6, com o escopo declarado: cada linha da tabela é `grep -rn --include=*.gd` do
+símbolo exato (`\b...\b` onde faz diferença), linha a linha, `.md` fora. O que se moveu desde a mesa
+de desenho é o que a lei nova pediu: `troca_salva` ganhou a quarta chamada, a sonda `casas.gd`, e
+nasceram 23 leituras de corpo por cima dos 18 `casas_vivas` que continuam no mesmo número — o
+contrato de retorno não mudou, e é isso que a igualdade prova. As escritas de `["navios"]` dentro
+das sondas zeraram: onde a montagem antes escrevia o agregado, hoje passa por `fixar_lotacao` ou
+`zerar_placas`, que escrevem o corpo e deixam o agregado ser conseqüência. A linha
+`["navios"]` fora de `esquadra.gd` (26) não é recomponível com as 33 originais, contadas na mesa de
+desenho com outro recorte; o que vale daqui pra frente é o comando acima.
 
 Arquivos tocados: `esquadra.gd` (modelo, ledger, `casas_vivas`, `pintar_cores`, `caixa_do_bloco`),
 `escudo.gd` (morder por casa, sem janela de colapso por casa — ver §9), `main.gd` (onda carrega a
@@ -224,23 +242,45 @@ passa pela varredura de números (`godot-readme-number-sweep`) no mesmo commit.
 
 ## 10. Teste da fatia
 
-A régua é a bateria inteira (33 sondas) com `quebras=0` **e** zero linha de erro, mais as três de
-olho em janela real com o PNG reaberto. O que é novo:
+A régua é a bateria inteira — **34 sondas** em `tools/probes/`, **31** delas headless com
+`quebras=0` **e** zero linha de erro, mais as **3** de olho (`comando_olho`, `fotograma`,
+`massa_visivel`) em janela real com o PNG reaberto. O que é novo, e o que a sonda `casas.gd`
+respondeu (18 conferências nas famílias A–E):
 
-1. **Família da escala fiel.** As três divisões do §6 conferidas como constante, e o custo de
-   afundar um bloco medido nas duas granularidades sob fogo uniformemente espalhado: 35 golpes de
-   bloco ≡ 840 tiros de casa, na mesma semente, com os mesmos três dígitos de `navios` ao fim de
-   cada salva. O outro lado da moeda é conferido na mesma família: concentrado em duas casas, o
-   mesmo número de tiros afunda o bloco **antes** da salva 35, e a sonda grava em que salva.
-2. **Família da derivação.** `casas_vivas(bloco) == ceilf(navios / 100 × CASAS)` depois de cada
-   salva, num combate de vinte salvas, sem exceção — o teorema do §3 lido como portão.
-3. **Família da morte visível.** Casa a casa, em ordem de traço: nenhuma casa apaga sem tiro que a
-   atingiu, nenhum tiro que matou deixa de apagar a casa. Mede também **em que salva a primeira casa
-   apaga**, que é o número que o comandante vai julgar de olho.
-4. **Família do comando.** Concentrar afunda casa mais cedo que dispersar, com o mesmo total de
-   tiros disparados — a prova de que o ganho vem do tiro individual e não de um efeito de área.
-5. **Paridade com a lei de coluna e o rebatido** (famílias 14 e as de `esquadra`): mesmas caixas,
-   mesmos `obstruidos`/`rebatidos` que hoje, porque a caixa agora perde casa por casa.
+1. **Família da escala fiel — verde.** As três divisões do §6 conferidas como constante
+   (`vida 4.16666667`, `placa 0.18333333`, `tiro 0.09166667`, exatas na divisão) e o custo de
+   afundar um bloco medido nas duas granularidades: **35 golpes de bloco ≡ 840 lances de casa**, na
+   mesma semente e com o mesmo ledger. A outra metade do item como ele foi escrito — "concentrado em
+   duas casas, o mesmo número de tiros afunda o bloco **antes** da salva 35" — **não** é o que a
+   lei faz e não entrou no portão: concentrar apaga as casas mira das e deixa as outras de pé, então
+   o bloco converge a vida, não a morte mais rápida. O que a granularidade compra é a **casa** cair
+   antes (família D: salva 3 contra 185), e isso é a família 4 abaixo, não esta.
+2. **Família da derivação — o teorema caiu, o portão ficou.** `casas_vivas(bloco) ==
+   ceilf(navios / 100 × CASAS)` foi conferido em **4 800** blocos-casa de combate: **0** desvios
+   sobre o corpo, mas a derivação antiga teria errado **390** vezes, e a asserção hoje cobra a lista
+   exata dos sete estados inteiros em que ela mente (5, 6, 7, 20, 21, 22, 23) em vez de um piso.
+   Um portão que não pode falhar não é portão — foi a primeira versão desta família.
+3. **Família da morte visível — verde.** Nas **2 880** casas apagadas do census, **0** apagaram sem
+   traço que as atingiu e **0** traços mataram casa que não apagou; a fila tem exatamente um traço
+   por casa viva de cada bloco cobrado (**1 440 traços contra 1 440 casas**). A primeira morte em
+   combate real cai na **salva 1**, com **18** traços matando sobre bloco que segue na lista, e o
+   traço chega antes da notícia: tocado no **quadro 39** do pulso, a casa está na tela antes do
+   toque e fora depois, e **0** recados sobrevivem ao fim do pulso.
+4. **Família do comando — verde, com o instrumento trocado no caminho.** "Concentrar afunda casa
+   mais cedo que dispersar" media o campo inteiro (`720` casas de destino no disperso contra `72` no
+   concentrado) e **aprovava sem a mira**, porque a ordem da ponte já concentra blocos-alvo. O portão
+   passou a ser a digital **por atacante**: um bloco dispara 24 canos e sob a ordem eles pousam na
+   **mesma** casa — `1` contra `24` sem a ordem, campo `5` contra `720`, `1 440` traços no disperso
+   contra `864` no concentrado, cada um igual às casas cobradas do próprio ledger. No mesmo
+   tabuleiro, a primeira casa apaga na **salva 3** com a ordem e na **salva 185** sem ela.
+5. **Paridade com a lei de coluna e o rebatido — verde.** Mesmas caixas, mesmos `obstruidos` e
+   `rebatidos`: a família 14 de `tools/probes/esquadra.gd` lê a caixa cheia em
+   **10,512 × 3,467 × 4,450 u**, meio bloco com **12 casas e 1,867 u** de altura e um terço com
+   **8 casas e 0,267 u** — cada camada extincta custa um passo de **1,6 u** e o morto devolve
+   `size −1,0`. E a caixa agora perde **por eixo**: apagar uma casa do meio não move volume nenhum
+   (a união continua a mesma), enquanto derrubar a coluna da esquerda abre **10,512 → 7,312 u** em
+   x sem tocar na altura — o caso que o `range(casas)` antigo jamais produziria, porque ele só
+   despia o topo.
 
 ## 11. Fora de escopo, declarado
 

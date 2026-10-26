@@ -429,22 +429,29 @@ static func _recalcular_agregados(bloco: Dictionary) -> void:
 static func zerar_placas(bloco: Dictionary) -> void:
 	for casa in bloco["casas"]:
 		casa["placa"] = 0.0
-	_recalcular_agregados(bloco)
+	bloco["escudo"] = 0.0
 
 
 ## Escreve a lotação de um bloco pelo caminho novo: pelo corpo das casas, fechando o topo primeiro,
 ## que é a mesma ordem que `casa_local` impõe à silhueta. Quem precisa de meia lotação (sonda,
 ## cena de teste) passa por aqui e não por `bloco["navios"] =`, que agora é conseqüência.
+##
+## A conta é por índice, nunca por subtração seqüencial, e ainda assim pede o árredondamento:
+## `50 ÷ (100÷24)` dá 12,000000000000002 em double e a casa 13 nasceria com 1,4e-14 de vida — um
+## corpo de poeira, pintado e armado, que faria meia muralha ter treze lances. Quando a divisão
+## pousa a poeira de um número inteiro de casas, o inteiro é o corpo.
 func fixar_lotacao(bloco: Dictionary, navios: float) -> void:
-	var resto := clampf(navios, 0.0, float(NAVIOS_NO_BLOCO))
+	var casas := clampf(navios, 0.0, float(NAVIOS_NO_BLOCO)) / VIDA_DA_CASA
+	var inteira := roundf(casas)
+	if absf(casas - inteira) < 1e-9:
+		casas = inteira
 	for c in range(CASAS):
 		var casa: Dictionary = bloco["casas"][c]
-		var v := clampf(resto, 0.0, VIDA_DA_CASA)
+		var v := clampf((casas - float(c)) * VIDA_DA_CASA, 0.0, VIDA_DA_CASA)
 		casa["vida"] = v
 		casa["placa"] = PLACA_DA_CASA if v > 0.0 else 0.0
 		casa["morta_em"] = -1.0 if v > 0.0 else float(salva_numero)
 		casa["a_noticiar"] = false
-		resto -= v
 	_recalcular_agregados(bloco)
 
 

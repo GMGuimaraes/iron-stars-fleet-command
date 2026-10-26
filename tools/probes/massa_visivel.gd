@@ -264,7 +264,9 @@ func _contraste(img: Image, camera: Camera3D, bloco: Dictionary, passo: Vector3)
 	var vaos: Array[float] = []
 	var ganhos := 0
 	var pares := 0
-	for c in range(Esquadra.casas_vivas(bloco)):
+	for c in range(Esquadra.CASAS):
+		if not Esquadra.casa_viva(bloco, c):
+			continue
 		var mundo := _casa_no_mundo(bloco, c)
 		# Cada casa é medida duas vezes, uma contra o vizinho de cada lado: em perspectiva uma das
 		# faces pode ficar coberta, e o par que sobra ainda conta. Sem par fora da tela.
