@@ -617,6 +617,38 @@ static func casas_vivas(bloco: Dictionary) -> int:
 	return maxi(1, int(ceilf(frac * float(CASAS))))
 
 
+## O que a tela ainda mostra daquela casa: a viva, e a morta cuja onda ainda não deu o recado. É a
+## única autoridade de `pintas.casas` — o agregado `navios` já morreu, o pixel ainda não.
+static func _casa_na_tela(bloco: Dictionary, c: int) -> bool:
+	var casa: Dictionary = bloco["casas"][c]
+	return float(casa["vida"]) > 0.0 or bool(casa["a_noticiar"])
+
+
+static func casas_na_tela(bloco: Dictionary) -> int:
+	var n := 0
+	for c in range(CASAS):
+		if _casa_na_tela(bloco, c):
+			n += 1
+	return n
+
+
+## A onda avisa: esta casa morreu e agora pode sair da tela. Não escreve número nenhum — `vida` já
+## foi baixada no fechamento, e o campo é só o recado.
+func noticiar_morte(bloco: Dictionary, c: int) -> void:
+	bloco["casas"][c]["a_noticiar"] = false
+
+
+## Interino da fatia: enquanto a onda não dá o recado traço a traço (task 4), a salva fecha já
+## notificada, e a tela continua apagando a casa no quadro do fechamento.
+func _noticiar_tudo() -> void:
+	for b in blocos_aliados:
+		for casa in b["casas"]:
+			casa["a_noticiar"] = false
+	for b in blocos_hostis:
+		for casa in b["casas"]:
+			casa["a_noticiar"] = false
+
+
 ## ---- Linha de visada da massa ----
 
 ## A caixa de um bloco: o volume dos cascos VIVOS, na atitude do bloco, mais a meia-caixa da malha.
@@ -633,7 +665,11 @@ func caixa_do_bloco(bloco: Dictionary) -> AABB:
 	var rot := Basis.from_euler(Vector3(0.0, float(bloco["rumo"]), 0.0))
 	var minimo := Vector3.ONE * 1e9
 	var maximo := Vector3.ONE * -1e9
-	for c in range(casas):
+	# Casa a casa, pelos índices que vivem de fato: a que saiu da caixa é a que levou o tiro, não a
+	# que o `ceilf` escolhia.
+	for c in range(CASAS):
+		if not casa_viva(bloco, c):
+			continue
 		var local: Vector3 = rot * casa_local(c)
 		minimo = Vector3(
 			minf(minimo.x, local.x - _meia_casco.x),
@@ -1194,6 +1230,7 @@ func troca_salva() -> Dictionary:
 	# contra a linha que estava de pé no quadro anterior, e mandar a frente sair da linha antes de
 	# resolver seria cobrar fogo de uma formação que a manobra já desfiz.
 	_rodizar_fileiras()
+	_noticiar_tudo()
 	return {"lancados": lancados, "feridos": feridos, "afundados": afundados,
 		"rendidos": rendidos, "obstruidos": obstruidos, "rebatidos": rebatidos,
 		"salva": salva_numero}
@@ -1448,7 +1485,7 @@ func pintar(mm: MultiMesh, lado: String, forcar := false) -> int:
 	for i in range(lista.size()):
 		var b: Dictionary = lista[i]
 		var base := i * CASAS
-		var casas := casas_vivas(b) if bool(b["vivo"]) else 0
+		var casas := casas_na_tela(b) if bool(b["vivo"]) else 0
 		var pintado: Dictionary = b["pintas"]
 		var sujo := forcar or casas != int(pintado["casas"]) \
 			or (b["pos"] as Vector3).distance_squared_to(pintado["pos"]) > 0.0001 \
@@ -1464,7 +1501,7 @@ func pintar(mm: MultiMesh, lado: String, forcar := false) -> int:
 		var escala := Vector3.ONE * ESCALA_REPLICA
 		var girada := rot.scaled(escala)
 		for c in range(CASAS):
-			if c < casas:
+			if bool(b["vivo"]) and _casa_na_tela(b, c):
 				mm.set_instance_transform(base + c,
 					Transform3D(girada, origem + (rot * casa_local(c))))
 			else:
@@ -1490,11 +1527,12 @@ func pintar_cores(mm: MultiMesh, lado: String, cor_viva: Color) -> void:
 	for i in range(lista.size()):
 		var b: Dictionary = lista[i]
 		var base := i * CASAS
-		var frac := clampf(float(b["navios"]) / float(NAVIOS_NO_BLOCO), 0.0, 1.0)
 		var trip := clampf(float(b["TRIPULACAO"]) / 100.0, 0.0, 1.0)
-		var cor := cor_viva.lerp(Color(0.16, 0.17, 0.2), (1.0 - frac) * 0.7)
-		cor = cor.lerp(Color(0.28, 0.22, 0.15), (1.0 - trip) * 0.5)
 		for c in range(CASAS):
+			var casa: Dictionary = b["casas"][c]
+			var frac := clampf(float(casa["vida"]) / VIDA_DA_CASA, 0.0, 1.0)
+			var cor := cor_viva.lerp(Color(0.16, 0.17, 0.2), (1.0 - frac) * 0.7)
+			cor = cor.lerp(Color(0.28, 0.22, 0.15), (1.0 - trip) * 0.5)
 			mm.set_instance_color(base + c, cor)
 
 

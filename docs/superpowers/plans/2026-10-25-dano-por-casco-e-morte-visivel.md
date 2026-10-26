@@ -528,7 +528,7 @@ Se `tools/probes/casas.gd.uid` não apareceu junto (o motor escreve na importaç
 - Consumes: `Esquadra.casa_viva`, `bloco["casas"][c]["a_noticiar"]` (Task 1).
 - Produces: `Esquadra._casa_na_tela(bloco, c) -> bool`; `esquadra.noticiar_morte(bloco, c) -> void`; `esquadra._noticiar_tudo() -> void` (interino, sai na Task 4). `pintas.casas` passa a contar casas **na tela**, não casas vivas.
 
-- [ ] **Step 1: A caixa perde a casa que levou o tiro**
+- [x] **Step 1: A caixa perde a casa que levou o tiro**
 
 Em `caixa_do_bloco`, trocar o laço `for c in range(casas)` por varredura de corpos:
 
@@ -557,7 +557,7 @@ Em `caixa_do_bloco`, trocar o laço `for c in range(casas)` por varredura de cor
 			maxf(maximo.z, local.z + _meia_casco.z))
 ```
 
-- [ ] **Step 2: Pintura por casa, com a notícia em espera**
+- [x] **Step 2: Pintura por casa, com a notícia em espera**
 
 Acrescentar ao módulo (junto de `casas_vivas`):
 
@@ -630,7 +630,7 @@ Em `pintar_cores`, a cor sai da vida da casa, não da lotação do bloco (o fato
 			mm.set_instance_color(base + c, cor)
 ```
 
-- [ ] **Step 3: Fechar a salva com o dreno interino**
+- [x] **Step 3: Fechar a salva com o dreno interino**
 
 Em `troca_salva`, logo antes do `return`, para nenhum recado ficar pendurado enquanto a onda não existe:
 
@@ -638,7 +638,7 @@ Em `troca_salva`, logo antes do `return`, para nenhum recado ficar pendurado enq
 	_noticiar_tudo()
 ```
 
-- [ ] **Step 4: Prova de que o quadro não mudou de lei**
+- [x] **Step 4: Prova de que o quadro não mudou de lei**
 
 A régua desta tarefa é a sonda que já existe: com casa e tela ainda coincidindo (nada fica pendente), o retrato tem de ser o de antes.
 
@@ -651,7 +651,7 @@ bash /d/Downloads/tmp-userdata-iron/bateria.sh 2>&1 | tail -40
 
 Verde esperado: os logs que já estavam verdes continuam `quebras=0`; os que a Task 1 marcou para a Task 6 continuam marcados e nada **novo** reprova. Conferir principalmente `esquadra` (famílias 3 e 8 — topo fecha primeiro, parado e inteiro não custa escrita) e `massa_visivel`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add esquadra.gd
