@@ -1527,7 +1527,7 @@ reescrita em duas asserções que a geometria sustenta:
 O contrafactual continua de pé, e mais forte: o `-3,2 u` de largura vem de uma coluna que atravessa os
 dois andares — o `range(casas)` antigo só despia o topo e jamais abriria a caixa em X.
 
-- [ ] **Step 7: Bateria e commit**
+- [x] **Step 7: Bateria e commit**
 
 ```bash
 bash /d/Downloads/tmp-userdata-iron/bateria.sh 2>&1 | tail -40
@@ -1543,6 +1543,25 @@ dois lados e a caixa que perde o meio."
 git push origin main
 git status --short
 ```
+
+**Feito.** `13b8301..6a2a9d2` no remoto, quatro arquivos por nome — `esquadra.gd`, `main.gd`,
+`tools/probes/casas.gd` e este plano (os desvios 3, 4 e 5 são parte da entrega). A mensagem real
+carrega os números lidos, e `_tmp_pista_fria.gd` com o `.uid` de outra sessão ficaram fora, como em
+toda rodada deste repo.
+
+A bateria leu **31 sondas** (este roteiro e a Task 7 diziam 34 — número que nunca foi medido: 31 logs,
+31 linhas de veredito, e as três sondas de olho continuam em `SKIP`). 29 verdes; os dois vermelhos são,
+linha por linha, os mesmos corpos da rodada da Task 4 e os mesmos da lista do Step 1 da Task 6:
+
+| sonda | quebras | asserções quebradas (linha do log) |
+|---|---|---|
+| `esquadra` | 4 | "sobrando um terco, o que sumiu foi o topo" (:20), "com metade fora, o corte cai dentro de uma camada" (:21), "casco a zero afunda o bloco…" (:24), "a caixa segue a lotacao" (:101) |
+| `escudo` | 1 | "duas salvas de bloco em força cheia somem na placa sem afogar um navio" (:52) |
+
+Nenhuma delas nomeia a mira, e nenhuma é nova. `comando` continua `quebras=0` — prova de que a cópia
+nova do letreiro, que a sonda lê por substring (`comando.gd:539`), não derrubou o portão.
+`_tmp_mira.gd` sai de cena dobrado: o census que ele mediu (`no_alvo=0` no disperso, 24 casas por
+atacante) vive agora nas asserções D.2/D.3 e no comentário de `_salva_da_primeira_morte_aliada`.
 
 ---
 
@@ -1710,7 +1729,7 @@ git status --short
 bash /d/Downloads/tmp-userdata-iron/bateria.sh 2>&1 | tail -45
 ```
 
-Só depois do `BATERIA: fim`. Verde = as **34** sondas (33 herdadas + `casas`) com `quebras=0` **e** `linhas_de_erro=0`. Varredura manual, se precisar, usa os três formatos e `tail -1`:
+Só depois do `BATERIA: fim`. Verde = as **31** sondas (30 herdadas + `casas`; contadas na rodada da Task 5, onde saem 31 logs e 31 linhas de veredito — o "34" desta linha de roteiro nunca foi medido) com `quebras=0` **e** `linhas_de_erro=0`. Varredura manual, se precisar, usa os três formatos e `tail -1`:
 
 ```bash
 for l in /d/Downloads/tmp-userdata-iron/bateria/*.log; do
@@ -1741,7 +1760,7 @@ grep -hE "veredito|quebras=|quebra\(s\)" /d/Downloads/tmp-userdata-iron/janela_*
 
 - [ ] **Step 3: Escrever os números medidos no spec e no README**
 
-Na §10 do spec, a subseção `### Teste da fatia` recebe: o `quebras=0` das 34 sondas, as conferências de `casas`, a salva da **primeira casa apagada** (impressa pela família C), o par concentrado/disperso (família D), os `35 golpes / 840 lances` (família A) e o custo contado — nunca o relógio (`ms` deste host lê ±35 % entre rodadas). No README, a cláusula da massa e a `## Validação` ganham as mesmas linhas, com os mesmos dígitos.
+Na §10 do spec, a subseção `### Teste da fatia` recebe: o `quebras=0` das 31 sondas headless da bateria (contadas na Task 5 — o "34" que este roteiro escrevia nunca foi medido), as conferências de `casas`, a salva da **primeira casa apagada** (impressa pela família C), o par concentrado/disperso (família D), os `35 golpes / 840 lances` (família A) e o custo contado — nunca o relógio (`ms` deste host lê ±35 % entre rodadas). No README, a cláusula da massa e a `## Validação` ganham as mesmas linhas, com os mesmos dígitos.
 
 - [ ] **Step 4: Um commit, por nome, e push**
 
@@ -1757,7 +1776,7 @@ git add README.md \
   tools/probes/comando.gd tools/probes/ia.gd tools/probes/voo.gd
 git commit -m "docs(fatia): lapidacao 2 fechada - morte visivel casa a casa medida
 
-Bateria de 34 sondas com quebras=0 e zero linha de erro; as tres sondas de olho em
+Bateria de 31 sondas com quebras=0 e zero linha de erro; as tres sondas de olho em
 janela real com o PNG relido. Medido: 35 golpes de bloco = 840 lances de casa,
 primeira casa apagada na salva N, fogo concentrado afunda casa na salva C contra M
 do disperso, com o mesmo numero de tracos por salva."
