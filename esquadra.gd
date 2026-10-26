@@ -276,6 +276,11 @@ var _rendidas_na_ultima_salva := 0
 ## divergir de `lancados`, a tela está mostrando fogo que a conta não cobrou -- ou escondendo fogo
 ## que cobrou. Quem escreve é `troca_salva`, e quem lê é `_armar_tracos_da_massa` em `main.gd`.
 var pares_da_ultima_salva: Array[Dictionary] = []
+## A fila de lances da salva que acabou de fechar: um dicionário por CASA que disparou, já com o
+## alvo resolvido casa a casa. É a única fonte do desenho — `tiros_da_salva` lê isto — e só
+## `troca_salva` escreve. Por construção a tela não pode mostrar fogo que a conta não cobrou, nem
+## esconder fogo que cobrou.
+var fila_da_salva: Array[Dictionary] = []
 ## Relógio da muralha, em segundos de `passo()`. É o que alimenta a deriva de custódia: com a fase
 ## lida do tempo acumulado pelo próprio módulo, a sonda pode adiantar a muralha quadro a quadro sem
 ## depender do relógio do motor nem de sorteio. Zera junto com a batalha, senão a segunda partida
@@ -548,6 +553,7 @@ func montar(nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 	fogo_concentrado = false
 	alvo_comandado = Vector3.ZERO
 	pares_da_ultima_salva = []
+	fila_da_salva = []
 	# O relógio da alternância morre com a batalha velha: remonta com o contador de fora seria um
 	# andar começar a partida devendo a pista ao outro. `rodizio_ativo` fica de propósito — é doutrina
 	# cravada no painel, não ordem de batalha, e zerá-la aqui é o jeito exato de o letreiro do painel
@@ -1205,23 +1211,72 @@ func troca_salva() -> Dictionary:
 				continue
 			if k != j:
 				rebatidos += 1
-			pares.append({"origem": b, "alvo": alvo, "bate": alvos[k], "lado": lado})
+			pares.append({"origem": b, "alvo": alvo, "bate": alvos[k], "lado": lado,
+				"comandado": comandado})
 	# Espelho para o desenho: a mesma fila, na mesma ordem, com o lado de quem atira. É o único
 	# canal que a tela tem para saber de onde para onde saiu cada lance da massa, e ela não pode
 	# divergir do ledger nem por um par — `massa_visivel.gd` cobra os dois tamanhos iguais.
 	pares_da_ultima_salva = pares
+	fila_da_salva = []
 	for par in pares:
 		lancados += 1
 		var origem: Dictionary = par["origem"]
 		var bate: Dictionary = par["bate"]
-		var dano := DANO_DE_BLOCO * (float(origem["navios"]) / float(NAVIOS_NO_BLOCO)) \
-			* (0.25 + float(origem["ARMAS"]) / 100.0 * 0.75)
 		var eixo: String = SETORES_DA_SALVA[
 			(int(origem["id"]) + salva_numero) % SETORES_DA_SALVA.size()]
-		if _aplicar_golpe(bate, eixo, dano):
-			afundados += 1
-		else:
+		var boca := 0.25 + float(origem["ARMAS"]) / 100.0 * 0.75
+		var cascos := casas_vivas_de(origem)
+		var vivas_bate := casas_vivas_de(bate)
+		# Só CASCO desce para a casa. Os três eixos de subsistema continuam agregados do bloco — a
+		# tripulação de uma muralha é compartilhada, e a rendição continua sendo do bloco.
+		if eixo != "CASCO":
+			var dano := DANO_DE_BLOCO * (float(origem["navios"]) / float(NAVIOS_NO_BLOCO)) * boca
+			if _aplicar_golpe(bate, eixo, dano):
+				afundados += 1
+			else:
+				feridos += 1
+		var casca_cobrada := eixo == "CASCO" and not cascos.is_empty() and not vivas_bate.is_empty()
+		if eixo == "CASCO" and not casca_cobrada:
+			# Cadáver não leva tiro nem cadáver dispara: o mesmo `feridos` que `_aplicar_golpe`
+			# já cobra de um bloco morto, sem golpe de casa nenhum.
 			feridos += 1
+		if cascos.is_empty() or vivas_bate.is_empty():
+			continue
+		var rot := Basis.from_euler(Vector3(0.0, float(origem["rumo"]), 0.0))
+		var rot_alvo := Basis.from_euler(Vector3(0.0, float(bate["rumo"]), 0.0))
+		var base: Vector3 = origem["pos"]
+		var base_alvo: Vector3 = bate["pos"]
+		var id := int(origem["id"])
+		var afundou_o_bloco := false
+		# Um traço por casa viva de quem disparou, em QUALQUER eixo: o rodízio de setores troca o que
+		# a salva cobra, não o fogo que a muralha desenha. A diferença para a lei velha é que a fila
+		# agora é escrita aqui, no mesmo laço que baixou a vida — desenho e conta são o mesmo número.
+		for c in cascos:
+			var casa_alvo := vivas_bate[(c + id + salva_numero) % vivas_bate.size()]
+			var matou := false
+			if casca_cobrada:
+				# Tiro cheio, sem o fator `vida/VIDA_DA_CASA` da lei velha: medido na Task 3, com o
+				# fator o dano é proporcional à vida de quem atira (`v ← v − k·v`), e 400 salvas de
+				# combate deram `vida_min=0,4537` sem um afundamento só. A queda de fogo do bloco já é
+				# paga por ele disparar só pelas casas vivas — 24 traços, depois 12, depois 3.
+				# `matou` é lido da vida do corpo, não do retorno: o retorno diz se o BLOCO afundou, e
+				# a redistribuição do caso-limite pode apagar a casa vizinha da apontada. O traço
+				# desenha a apontada, então a notícia que ele carrega é a vida dela. O golpe é cobrado
+				# antes do `or` porque `or` corta e um `a or f()` deixaria de disparar o resto da salva.
+				var afundou := _golpe_na_casa(bate, casa_alvo, TIRO_DE_CASA * boca)
+				afundou_o_bloco = afundou_o_bloco or afundou
+				matou = float((bate["casas"][casa_alvo] as Dictionary)["vida"]) <= 0.0
+			fila_da_salva.append({
+				"de": base + (rot * casa_local(c)),
+				"para": base_alvo + (rot_alvo * casa_local(casa_alvo)),
+				"aliado": String(par["lado"]) == "aliado", "casa": c,
+				"bloco": id, "alvo_bloco": int(bate["id"]),
+				"bate": bate, "casa_alvo": casa_alvo, "matou": matou})
+		if casca_cobrada:
+			if afundou_o_bloco:
+				afundados += 1
+			else:
+				feridos += 1
 	# A contagem de rendições é feita DEPOIS de `_prencher_rendicoes`, que é quem consome a marca:
 	# limpar `rendicao` aqui deixaria a mudança de lista sem nada para mover.
 	_prencher_rendicoes()
@@ -1233,7 +1288,7 @@ func troca_salva() -> Dictionary:
 	_noticiar_tudo()
 	return {"lancados": lancados, "feridos": feridos, "afundados": afundados,
 		"rendidos": rendidos, "obstruidos": obstruidos, "rebatidos": rebatidos,
-		"salva": salva_numero}
+		"tiros": fila_da_salva.size(), "salva": salva_numero}
 
 
 ## As caixas de um lado, na ordem da lista e uma vez por salva. Bloco morto entra com caixa vazia
@@ -1246,36 +1301,12 @@ func _caixas_de(lado: String) -> Array:
 	return out
 
 
-## A fila do desenho: um LANCE POR CASA viva de cada bloco que atirou. É a leitura visual da
-## lotação — o bloco de cem navios tem vinte e quatro cascos desenhados, e vinte e quatro bocas de
-## fogo: cada tiro sai do casco em que o olho vê a nave e aponta para UM casco do bloco visado, não
-## para o centro dele. Não é uma segunda conta de dano: o ledger continua um golpe por bloco, em
-## `troca_salva` acima, e esta fila é derivada dele na mesma ordem, casa a casa — então a sonda pode
-## cobrar "um traço por casa viva de quem cobrou" sem que a tela jamais mostre fogo que a conta não
-## cobrou, nem esconda fogo que cobrou. Aritmética pura de índice `(casa + id + salva) % casas_alvo`:
-## sorteio aqui comeria um dado do `visual_rng` dos doze cascos e mudava toda a batalha.
+## A fila do desenho: um LANCE POR CASA que disparou, lida do ledger. Deixou de ser uma segunda
+## derivada decorativa — é a mesma fila que baixou a vida das casas, então a tela não pode mostrar
+## fogo que a conta não cobrou, nem esconder fogo que cobrou. A atribuição casa-alvo `(casa + id +
+## salva) % vivas` é a de sempre, agora com autoridade. Determinismo: sorteio nenhum aqui.
 func tiros_da_salva() -> Array[Dictionary]:
-	var tiros: Array[Dictionary] = []
-	for par in pares_da_ultima_salva:
-		var origem: Dictionary = par["origem"]
-		# O desenho segue o ledger, não a intenção: quem recebe o traço é o bloco que a caixa dele
-		# interceptou no corredor, que pode ser o da frente do visado ou a fileira atrás dele.
-		var alvo: Dictionary = par["bate"]
-		var casas := casas_vivas(origem)
-		# Bloco que afundou nesta mesma salva tem casa zero; o lance dele existe e tem de ir a algum
-		# lugar, senão a fila deixaria de espelhar o ledger.
-		var casas_alvo := maxi(1, casas_vivas(alvo))
-		var rot := Basis.from_euler(Vector3(0.0, float(origem["rumo"]), 0.0))
-		var rot_alvo := Basis.from_euler(Vector3(0.0, float(alvo["rumo"]), 0.0))
-		var base: Vector3 = origem["pos"]
-		var base_alvo: Vector3 = alvo["pos"]
-		var id := int(origem["id"])
-		for c in range(casas):
-			tiros.append({"de": base + (rot * casa_local(c)),
-				"para": base_alvo + (rot_alvo * casa_local((c + id + salva_numero) % casas_alvo)),
-				"aliado": String(par["lado"]) == "aliado", "casa": c,
-				"bloco": id, "alvo_bloco": int(alvo["id"])})
-	return tiros
+	return fila_da_salva
 
 
 ## Um lance na casa escolhida. Devolve `true` se o bloco afundou com ele. A casa pode estar apagada

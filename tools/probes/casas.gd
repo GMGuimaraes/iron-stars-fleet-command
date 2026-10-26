@@ -136,6 +136,81 @@ func _initialize() -> void:
 	# é contrafactual documentado — quantas vezes ela teria errado a silhueta neste combate.
 	_assert("a derivação antiga por `ceilf` do agregado teria errado a contagem de casas",
 		ceilf_errados >= 0, "%d leituras do ceilf velho fora do corpo" % ceilf_errados)
+	# ── C. MORTE VISÍVEL, metade de conta: cada casa apagada tem um traço que a matou ──
+	var e_d := _nova_esquadra()
+	_marchar(e_d)
+	var casas_apagadas := 0
+	var sem_traco := 0
+	var traco_sem_morte := 0
+	var primeira_morte := -1
+	var salvas := 0
+	# A varredura de morte percorre a POPULAÇÃO, capturada antes do laço, e não `lista_de()`:
+	# `_expulsar_mortos()` tira o bloco da lista na mesma salva em que a última casa dele apaga, então
+	# uma varredura pela lista contaria zero mortes num combate onde meia esquadra já foi ao fundo.
+	var populacao: Array[Dictionary] = []
+	for lado_c in ["aliado", "hostil"]:
+		for bloco_c in e_d.lista_de(lado_c):
+			populacao.append(bloco_c)
+	while salvas < 400 and e_d.vivos("aliado") > 0 and e_d.vivos("hostil") > 0:
+		salvas += 1
+		e_d.troca_salva()
+		var tracos: Array[Dictionary] = e_d.tiros_da_salva()
+		var matou_algum := false
+		for t in tracos:
+			var bate: Dictionary = t["bate"]
+			if bool(t["matou"]):
+				matou_algum = true
+				var casa_traco: Dictionary = bate["casas"][int(t["casa_alvo"])]
+				if float(casa_traco["vida"]) > 0.0:
+					traco_sem_morte += 1
+				if absf(float(casa_traco["morta_em"]) - float(salvas)) > 0.5:
+					traco_sem_morte += 1
+		for bloco_d in populacao:
+			for corpo_d in bloco_d["casas"]:
+				if absf(float(corpo_d["morta_em"]) - float(salvas)) < 0.5:
+					casas_apagadas += 1
+					if not matou_algum:
+						sem_traco += 1
+					if primeira_morte == -1:
+						primeira_morte = salvas
+	_assert("nenhuma casa apaga sem um traço que a atingiu, e nenhum traço mata casa que não apagou",
+		sem_traco == 0 and traco_sem_morte == 0 and casas_apagadas > 0,
+		"%d casas apagadas, %d sem traco, %d traco sem morte" % [
+			casas_apagadas, sem_traco, traco_sem_morte])
+	# Quantas casas apagaram JUNTO com a primeira: é a resposta para "de pouco em pouco" contra "todas
+	# de uma". Sob o índice disperso a casa-alvo é bijeção, as 24 casas de um bloco se desgastam
+	# iguais, e este número diz se o quadro morre em cascata ou de uma vez — é a régua que a Task 5
+	# (mira por proximidade) tem de derrubar, e o ritmo da primeira morte é o que ela cobra ali.
+	var no_umbigo_da_primeira := 0
+	if primeira_morte > 0:
+		for bloco_p in populacao:
+			for corpo_p in bloco_p["casas"]:
+				if absf(float(corpo_p["morta_em"]) - float(primeira_morte)) < 0.5:
+					no_umbigo_da_primeira += 1
+	print("SONDA-CASAS: primeira casa na salva %d de %d, %d casa(s) na mesma salva, afundados %d/%d"
+		% [primeira_morte, salvas, no_umbigo_da_primeira,
+			e_d.perdas_aliadas, e_d.perdas_hostis])
+	# A régua de "um traço por casa cobrada", lida na SALVA UM: antes de qualquer salva nenhuma casa
+	# tem 35 lances, então nenhum corpo muda durante ela e a fotografia do bloco que disparou vale
+	# ainda depois. Comparar duas montadas em salvas diferentes seria chutar: lá os dois ledger já
+	# divergem, e um `size()` igual não provaria nada.
+	var e_f := _nova_esquadra()
+	_marchar(e_f)
+	var casas_antes := {}
+	for lado_f in ["aliado", "hostil"]:
+		for bloco_f in e_f.lista_de(lado_f):
+			casas_antes[int(bloco_f["id"])] = Esquadra.casas_no_bloco(bloco_f)
+	e_f.troca_salva()
+	var cobradas := 0
+	for par_f in e_f.pares_da_ultima_salva:
+		cobradas += int(casas_antes[int((par_f["origem"] as Dictionary)["id"])])
+	_assert("a fila tem exatamente um traço por casa viva de cada bloco cobrado",
+		cobradas > 0 and e_f.tiros_da_salva().size() == cobradas,
+		"%d traços contra %d casas cobradas em %d blocos" % [
+			e_f.tiros_da_salva().size(), cobradas, e_f.pares_da_ultima_salva.size()])
+	_assert("pré-condição da asserção acima: nenhuma casa morreu na salva um",
+		_nenhuma_morte_na_primeira(e_f),
+		"todo `morta_em` ainda em -1,0 depois da primeira salva")
 	print("SONDA-CASAS: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for n in notes:
 		print("  " + n)
@@ -153,3 +228,14 @@ func _marchar(e: Esquadra) -> int:
 		e.passo(1.0 / 60.0, nuc_a, nuc_h)
 		q += 1
 	return q
+
+
+## Pré-condição da régua de paridade da família C: se a salva um já matasse alguma casa, a
+## fotografia de antes deixaria de valer e um `size()` igual seria um `OK` emprestado.
+static func _nenhuma_morte_na_primeira(e: Esquadra) -> bool:
+	for lado in ["aliado", "hostil"]:
+		for b in e.lista_de(lado):
+			for casa in b["casas"]:
+				if float(casa["morta_em"]) > 0.0:
+					return false
+	return true

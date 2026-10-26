@@ -678,7 +678,7 @@ git status --short
 - Consumes: `Esquadra.casas_vivas_de`, `esquadra._golpe_na_casa` (Task 1).
 - Produces: `esquadra.fila_da_salva: Array[Dictionary]`, cada entrada com `de: Vector3`, `para: Vector3`, `aliado: bool`, `casa: int`, `bloco: int`, `alvo_bloco: int`, `bate: Dictionary`, `casa_alvo: int`, `matou: bool`; o dicionário devolvido por `troca_salva()` ganha a chave `"tiros": int`; `par` de `pares_da_ultima_salva` ganha `"comandado": bool`. `lancados`, `feridos`, `afundados`, `obstruidos`, `rebatidos` **continuam contando por bloco** — é o que as famílias 11, 14 e 15 cobram.
 
-- [ ] **Step 1: Escrever a asserção do ledger antes do ledger**
+- [x] **Step 1: Escrever a asserção do ledger antes do ledger**
 
 Acrescentar à família C de `tools/probes/casas.gd` (a metade de tela vem na Task 4):
 
@@ -755,7 +755,7 @@ static func _nenhuma_morte_na_primeira(e: Esquadra) -> bool:
 
 Rodar e ler: reprova em `Invalid get index 'tiros_da_salva'`/`sem_traco`, porque o ledger ainda cobra um golpe por bloco.
 
-- [ ] **Step 2: A fila passa a ser escrita pelo ledger**
+- [x] **Step 2: A fila passa a ser escrita pelo ledger**
 
 Campo novo, junto de `pares_da_ultima_salva`:
 
@@ -780,7 +780,7 @@ Na montagem dos pares, registrar a ordem no espelho (linha do `pares.append`):
 				"comandado": comandado})
 ```
 
-- [ ] **Step 3: O laço de resolução vira casa a casa**
+- [x] **Step 3: O laço de resolução vira casa a casa**
 
 Substituir o `for par in pares:` de `:1086-1097` por:
 
@@ -831,11 +831,54 @@ Substituir o `for par in pares:` de `:1086-1097` por:
 			feridos += 1
 ```
 
+**Medido na execução — três desvios deste Step, todos com o número da sonda:**
+
+1. **O traço é por casa em QUALQUER eixo, não só em CASCO.** O `continue` de `:798-804` faria a salva
+   desenhar fogo só em 1 de cada 4 salvas (o rodízio tem quatro setores, não seis), e a asserção C.2
+   deste próprio plano reprovaria: `1440 traços contra 1440 casas cobradas em 60 blocos` só fecha com
+   um traço por casa cobrada em todo par. O eixo continua decidindo **o que a conta cobra**; a fila
+   espelha a casa que disparou.
+2. **O lance perdeu o fator `vida / VIDA_DA_CASA` de `:816`.** Instrumento montado para diagnosticar
+   `casas_apagadas=0`: 400 salvas de combate deram `vida_min=0,4537` de 4,1667 e `vivos 120/120` —
+   nenhum bloco afundou, porque o dano proporcional à vida de quem atira é `v ← v − k·v` e decaimento
+   geométrico não chega a zero. Com a casa virando corpo, "atira menos quem tem menos" **já é pago**
+   pelo bloco disparar só pelas casas vivas (24 traços → 12 → 3); escalar dentro do traço era contar
+   duas vezes e proibir a morte que a lapidação 2 veio mostrar. Decisão do usuário em 2026-10-25:
+   **tiro cheio por casa viva** — `TIRO_DE_CASA × boca`. Rejeitadas na mesma pergunta o piso de 25%
+   (primeira morte ~3× mais tarde) e o limiar de morte no casco (a nave sumiria com tripulação a
+   bordo). O `matou` continua lido da vida do corpo depois do golpe, como já estava no plano.
+3. **`var vida` de `:815` morreu com o fator**, e a asserção de `:818-819` não pode ser `_golpe_na_casa`
+   direto: o retorno diz se o **bloco** afundou, e a redistribuição do caso-limite apaga a casa vizinha
+   da apontada. O golpe é cobrado antes do `or` porque `or` corta.
+
+**Medido na sonda, depois do verde (`tools/probes/casas.gd` família C):** a varredura de morte tem de
+percorrer a **população capturada antes do laço**, não `lista_de()` — `_expulsar_mortos()` tira o bloco
+da lista na mesma salva em que a última casa dele apaga, e a varredura pela lista contaria zero mortes
+num combate com meia esquadra no fundo. Números lidos com a lei nova:
+
+| grandeza | medida |
+|---|---|
+| primeira casa apagada | salva **185** de 400 (≈ 5 min de batalha a 1,6 s/salva) |
+| casas apagadas na mesma salva da primeira | **144** = 6 blocos × 24 |
+| blocos afundados ao fim das 400 salvas | 60 aliados / 60 hostis |
+
+As 144 casas juntas são o veredito de que o índice disperso (`(casa + id + salva) % vivas` é bijeção)
+desgasta as 24 casas de um bloco **iguais**, então a muralha morre de uma vez e não "de pouco em
+pouco". O ritmo sai da Task 3 por decisão do usuário (Task 3 = escrituração, Task 5 = ritmo): a mira
+por proximidade da Task 5 é o mecanismo que quebra a bijeção, e estes dois números — 185 e 144 — são a
+linha de base contra a qual ela cobra melhoria.
+
+**Bateria com a lei nova (31 sondas headless):** `quebras=0` e `linhas_de_erro=0` em 29; as duas
+vermelhas são exatamente as cinco quebras já registradas na Task 1, com a mesma contagem de
+conferências — `esquadra | quebras=4 - conferencias=114` (famílias 3, 4 e 14, os cinco writes soltos de
+`["navios"]`) e `escudo | quebras=1 - conferencias=55` (a cláusula de janela de `:547-550`). Nada do
+ledger novo moveu outra sonda; as cinco têm conserto marcado na Task 6.
+
 Apagar do laço antigo as duas linhas que chamavam `_aplicar_golpe(bate, eixo, dano)` e o cálculo de `dano` que fica órfão: a boca do cano passa a ser a variável `boca`, lida uma vez por par, e o `dano` dos três eixos de subsistema é recomposto com ela dentro do ramo que não é CASCO.
 
 Por que `matou` é lido da vida do corpo e não do retorno de `_golpe_na_casa`: `_golpe_na_casa` devolve se o **bloco** afundou, não se a casa apagou, e a redistribuição do caso-limite pode apagar a casa vizinha da escolhida. O traço desenha a casa apontada (`casa_alvo`), então a notícia que ele carrega é a vida dessa casa — exatamente o que a asserção C confere.
 
-- [ ] **Step 4: A fila devolvida pelo `troca_salva`**
+- [x] **Step 4: A fila devolvida pelo `troca_salva`**
 
 ```gd
 	return {"lancados": lancados, "feridos": feridos, "afundados": afundados,
@@ -843,7 +886,7 @@ Por que `matou` é lido da vida do corpo e não do retorno de `_golpe_na_casa`: 
 		"tiros": fila_da_salva.size(), "salva": salva_numero}
 ```
 
-- [ ] **Step 5: `tiros_da_salva` passa a ler**
+- [x] **Step 5: `tiros_da_salva` passa a ler**
 
 Substituir o corpo de `:1129-1150` pela leitura, e reescrever o cabeçalho da função para dizer que a fila agora **cobra**:
 
@@ -856,7 +899,7 @@ func tiros_da_salva() -> Array[Dictionary]:
 	return fila_da_salva
 ```
 
-- [ ] **Step 6: Verde na sonda nova**
+- [x] **Step 6: Verde na sonda nova**
 
 ```bash
 cd /d/Downloads/IronStarsFleetCommand
@@ -871,7 +914,7 @@ grep -hE "veredito|quebras=|primeira casa" /d/Downloads/tmp-userdata-iron/casas.
 
 Esperado: `quebras=0`, e a linha `primeira casa apagada na salva N` — o número que o comandante vai julgar de olho, e que a Task 7 escreve no spec.
 
-- [ ] **Step 7: Ledger dos doze cascos intocado**
+- [x] **Step 7: Ledger dos doze cascos intocado**
 
 Rodar as sondas de núcleo, que cobram a cauda de sorteios e a contagem de impactos dos doze cascos:
 
@@ -886,7 +929,7 @@ done
 
 Esperado `quebras=0` nas cinco. Se `comando` ou `ia` reprovar, a causa é a chave nova do dicionário do ledger (`tiros`) ou o campo `comandado` no espelho — não afrouxar a asserção da sonda.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add esquadra.gd tools/probes/casas.gd
