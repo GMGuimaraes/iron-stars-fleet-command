@@ -281,6 +281,14 @@ respondeu (18 conferências nas famílias A–E):
    (a união continua a mesma), enquanto derrubar a coluna da esquerda abre **10,512 → 7,312 u** em
    x sem tocar na altura — o caso que o `range(casas)` antigo jamais produziria, porque ele só
    despia o topo.
+6. **A régua foi contada, não assinada.** `tools/probes/` tem **34** sondas; a bateria headless
+   escreveu **31** logs e os **31** fecharam `quebras=0` com **zero** linha de erro. As **3** de olho
+   rodaram em janela real e devolveram `quebras=0` sobre **95** (`fotograma`), **20** (`massa_visivel`)
+   e **13** (`comando_olho`) conferências, com os PNGs relidos: `massa_zoom` mostra as vinte e quatro
+   casas de cada bloco como degraus separados nas duas muralhas, `massa_apagada` devolve campo vazio
+   sem fantasma de silhueta, `massa_largo` mantém a muralha legível pela lente de 78° da ponte. O custo
+   é lido em escritas e lances, nunca em `ms` — o relógio deste host lê ±35 % entre rodadas. A
+   aprovação estética continua sendo do comandante: o que a sonda jura é a contagem, não o quadro.
 
 ## 11. Fora de escopo, declarado
 

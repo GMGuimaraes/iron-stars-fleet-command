@@ -1723,7 +1723,7 @@ git status --short
 - Modify: `D:/Downloads/IronStarsFleetCommand/docs/superpowers/specs/2026-10-25-dano-por-casco-e-morte-visivel-design.md` (§10 ganha os números medidos)
 - Modify: `D:/Downloads/IronStarsFleetCommand/README.md` (seção de validação + pilares)
 
-- [ ] **Step 1: Bateria inteira, lida dela mesma**
+- [x] **Step 1: Bateria inteira, lida dela mesma**
 
 ```bash
 bash /d/Downloads/tmp-userdata-iron/bateria.sh 2>&1 | tail -45
@@ -1738,7 +1738,7 @@ for l in /d/Downloads/tmp-userdata-iron/bateria/*.log; do
 done
 ```
 
-- [ ] **Step 2: As três sondas de olho, em janela real**
+- [x] **Step 2: As três sondas de olho, em janela real**
 
 Sem `--headless` — sob headless a textura vem null e a sonda de janela devolve `<sem veredito>`:
 
@@ -1758,7 +1758,7 @@ grep -hE "veredito|quebras=|quebra\(s\)" /d/Downloads/tmp-userdata-iron/janela_*
 
 **Reler os PNGs** com a ferramenta Read — eles saem em `D:/Downloads/tmp-userdata/frame/` (essa pasta não leva o sufixo `-iron`). O que o olho tem de confirmar, e nada disso a sonda headless prova: a muralha ralada **lê** como muralha com buracos (não como mancha), a casa morta não deixa fantasma de silhueta, e a onda de fogo coincide com o sumiço da casa. Se o quadro não convencer, a fatia não está fechada — a aprovação visual é do comandante, e isso é dito em vez de declarado sucesso.
 
-- [ ] **Step 3: Escrever os números medidos no spec e no README**
+- [x] **Step 3: Escrever os números medidos no spec e no README**
 
 Na §10 do spec, a subseção `### Teste da fatia` recebe: o `quebras=0` das 31 sondas headless da bateria (contadas na Task 5 — o "34" que este roteiro escrevia nunca foi medido), as conferências de `casas`, a salva da **primeira casa apagada** (impressa pela família C), o par concentrado/disperso (família D), os `35 golpes / 840 lances` (família A) e o custo contado — nunca o relógio (`ms` deste host lê ±35 % entre rodadas). No README, a cláusula da massa e a `## Validação` ganham as mesmas linhas, com os mesmos dígitos.
 
