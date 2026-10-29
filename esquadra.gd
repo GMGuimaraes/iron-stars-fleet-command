@@ -51,6 +51,13 @@ const CASAS_X := 4
 const CASAS_Y := 3
 const CASAS_Z := 2
 const CASAS := CASAS_X * CASAS_Y * CASAS_Z
+## ---- A peça (lapidação 4) ----
+## A peça é a fileira de quatro cascos ao longo da asa. A identidade não é uma escolha nova: ela sai
+## da ordem que `casa_local` já impõe às casas (camada por camada, ix variando mais rápido), então as
+## casas da peça `p` são exatamente `p*CASAS_X .. p*CASAS_X + CASAS_X - 1` e a aritmética de índice
+## é uma divisão só. Vinte e quatro casas viram seis peças; 240 blocos viram 1 440 corpos.
+const CASAS_DA_PECA := CASAS_X
+const PECAS_NO_BLOCO := CASAS_Y * CASAS_Z
 ## Passo por eixo, e não um passo só. A replica nao e cubica: a caixa crua da malha e 3,647 de asa
 ## a asa x 1,07 de altura x 5,0 de proa a popa, e a 0,25 isso fecha **0,912 x 0,268 x 1,25 u**. Com
 ## passo unico de 1,6 restavam 0,688 u no costado mas só **0,35 u de proa a popa** -- dois cascos
@@ -307,20 +314,36 @@ var _rodizio_ciclo := {"aliado": 0, "hostil": 0}
 ## propósito ao `montar()` — é a contagem da partida ANTERIOR que diz o que há para apagar.
 var _casas_pintadas := {"aliado": 0, "hostil": 0}
 
-## Ordem da casa dentro do bloco: camada por camada, de baixo para cima; dentro da camada, da
-## boreste para a bombordo e de vante para trás. É esta ordem que faz o atrito FECHAR O TOPO do
-## paralelepípedo em vez de esburacá-lo no meio — a silhueta encolhendo é a própria leitura da
-## lotação restante.
-static func casa_local(c: int) -> Vector3:
-	var por_camada := CASAS_X * CASAS_Z
-	var camada := int(float(c) / float(por_camada))
-	var dentro := c % por_camada
-	var ix := dentro % CASAS_X
-	var iz := int(float(dentro) / float(CASAS_X))
-	return Vector3(
-		(float(ix) - float(CASAS_X - 1) / 2.0) * PASSO_CASA_X,
+static func peca_da_casa(c: int) -> int:
+	return int(float(c) / float(CASAS_DA_PECA))
+
+
+## O posto da peça dentro do bloco: altura da camada e profundidade da meia-fileira. Não tem
+## componente em x de propósito — é o x que a própria peça percorre.
+static func peca_local(p: int) -> Vector3:
+	var camada := int(float(p) / float(CASAS_Z))
+	var iz := p % CASAS_Z
+	return Vector3(0.0,
 		(float(camada) - float(CASAS_Y - 1) / 2.0) * PASSO_CASA_Y,
 		(float(iz) - float(CASAS_Z - 1) / 2.0) * PASSO_CASA_Z)
+
+
+## O resíduo da casa dentro da própria peça: só asa, exatamente o passo que a grade já pagava.
+static func casa_na_peca(k: int) -> Vector3:
+	return Vector3((float(k) - float(CASAS_DA_PECA - 1) / 2.0) * PASSO_CASA_X, 0.0, 0.0)
+
+
+## Ordem da casa dentro do bloco: camada por camada, de baixo para cima; dentro da camada, da boreste
+## para a bombordo e de vante para trás. É esta ordem que faz o atrito FECHAR O TOPO do paralelepípedo
+## em vez de esburacá-lo no meio — a silhueta encolhendo é a própria leitura da lotação restante.
+##
+## Desde a lapidação 4 esta função é a SOMA dos dois termos da peça, e isso é o contrato de inércia:
+## cada termo é exato no eixo em que o outro é zero (soma com zero não arredonda), então
+## `peca_local + casa_na_peca` devolve os mesmos bits que a aritmética de índice antiga devolvia, e a
+## pintura com `desloc == ZERO` escreve a mesma transformada de antes. A tabela literal da família A da
+## sonda `tools/probes/peca.gd` é quem confere.
+static func casa_local(c: int) -> Vector3:
+	return peca_local(peca_da_casa(c)) + casa_na_peca(c % CASAS_DA_PECA)
 
 
 ## Posto do bloco na grade do lado: posição do esquadrão no tabuleiro do lado mais o posto do
@@ -660,6 +683,33 @@ static func casas_vivas(bloco: Dictionary) -> int:
 	if frac <= 0.0:
 		return 0
 	return maxi(1, int(ceilf(frac * float(CASAS))))
+
+
+## A peça vive enquanto uma das quatro casas dela respirar. É a unidade que a cena mede (lapidação 4,
+## seção 3): um poço que come uma peça mata quatro casas, não vinte e quatro.
+static func peca_viva(bloco: Dictionary, p: int) -> bool:
+	for k in range(CASAS_DA_PECA):
+		if float(bloco["casas"][p * CASAS_DA_PECA + k]["vida"]) > 0.0:
+			return true
+	return false
+
+
+static func casas_da_peca(p: int) -> Array[int]:
+	var out: Array[int] = []
+	for k in range(CASAS_DA_PECA):
+		out.append(p * CASAS_DA_PECA + k)
+	return out
+
+
+## Casas da peça que a tela ainda mostra: a viva, e a morta cuja onda ainda não deu o recado. É o
+## número que a checagem suja por peça compara (seção 3 da folha de design) — o agregado `navios` já
+## morreu, o pixel ainda não.
+static func casas_na_tela_da_peca(bloco: Dictionary, p: int) -> int:
+	var n := 0
+	for k in range(CASAS_DA_PECA):
+		if _casa_na_tela(bloco, p * CASAS_DA_PECA + k):
+			n += 1
+	return n
 
 
 ## O que a tela ainda mostra daquela casa: a viva, e a morta cuja onda ainda não deu o recado. É a
