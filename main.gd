@@ -52,7 +52,7 @@ const VOO_ACOES := {
 	"capital_nariz_acima": KEY_UP,
 	"capital_nariz_abaixo": KEY_DOWN,
 	"capital_giro_esquerda": KEY_Q,
-	"capital_giro_direita": KEY_R,
+	"capital_giro_direita": KEY_E,
 	"capital_role_esquerda": KEY_Z,
 	"capital_role_direita": KEY_X,
 	"capital_empuxo_acima": KEY_C,
@@ -1698,8 +1698,15 @@ const TRACO_DE_BLOCO_SEG := 0.55
 const PASSO_DA_ONDA := 0.012
 ## Duração da onda dentro de um bloco (a última casa acende quando a primeira já voa).
 const TRACO_ONDA_SEG := PASSO_DA_ONDA * float(Esquadra.CASAS - 1)
-## Janela viva de uma salva: onda + voo do último lance. 0,826 s nos 1,6 s da cadência.
-const TRACO_PULSO_SEG := TRACO_ONDA_SEG + TRACO_DE_BLOCO_SEG
+## A muralha hostil larga meio ciclo depois da nossa. O pedido do comandante foi literal — «os
+## aliados e o inimigo não precisam atacar juntos na mesma hora» — e 0,5 s é o que cabe na cadência:
+## o pulso passa de 0,826 s para 1,326 s dentro dos 1,6 s, e o portão continua sendo o pulso morrer
+## antes de o próximo armar. É uma lei do ARMADOR, não do ledger: a conta segue resolvendo a salva
+## inteira num quadro, porque os vinte e quatro lados que lêem `troca_salva()` numa sonda sem quadro
+## não podem medir outra coisa.
+const FASE_HOSTIL_DA_SALVA := 0.5
+## Janela viva de uma salva: fase hostil + onda + voo do último lance. 1,326 s nos 1,6 s da cadência.
+const TRACO_PULSO_SEG := FASE_HOSTIL_DA_SALVA + TRACO_ONDA_SEG + TRACO_DE_BLOCO_SEG
 ## Comprimento do traço em u. Um quinto da faixa de contato (40 u): curto o bastante para ler como
 ## lance, longo o bastante para não sumir entre as casas de 3,2 u da própria fileira.
 const TRACO_COMPRIMENTO := 8.0
@@ -2119,7 +2126,8 @@ static func _base_do_traco(dir: Vector3) -> Basis:
 
 
 ## Arma a fila a partir do espelho da salva, UM LANCE POR CASA: a boca do cano é o casco desenhado, e
-## o atraso de cada lance é `casa × PASSO_DA_ONDA` — a fileira acende por ordem, não junto. Nada aqui
+## o atraso de cada lance é `casa × PASSO_DA_ONDA` na nossa muralha e `FASE_HOSTIL_DA_SALVA + casa ×
+## PASSO_DA_ONDA` na deles — a fileira acende por ordem, e os dois lados não acendem juntos. Nada aqui
 ## é sorteio: se a boca ou o atraso corressem, a massa passaria a consumir o `visual_rng` dos doze
 ## cascos e a cauda de quarenta sorteios que a sonda assina deixaria de ser a mesma — o mesmo motivo
 ## pelo qual os 5 760 lances não gastam um dado de `rng`.
@@ -2131,9 +2139,11 @@ func _armar_tracos() -> void:
 	_noticiar_pendentes()
 	_tracos_voando.clear()
 	for tiro in esquadra.tiros_da_salva():
+		var aliado := bool(tiro["aliado"])
 		_tracos_voando.append({"de": tiro["de"], "para": tiro["para"],
-			"aliado": bool(tiro["aliado"]),
-			"atraso": float(int(tiro["casa"])) * PASSO_DA_ONDA,
+			"aliado": aliado,
+			"atraso": float(int(tiro["casa"])) * PASSO_DA_ONDA
+				+ (0.0 if aliado else FASE_HOSTIL_DA_SALVA),
 			"bate": tiro["bate"], "casa_alvo": int(tiro["casa_alvo"]),
 			"matou": bool(tiro["matou"]), "noticiado": false})
 	_traco_t = 0.0
@@ -2834,7 +2844,7 @@ func _build_ui() -> void:
 		(group_bodies[grupo_aberto] as Control).visible = true
 		(group_heads[grupo_aberto] as Button).text = "▾  " + grupo_aberto
 	var hint := Label.new()
-	hint.text = ("W avante  •  S ré (a ré tem teto)\nQ / R guinada  •  A / D través  •  "
+	hint.text = ("W avante  •  S ré (a ré tem teto)\nQ / E guinada  •  A / D través  •  "
 		+ "↑ / ↓ arfagem\nZ / X rolagem  •  C sobe  •  V desce  •  ESPAÇO pausa tática")
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint.add_theme_color_override("font_color", Color(0.65, 0.78, 0.9))
@@ -3912,7 +3922,7 @@ func _cobrar_contato(lista: Array[Dictionary], prefixo: String) -> void:
 					"hostil": corpo["hostil"], "imovel": false}, dano)
 
 
-## Timão da capitânia em seis eixos: guinada (Q/R), traslação de través (A/D, o casco vai para
+## Timão da capitânia em seis eixos: guinada (Q/E), traslação de través (A/D, o casco vai para
 ## bombordo ou estibordo sem virar), arfagem (setas ↑/↓), rolagem (Z/X, que se autocorrige quando a
 ## mão sai do teclado para a mesa continuar legível), avante e ré (W/S, com a ré limitada) e empuxo
 ## vertical (C/V, sobe e desce sem mudar a atitude). Nada aqui sorteia: a posição do rig é leitura

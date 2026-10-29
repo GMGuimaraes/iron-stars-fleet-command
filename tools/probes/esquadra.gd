@@ -91,7 +91,8 @@ extends SceneTree
 ## 12) O LANCE DA MASSA TEM CANAL DE DESENHO, UM POR CASCO PINTADO. A queixa do comandante era de
 ##     tela, não de conta: com um traço por bloco, vinte e quatro naves cobravam fogo e a tela mostrava
 ##     um cano só por paralelepípedo. Desde aqui o cano É o casco desenhado — um lance por casa viva,
-##     com atraso `casa × PASSO_DA_ONDA`, a leva inteira fechando dentro de uma cadência. A fila armada
+##     com atraso `casa × PASSO_DA_ONDA` mais a fase do lado (a muralha hostil larga `FASE_HOSTIL`
+##     depois da nossa), cada lado fechando a sua leva dentro de uma cadência. A fila armada
 ##     tem de ser o espelho do ledger casa a casa (desenho mostrando fogo que a conta não cobrou é a
 ##     falha espelhada), o convergir da ordem converge o BLOCO visado e não um ponto único, nada pode
 ##     sorteiar, e o custo tem de continuar sendo UM nó reescrito por quadro — cinco mil setecentos e
@@ -196,12 +197,13 @@ const FOLGA_CONTATO := 1.0
 const QUADROS := 200
 const SALVAS := 60
 ## Espelhos de `main.gd` para a família 12: um traço por CASA desenhada nos dois lados, o passo da
-## onda dentro do bloco e o pulso que fecha a fila. Mudar o número lá sem mudar aqui quebra a
-## asserção de propósito.
+## onda dentro do bloco, a fase com que a muralha hostil larga depois da nossa, e o pulso que fecha a
+## fila. Mudar o número lá sem mudar aqui quebra a asserção de propósito.
 const TRACOS_MAXIMOS := 5760
 const TRACO_SEG := 0.55
 const PASSO_ONDA := 0.012
-const TRACO_PULSO := 0.012 * 23.0 + 0.55
+const FASE_HOSTIL := 0.5
+const TRACO_PULSO := FASE_HOSTIL + 0.012 * 23.0 + 0.55
 ## Espelhos da deriva de custódia (família 13). A folga não é afrouxamento: é o atraso com que o
 ## bloco persegue um posto que anda a ~0,4 u/s, medido e impresso na asserção.
 const FOLGA_DERIVA := 0.35
@@ -445,9 +447,11 @@ static func _casas_esperadas(fila_pares: Array[Dictionary]) -> int:
 ## Quantos lances estão no ar no instante `t` do pulso: o cano só dispara depois do próprio atraso,
 ## e morre um voo depois. É a régua da ONDA — sem ela, vinte e quatro lances simultâneos por bloco e
 ## vinte e quatro em fila reads iguais no papel.
-static func _lances_no_ar(fila: Array[Dictionary], t: float) -> int:
+static func _lances_no_ar(fila: Array[Dictionary], t: float, lado := "") -> int:
 	var n := 0
 	for tr in fila:
+		if lado != "" and bool(tr["aliado"]) != (lado == "aliado"):
+			continue
 		var atraso := float(tr["atraso"])
 		if t > atraso and t < atraso + TRACO_SEG:
 			n += 1
@@ -505,8 +509,11 @@ static func _casas_fora_da_onda(fila: Array[Dictionary], espelho: Array[Dictiona
 	var comuns := mini(fila.size(), espelho.size())
 	var fora := 0
 	for i in range(comuns):
-		if not is_equal_approx(float(fila[i]["atraso"]), \
-				float(int(espelho[i]["casa"])) * PASSO_ONDA):
+		# A lei do atraso é `casa × PASSO` MAIS a fase do lado: a muralha hostil larga
+		# `FASE_HOSTIL` depois da nossa porque os dois lados não precisam atirar no mesmo instante.
+		var esperado := float(int(espelho[i]["casa"])) * PASSO_ONDA \
+				+ (0.0 if bool(espelho[i]["aliado"]) else FASE_HOSTIL)
+		if not is_equal_approx(float(fila[i]["atraso"]), esperado):
 			fora += 1
 	return fora + absi(fila.size() - espelho.size())
 
@@ -1749,7 +1756,7 @@ func _initialize() -> void:
 			fila_mm.size(), _selo_da_fila(espelho).length()])
 	_assert("o atraso de cada lance e a casa dele: a leva sai em fila, nao junto",
 		_casas_fora_da_onda(fila_mm, espelho) == 0,
-		"%d de %d lances com atraso diferente de casa x %.3f s" % [
+		"%d de %d lances com atraso diferente de casa x %.3f s mais a fase do lado" % [
 			_casas_fora_da_onda(fila_mm, espelho), fila_mm.size(), PASSO_ONDA])
 	var bloco_mm: Dictionary = jogo.esquadra.pares_da_ultima_salva[0]["origem"]
 	_assert("a boca do cano e o proprio casco pintado: as bocas de um bloco sao as suas casas",
@@ -1766,17 +1773,26 @@ func _initialize() -> void:
 				destinos["min"], destinos["max"], float(destinos["max"]) - float(destinos["min"])])
 	var onda_zero := _lances_no_ar(fila_mm, 0.0)
 	var onda_meia := _lances_no_ar(fila_mm, 11.5 * PASSO_ONDA)
-	var onda_cheia := _lances_no_ar(fila_mm, 23.0 * PASSO_ONDA + 0.001)
-	_assert("dentro do bloco a salva e onda: nada no ar no zero, metade no meio, tudo no fim",
+	# Cada lado fecha a PRÓPRIA onda: com a muralha hostil largando `FASE_HOSTIL` depois da nossa, o
+	# último aliado ainda está no ar quando o primeiro hostil sai, e uma régua única sobre a fila
+	# inteira leria «metade do campo no ar» num instante em que o campo está inteiro no ar — o que
+	# não é lei nenhuma. As duas metades são contadas separadas, e a soma delas é a fila.
+	var total_aliado := 0
+	for tr_12 in fila_mm:
+		if bool(tr_12["aliado"]):
+			total_aliado += 1
+	var onda_aliada := _lances_no_ar(fila_mm, 23.0 * PASSO_ONDA + 0.001, "aliado")
+	var onda_hostil := _lances_no_ar(fila_mm, FASE_HOSTIL + 23.0 * PASSO_ONDA + 0.001, "hostil")
+	_assert("dentro do bloco a salva e onda, e cada lado fecha a sua: nada no ar no zero, metade no meio, tudo no fim",
 		onda_zero == 0 and onda_meia > 0 and onda_meia < fila_mm.size() \
-				and onda_cheia == fila_mm.size(),
-		"%d / %d / %d lances no ar em t = 0 / %.3f s / %.3f s de uma fila de %d" % [
-			onda_zero, onda_meia, onda_cheia, 11.5 * PASSO_ONDA, 23.0 * PASSO_ONDA + 0.001,
-			fila_mm.size()])
+				and onda_aliada == total_aliado and onda_hostil == fila_mm.size() - total_aliado,
+		"%d / %d lances no ar em t = 0 / %.3f s; onda fechada deixa %d de %d aliados no ar e %d de %d "
+			% [onda_zero, onda_meia, 11.5 * PASSO_ONDA, onda_aliada, total_aliado, onda_hostil,
+				fila_mm.size() - total_aliado] + "hostis, de uma fila de %d" % fila_mm.size())
 	_assert("a leva inteira cabe numa cadencia: onda mais voo fecham antes da salva seguinte",
 		TRACO_PULSO < 1.6 and PASSO_ONDA > 0.0,
-		"pulso de %.3f s (onda %.3f s + voo %.2f s) contra cadencia de 1,60 s" % [
-			TRACO_PULSO, 23.0 * PASSO_ONDA, TRACO_SEG])
+		"pulso de %.3f s (fase hostil %.2f s + onda %.3f s + voo %.2f s) contra cadencia de 1,60 s" % [
+			TRACO_PULSO, FASE_HOSTIL, 23.0 * PASSO_ONDA, TRACO_SEG])
 	var boca_estavel := _selo_da_fila(fila_mm)
 	jogo._armar_tracos()
 	_assert("nada sorteia: rearmar a mesma salva devolve os mesmos vinte e quatro canos por bloco",

@@ -1279,30 +1279,30 @@ func troca_salva() -> Dictionary:
 		var base: Vector3 = origem["pos"]
 		var base_alvo: Vector3 = bate["pos"]
 		var id := int(origem["id"])
-		# A mira só existe para o lado comandado: `comandado` já é `false` para o hostil (a lei de
-		# linha inimiga é intocável), então o ramo sem mira é o regime de sempre — um lance por casa,
-		# a muralha inteira gasta por igual, e nenhuma casa da frente cai antes das outras.
-		var mira: Array[int] = []
-		if bool(par["comandado"]):
-			mira = _casas_por_proximidade(bate, base)
+		# A mira é a lei da casa, não o prêmio do comando. Medido nesta casa antes da mudança: o fogo
+		# de linha espalhava os 1 440 lances da salva pelas 720 casas vivas da muralha visada — um
+		# lance por casa por salva — e `_salva_da_primeira_morte_aliada` devolvia salva 185, duzentos
+		# e noventa e seis segundos de partida sem uma morte na tela. Com a mira por proximidade em
+		# QUALQUER regime, os 24 canos de um bloco cavam a casa da frente do vizinho até apagar ela,
+		# e a muralha aberta se lê buraco por buraco. O que CONCENTRAR muda continua sendo o ALVO
+		# (todos os que alcançam no mesmo bloco apontado, e a retaguarda com portas fechadas), nunca
+		# a ordem das casas dentro dele.
+		var mira: Array[int] = _casas_por_proximidade(bate, base)
 		var cursor := 0
 		var afundou_o_bloco := false
 		# Um traço por casa viva de quem disparou, em QUALQUER eixo: o rodízio de setores troca o que
 		# a salva cobra, não o fogo que a muralha desenha. A diferença para a lei velha é que a fila
 		# agora é escrita aqui, no mesmo laço que baixou a vida — desenho e conta são o mesmo número.
 		for c in cascos:
-			var casa_alvo := 0
-			if mira.is_empty():
-				casa_alvo = vivas_bate[(c + id + salva_numero) % vivas_bate.size()]
-			else:
-				# O cursor só anda para a frente, e anda quando a casa dele apagou: é assim que o
-				# mesmo bloco cava a casa da frente antes de passar para a de trás. Andar à frente é
-				# o que mantém o lance sobre corpo VIVO — bater em casa morta seria o caso-limite em
-				# que `_casa_seguindo` redistribui o dano para a vizinha e a tela recebe a notícia
-				# errada, porque o traço desenha a casa apontada.
-				while cursor + 1 < mira.size() and not casa_viva(bate, mira[cursor]):
-					cursor += 1
-				casa_alvo = mira[cursor]
+			# O cursor só anda para a frente, e anda quando a casa dele apagou: é assim que o mesmo
+			# bloco cava a casa da frente antes de passar para a de trás. Andar à frente é o que
+			# mantém o lance sobre corpo VIVO — bater em casa morta seria o caso-limite em que
+			# `_casa_seguindo` redistribui o dano para a vizinha e a tela recebe a notícia errada,
+			# porque o traço desenha a casa apontada. A mira nunca é vazia aqui: `vivas_bate` já
+			# devolveu não-vazio acima, e `_casas_por_proximidade` lista as mesmas casas vivas.
+			while cursor + 1 < mira.size() and not casa_viva(bate, mira[cursor]):
+				cursor += 1
+			var casa_alvo := mira[cursor]
 			var matou := false
 			if casca_cobrada:
 				# Tiro cheio, sem o fator `vida/VIDA_DA_CASA` da lei velha: medido na Task 3, com o

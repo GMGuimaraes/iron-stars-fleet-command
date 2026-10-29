@@ -12,7 +12,8 @@ const Esquadra := preload("res://esquadra.gd")
 ## Espelhos das cotas de `main.gd` que a família C usa para adiantar a onda sem relógio do motor.
 const PASSO_DA_ONDA := 0.012
 const TRACO_DE_BLOCO_SEG := 0.55
-const TRACO_PULSO_SEG := PASSO_DA_ONDA * 23.0 + TRACO_DE_BLOCO_SEG
+const FASE_HOSTIL_DA_SALVA := 0.5
+const TRACO_PULSO_SEG := FASE_HOSTIL_DA_SALVA + PASSO_DA_ONDA * 23.0 + TRACO_DE_BLOCO_SEG
 ## Folga de soma: `VIDA_DA_CASA` é 100 ÷ 24 e 24 parcelas dessa divisão não fecham 4,4 no último
 ## dígito (medido: 4,400000000000003). É resolução de double, não afrouxamento de portão.
 const FOLGA_SOMA := 1e-9
@@ -198,9 +199,12 @@ func _initialize() -> void:
 		"%d casas apagadas, %d sem traco, %d traco sem morte" % [
 			casas_apagadas, sem_traco, traco_sem_morte])
 	# Quantas casas apagaram JUNTO com a primeira: é a resposta para "de pouco em pouco" contra "todas
-	# de uma". Sob o índice disperso a casa-alvo é bijeção, as 24 casas de um bloco se desgastam
-	# iguais, e este número diz se o quadro morre em cascata ou de uma vez — é a régua que a Task 5
-	# (mira por proximidade) tem de derrubar, e o ritmo da primeira morte é o que ela cobra ali.
+	# de uma", e é o número que a mira mudou. Sob o índice disperso antigo a casa-alvo era bijeção, as
+	# 24 casas de um bloco se desgastavam iguais, e a primeira morte de um bloco era o afundamento dele
+	# — `afundados` subia junto com a primeira casa. Medido nesta casa com a mira por proximidade: 18
+	# casas apagadas na mesma salva 5 e, ao fim das 400 salvas, 0 blocos afundados e 720 casas apagadas
+	# (três por bloco em 240). A cascata saiu de dentro-do-bloco e passou a ser entre-blocos: cada
+	# muralha cava a frente do próprio vizinho, e o quadro mostra furos, não sumiços.
 	var no_umbigo_da_primeira := 0
 	if primeira_morte > 0:
 		for bloco_p in populacao:
@@ -245,20 +249,22 @@ func _initialize() -> void:
 		for bloco_c3 in eq_c3.lista_de(lado_c3):
 			pop_c3.append(bloco_c3)
 	_marchar_jogo(jogo_c3)
-	# Pré-condição construída, e é preciso dizer por que ela é construída. Sob a dispersão bijetora
-	# que C.1 acabou de medir, cada casa viva de um bloco recebe EXATAMENTE um lance por atacante por
-	# salva (`casa_alvo = (casa + id + salva) % vivas`), então as 24 casas de um bloco se desgastam
-	# iguais e a primeira morte de um bloco coincide com o afundamento dele. Medido nesta rodada, na
-	# salva 185: 144 traços mataram, nenhum deles sobre um bloco que sobrevivesse à salva. Casa morta
-	# em bloco afundado não tem quadro para medir — ele sai da lista inteiro, e a lei do traço some
-	# junto. A mira por proximidade da task 5 é o que vai produzir a morte solitária no combate real;
-	# até lá, o corpo fraco é armado pela porta de `_golpe_na_casa` que a família B já usa.
+	# Pré-condição ainda construída, mas o MOTIVO mudou com a mira. Sob a dispersão bijetora antiga
+	# cada casa viva recebia EXATAMENTE um lance por atacante por salva, as 24 casas de um bloco se
+	# desgastavam iguais e a primeira morte coincidia com o afundamento — e bloco afundado sai de
+	# `lista_de()` inteiro, sem quadro para medir, porque a lei do traço some junto. Desde que a mira
+	# por proximidade virou lei de TODO lance (família D abaixo) C.1 mede o contrário: primeira casa
+	# apagada na salva 5, 18 casas na mesma salva, afundados 0/0. A morte solitária passou a ser o
+	# normal do combate. O corpo fraco continua armado pela porta de `_golpe_na_casa` que a família B
+	# já usa por um motivo mais humilde: sem ele o índice da salva depende da semente do tabuleiro, e
+	# esta asserção cobra um quadro exato.
 	var fracas_c3 := _armar_morte_solitaria(eq_c3)
 	_assert("a morte solitária foi armada num bloco que continua em jogo (pré-condição de C.3)",
 		fracas_c3 > 0, "%d casa(s) a um lance de morrer, com as outras cheias" % fracas_c3)
 	# A salva que apaga casa tem de ser PROCURADA, não suposta: na salva um nenhum corpo chega aos 35
-	# lances, e o teto de 400 é a janela medida em C.1 (primeira morte na salva 185 da Esquadra nua;
-	# aqui o tabuleiro vem da semente do jogo, então o índice exato muda e a janela não pode encolher).
+	# lances, e o teto de 400 é a janela medida em C.1 (a marcha nua apaga a primeira na salva 5; aqui
+	# o tabuleiro vem da semente do jogo e a morte é armada, então o índice exato muda e a janela não
+	# pode encolher).
 	var matou_c3: Array[Dictionary] = []
 	var salva_da_morte := -1
 	while matou_c3.is_empty() and eq_c3.salva_numero < 400:
@@ -291,7 +297,8 @@ func _initialize() -> void:
 			matou_c3.size(), salva_da_morte, vivos_c3])
 	if not tra_c3.is_empty():
 		var casa_c3: Dictionary = (tra_c3["bate"] as Dictionary)["casas"][int(tra_c3["casa_alvo"])]
-		var atraso_c3 := float(int(tra_c3["casa"])) * PASSO_DA_ONDA
+		var atraso_c3 := float(int(tra_c3["casa"])) * PASSO_DA_ONDA + (
+			0.0 if bool(tra_c3["aliado"]) else FASE_HOSTIL_DA_SALVA)
 		var toque_c3 := int(ceilf((atraso_c3 + TRACO_DE_BLOCO_SEG) / (1.0 / 60.0)))
 		quadro_do_toque = toque_c3
 		var pendia_antes := bool(casa_c3["a_noticiar"])
@@ -348,14 +355,24 @@ func _initialize() -> void:
 	var distintos_c := _casas_alvo_distintas(largada_c)
 	var pior_d := _max_casas_por_atacante(largada_d)
 	var pior_c := _max_casas_por_atacante(largada_c)
-	# A digital da mira é POR ATRANCAnte, não do campo inteiro: contar casas distintas somando a
-	# muralha já era aprovado antes da mira, porque a ordem da ponte concentra BLOCOS-alvo (30 atacantes
-	# sobre 3 blocos = 72 casas) sem tocar na escolha de casa dentro deles. O que a lapidação 2 compra
-	# é o passo seguinte: os vinte e quatro canos de UM bloco pousam na MESMA casa da frente.
-	_assert("os canos de um bloco convergem na casa da frente sob a ordem, e se espalham sem ela",
-		pior_c > 0 and pior_c < pior_d,
-		"um atacante pousa em %d casa(s) distintas no concentrado contra %d no disperso // campo: "
-			% [pior_c, pior_d] + "%d contra %d" % [distintos_c, distintos_d])
+	# Duas leis, e elas moram em níveis diferentes. A primeira é da CASA e não do comando: os vinte e
+	# quatro canos de UM bloco pousam na casa da frente do alvo dele, com ordem e sem ordem. Foi isso
+	# que substituiu o leque bijetor (`casa_alvo = (casa + id + salva) % vivas`, um lance por casa por
+	# salva), que espelhava 1 440 lances sobre 720 casas vivas e devolvia a primeira morte na salva
+	# 185 — duzentos e noventa e seis segundos de partida sem um corpo apagar na tela. Medido agora:
+	# UM atacante, UMA casa, nos dois regimes, e a primeira morte na salva 5.
+	_assert("os canos de um bloco convergem na casa da frente, com ou sem ordem (a lei da mira)",
+		pior_d == 1 and pior_c == 1,
+		"um atacante pousa em %d casa(s) distintas no fogo de linha contra %d no concentrado" % [
+			pior_d, pior_c])
+	# A segunda é do COMANDO, e mora no ALVO, não na casa: a ordem da ponte fecha os trinta atacantes
+	# sobre uma frente só, e o campo inteiro enxuga das 30 casas-alvo distintas do fogo de linha para
+	# as 5 do visado. É o que sobrou de sentido para CONCENTRAR depois que a mira virou lei de todo
+	# lance — e é ela que a asserção seguinte cobra, em salvas.
+	_assert("a ordem da ponte enxuga o CAMPO de alvos, não a escolha de casa dentro do alvo",
+		distintos_c > 0 and distintos_c < distintos_d,
+		"campo: %d casas-alvo distintas com a ordem contra %d no fogo de linha // por atacante: "
+			% [distintos_c, distintos_d] + "%d contra %d" % [pior_c, pior_d])
 	# O preço, em salvas: a primeira casa de um bloco apaga mais cedo sob a ordem da ponte. São as
 	# duas montadas do mesmo tabuleiro, e é este o número que o comandante julga de olho.
 	var dispersa := _nova_esquadra()
@@ -540,10 +557,10 @@ func _cobrados_e_tracos(e: Esquadra, antes: Dictionary) -> bool:
 	return cobradas > 0 and e.tiros_da_salva().size() == cobradas
 
 
-## Quantas casas do lado visado receberam lance aliado nesta salva. É a digital da convergência:
-## vinte e quatro bocas contra a mesma frente dão um número pequeno, vinte e quatro bocas em leque
-## dão vinte e quatro. A chave é (bloco, casa) e não só a casa: dois blocos visados com a mesma casa
-## apagada são duas mortes na tela, não uma.
+## Quantas casas do lado visado receberam lance aliado nesta salva, somando a muralha inteira. É a
+## digital do COMANDO: trinta atacantes sobre uma frente só dão um número pequeno, trinta atacantes
+## cada um no vizinho mais próximo dão um por atacante. A chave é (bloco, casa) e não só a casa: dois
+## blocos visados com a mesma casa apagada são duas mortes na tela, não uma.
 func _casas_alvo_distintas(e: Esquadra) -> int:
 	var vistas := {}
 	for t in e.tiros_da_salva():
@@ -553,9 +570,11 @@ func _casas_alvo_distintas(e: Esquadra) -> int:
 
 
 ## Quantas casas distintas UM bloco atacante espalha os próprios lances — o pior caso da muralha.
-## É a medida da mira: sem ela um bloco cobre as 24 casas do alvo num sopro (a dispersão bijetora
-## `casa_alvo = (casa + id + salva) % vivas`); com ela, os vinte e quatro canos pousam na casa da
-## frente e só passam à vizinha quando aquela apaga.
+## É a medida da mira, e a lei hoje é uma só: os vinte e quatro canos de um bloco pousam na casa da
+## frente do alvo e só passam à vizinha quando aquela apaga, de modo que o número honesto é 1 nos
+## dois regimes. O antigo índice disperso (`casa_alvo = (casa + id + salva) % vivas`) dava 24 por
+## atacante, e é contra essa digital que a asserção da família D ainda se apoia: a mira deixou de ser
+## prêmio do comando para virar lei da casa.
 func _max_casas_por_atacante(e: Esquadra) -> int:
 	var por_bloco := {}
 	for t in e.tiros_da_salva():
@@ -573,9 +592,10 @@ func _max_casas_por_atacante(e: Esquadra) -> int:
 
 ## Em que salva a montada apaga a PRIMEIRA casa de qualquer bloco hostil, contando só pelos lances
 ## que ela mesma mandou (`aliado && matou` no ledger). Devolve -1 se não apagar em `limite` salvas.
-## O teto é 400 porque foi medido: o plano propunha 120 ("disperso dá ~1 lance por casa por salva, a
-## casa morre no 35º golpe"), e com 120 os DOIS lados voltavam `-1` — a família C.1 já assinou a
-## primeira morte da marcha inteira na salva 185, porque boca < 1 e a placa comem lances antes da vida.
+## O teto de 400 não encolhe embora a medida de hoje esteja longe dele (fogo de linha na salva 5,
+## com a ordem da ponte na 3): ele foi escrito contra o índice disperso, que assinava a primeira
+## morte da marcha inteira na salva 185 porque boca < 1 e a placa come lances antes da vida. Um teto
+## calibrado na medição desta rodada aprovaria por acidente se a mira voltasse a ser leque.
 ## Esta régua substitui o instrumento que o plano desenhava (olhar um bloco fixo, `blocos_hostis[0]`):
 ## medido por `_tmp_mira.gd`, esse bloco recebe ZERO lances aliados nas 400 salvas do regime de linha
 ## (`no_alvo=0`, 60 pares de alvo contra os 30 do visado) porque quem alcança atira no vizinho mais

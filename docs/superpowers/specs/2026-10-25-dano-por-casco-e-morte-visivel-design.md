@@ -20,7 +20,10 @@ Medido no código antes de qualquer decisão:
   `:1154`).
 * O fogo por casco **já existe, mas não custa nada**: `tiros_da_salva()` ([`esquadra.gd:1129`](../../esquadra.gd))
   deriva um traço por casa viva do mesmo ledger, e a onda atrasa cada lance em
-  `casa × PASSO_DA_ONDA` ([`main.gd:2121`](../../main.gd)). Vinte e quatro bocas atiram, um golpe paga.
+  `casa × PASSO_DA_ONDA` ([`main.gd:2145`](../../main.gd)). Vinte e quatro bocas atiram, um golpe paga.
+  *(Re-escrito pela lapidação 3: o golpe deixou de pagar um só. A mira por proximidade virou lei de
+  todo lance — `esquadra._casas_por_proximidade` decide a casa-alvo também no fogo de linha, sem
+  ordem — e a primeira casa apaga na salva 5 contra a 185 medida antes desta change.)*
 * A casa **não é corpo**: `CASAS = CASAS_X 4 × CASAS_Y 3 × CASAS_Z 2 = 24` ([`esquadra.gd:50-53`](../../esquadra.gd)),
   `casas_vivas()` **deriva** quantas casas há a partir do agregado `navios`
   ([`esquadra.gd:522-526`](../../esquadra.gd)) e `pintar_cores()` dá às vinte e quatro casas a **mesma

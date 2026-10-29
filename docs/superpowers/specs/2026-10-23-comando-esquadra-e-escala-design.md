@@ -207,7 +207,12 @@ arrastou uma terceira que ninguém pediu.
 `TRACOS_DA_MASSA` = **5 760** instâncias (`INSTANCIAS_POR_LADO × 2`), e o atraso de cada lance é
 `casa × PASSO_DA_ONDA` com `PASSO_DA_ONDA` = **0,012 s**: a onda fecha em **0,276 s** e somada aos
 **0,55 s** de voo dá `TRACO_PULSO_SEG` = **0,826 s** de pulso dentro dos 1,6 s da cadência — leva,
-não chuva, e o portão é o pulso morrer antes do próximo armar. **A conta não mudou**: o ledger
+não chuva, e o portão é o pulso morrer antes do próximo armar. *(Lapidação 3: a muralha hostil
+passou a largar `FASE_HOSTIL_DA_SALVA` = **0,5 s** depois da nossa, porque os dois lados não precisam
+atirar no mesmo instante; o pulso passou a **1,326 s** e o portão continua o mesmo. E a frase «a conta
+não mudou» do parágrafo abaixo vale só para a rodada em que ela foi escrita: desde a lapidação 2 o
+ledger cobra **tiro a tiro por casa**, não mais `DANO_DE_BLOCO` 2,2 por bloco, como registra
+`2026-10-25-dano-por-casco-e-morte-visivel-design.md`.)* **A conta não mudou**: o ledger
 continua cobrando um lance por bloco (`DANO_DE_BLOCO` 2,2, 240 blocos, mesma inércia de `rng` e
 `visual_rng`); o que mudou é o desenho, que passou a ter um cano por casa. Prova lida: **5 760
 traços armados para 5 760 casas vivas, contra os 240 blocos que cobraram na salva**, e o espelho
@@ -505,6 +510,13 @@ dentro de costado. `capital_role_*` e `capital_empuxo_*` mantêm nome e lógica,
 física, inclusive a autocorreção do adernamento. Ninguém mais no repo lê esses nomes: `main.gd` é
 quem registra (`_registra_voo`) e quem consulta (`_update_capital_ship`), e a única outra leitora é
 a sonda do voo — o custo do renomear foi medir duas listas de rótulos.
+
+*(Emenda da lapidação 3, 2026-10-28: o comandante pediu o giro de volta para a mão esquerda —*
+**`Q`/`E`** *— e a troca coube porque a rolagem já tinha saído de `E` na decisão acima. `R` ficou*
+*inteiramente desocupada: o `RECOMEÇAR` nunca teve tecla, e a frase que jurava o contrário já estava*
+*corrigida no README. O que a régua conferiu é o mapinha, não a letra solta —*
+`tools/probes/manobra.gd` *abre pelo* `InputMap` *e fecha* `quebras=0 • conferências=57`*, com os*
+*seis eixos vivos e o gesto de deitar o casco na curva intacto.*
 
 A lei do través é um termo no mesmo somatório que já soma empuxo e subida, em
 `main.gd` (`_update_capital_ship`): `traves * lado * CAPITAL_TRAVES`, com `traves` lido de

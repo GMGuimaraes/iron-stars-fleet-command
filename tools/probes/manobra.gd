@@ -3,7 +3,7 @@ extends SceneTree
 ## Sonda da navegação e do casco físico. O que ela prova tem três camadas, e a terceira é a que
 ## costuma ser mentirosa:
 ##
-## 1) O timão obedece nos seis eixos — avante, RÉ (com teto próprio), guinada (Q/R), traslação de
+## 1) O timão obedece nos seis eixos — avante, RÉ (com teto próprio), guinada (Q/E), traslação de
 ##    través (A/D, que NÃO vira o casco), arfagem, rolagem autocorrigida (Z/X) e empuxo vertical
 ##    (C/V) — e o mapinha que liga cada tecla a cada eixo é conferido tecla a tecla, código e
 ##    físico. O campo é grande, com limites que fecham em coordenada
@@ -48,7 +48,7 @@ const TECLAS_DE_VOO := {
 	"capital_nariz_acima": KEY_UP,
 	"capital_nariz_abaixo": KEY_DOWN,
 	"capital_giro_esquerda": KEY_Q,
-	"capital_giro_direita": KEY_R,
+	"capital_giro_direita": KEY_E,
 	"capital_role_esquerda": KEY_Z,
 	"capital_role_direita": KEY_X,
 	"capital_empuxo_acima": KEY_C,
@@ -195,7 +195,7 @@ func _initialize() -> void:
 	_assert("timão registrado no InputMap", _acoes_voo_existem(),
 		"as doze ações de voo existem e cada uma tem evento de teclado")
 	var desvio_teclas := _teclas_fora_do_mapinha()
-	_assert("o mapinha é o da fatia: Q/R guinada, A/D través, Z/X rolagem, C/V vertical",
+	_assert("o mapinha é o da fatia: Q/E guinada, A/D través, Z/X rolagem, C/V vertical",
 		desvio_teclas == "",
 		desvio_teclas if desvio_teclas != "" else "as doze ações têm código e físico na tecla pedida")
 	_assert("capitânia abre com casco cheio", is_equal_approx(float(game.capital_hp), 100.0),
@@ -249,7 +249,7 @@ func _initialize() -> void:
 	_assert("inércia devolve o throttle ao neutro", is_equal_approx(float(game.throttle), 0.0),
 		"throttle %.3f" % float(game.throttle))
 
-	# 5 — Guinada (Q/R), través (A/D) e arfagem nos tetos, e arfagem com motor ligado vira subida
+	# 5 — Guinada (Q/E), través (A/D) e arfagem nos tetos, e arfagem com motor ligado vira subida
 	# REAL (o empuxo sai da transformada do rig, não de um eixo fixo).
 	_teclar("capital_giro_esquerda", true)
 	var yaw_antes := float(game.bridge_rig.rotation.y)
@@ -262,7 +262,7 @@ func _initialize() -> void:
 	var yaw_direita := float(game.bridge_rig.rotation.y)
 	for i in range(10):
 		game._update_capital_ship(0.1)
-	_assert("R fecha a guinada para estibordo", float(game.bridge_rig.rotation.y) < yaw_direita,
+	_assert("E fecha a guinada para estibordo", float(game.bridge_rig.rotation.y) < yaw_direita,
 		"yaw %.3f -> %.3f" % [yaw_direita, float(game.bridge_rig.rotation.y)])
 	_teclar("capital_giro_direita", false)
 	# A traslação é o outro gesto do mesmo par de nomes: o casco anda para dentro de costado sem
