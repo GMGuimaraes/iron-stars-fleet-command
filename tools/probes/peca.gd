@@ -14,6 +14,11 @@ extends SceneTree
 
 const Esquadra := preload("res://esquadra.gd")
 
+## Folga de soma, espelho de `tools/probes/casas.gd`: `VIDA_DA_CASA` é 100 ÷ 24 e as parcelas somadas
+## pelo `_recalcular_agregados` não fecham o produto exato no último dígito. É resolução de double,
+## não afrouxamento de portão.
+const FOLGA_SOMA := 1e-9
+
 var breaks := 0
 var notes: Array[String] = []
 
@@ -29,6 +34,7 @@ func _assert(label: String, condition: bool, detail: String) -> void:
 func _initialize() -> void:
 	_familia_identidade()
 	_familia_censo()
+	await _familia_inercia()
 	for n in notes:
 		print(n)
 	print("SONDA-PECA: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
@@ -109,10 +115,55 @@ func _familia_censo() -> void:
 	_assert("H censo: peça sem casa viva não senta banco na cena, e o bloco continua vivo",
 		depois == n_antes - 1 and bool(b0["vivo"])
 			and Esquadra.casas_vivas(b0) == Esquadra.CASAS - Esquadra.CASAS_DA_PECA
-			and float(b0["navios"]) == float(Esquadra.CASAS - Esquadra.CASAS_DA_PECA)
-				* Esquadra.VIDA_DA_CASA,
+			and absf(float(b0["navios"])
+				- float(Esquadra.CASAS - Esquadra.CASAS_DA_PECA) * Esquadra.VIDA_DA_CASA)
+				< FOLGA_SOMA,
 		(("cena caiu de %d para %d pecas; bloco com %d casas e navios %.4f "
 			+ "(cai %d de %d casas → %.4f navios)") % [
 			n_antes, depois, Esquadra.casas_vivas(b0), float(b0["navios"]),
 			Esquadra.CASAS_DA_PECA, Esquadra.CASAS,
 			float(Esquadra.CASAS_DA_PECA) * Esquadra.VIDA_DA_CASA]))
+
+
+## ── Família B: inércia ──
+## O headless não lê o `MultiMesh` de volta, então esta família prova a igualdade pelas duas premissas
+## que a compõem: a algebraica (a soma dos dois termos é `casa_local`, tabela literal da família A) e a
+## fisica (com a alavanca desligada, os 1 440 `desloc` são exatamente ZERO, e a transformada escrita é
+## a mesma expressão de antes, bit a bit). A leitura de que o quadro mudou é do commander na janela
+## (Tarefa 10) — afirmar "pixel idêntico" medido em headless seria o portão falhando aberto.
+func _familia_inercia() -> void:
+	var game := (load("res://main.tscn") as PackedScene).instantiate()
+	get_root().add_child(game)
+	await _frames(3)
+	var e: Esquadra = game.esquadra
+	var zero := 0
+	var total := 0
+	for lado in ["aliado", "hostil"]:
+		for b in e.lista_de(lado):
+			for pc in b["pecas"]:
+				total += 1
+				if (pc["desloc"] as Vector3) == Vector3.ZERO:
+					zero += 1
+	_assert("B inercia: com a alavanca desligada, nenhuma peça tem excursão",
+		not e.pecas_livres and total == 240 * Esquadra.PECAS_NO_BLOCO and zero == total,
+		("%d/%d pecas com desloc exatamente ZERO, alavanca=%s" % [zero, total, str(e.pecas_livres)]))
+	# O outro lado da premissa: os leitores novos dão o mesmo valor dos velhos, medido contra a
+	# expressão anterior ainda viva em `casa_local` (que a Tarefa 1 re-definiu como a soma).
+	var igual := 0
+	var b0: Dictionary = e.lista_de("aliado")[0]
+	var rot := Basis.from_euler(Vector3(0.0, float(b0["rumo"]), 0.0))
+	var origem: Vector3 = b0["pos"]
+	for c in range(Esquadra.CASAS):
+		var p := Esquadra.peca_da_casa(c)
+		var somado: Vector3 = origem + rot * (Esquadra.peca_local(p)
+			+ Esquadra.casa_na_peca(c % Esquadra.CASAS_DA_PECA))
+		if somado == origem + rot * Esquadra.casa_local(c):
+			igual += 1
+	_assert("B inercia: a conta nova da pintura é a conta velha, nos 24 vetores de mundo",
+		igual == Esquadra.CASAS, "%d/24 vetores de mundo byte-idênticos" % igual)
+	game.queue_free()
+
+
+func _frames(n: int) -> void:
+	for i in range(n):
+		await process_frame

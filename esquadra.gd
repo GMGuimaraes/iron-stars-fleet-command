@@ -145,6 +145,11 @@ const DERIVA_CICLO := 9.0
 ## O deslocamento de cada esquadrão neste instante, recalculado uma vez por `passo`. O componente em
 ## x só depende do andar, o em y depende do esquadrão — é a divisão acima aplicada.
 var _derivas: Array[Vector3] = []
+## Alavanca da fatia, e é um instrumento de medição, não um recurso de jogo. Desligada, as peças existem
+## como estado mas nenhuma força as move: é assim que a família B mede a inércia numa partida inteira e
+## não num quadro isolado. Ligada pela Tarefa 4, ela é a lei. Não tem entrada de painel, não tem tecla,
+## e nenhum save a grava.
+var pecas_livres := false
 ## Marcha da massa, em u/s: um bloco cruza a faixa do próprio esquadrão (32 u de largura) em cinco
 ## segundos, o bastante para a manobra ser lida no visor sem a linha virar formiga.
 const MARCHA_DE_BLOCO := 6.0
@@ -414,8 +419,10 @@ static func _casas_por_proximidade(alvo: Dictionary, origem_pos: Vector3) -> Arr
 	for c in range(CASAS):
 		if float(alvo["casas"][c]["vida"]) > 0.0:
 			ordem.append(c)
-			dist.append((alvo["pos"] as Vector3 + rot * casa_local(c)).distance_squared_to(
-				origem_pos))
+			var p := peca_da_casa(c)
+			dist.append(((alvo["pos"] as Vector3)
+				+ rot * (peca_local(p) + casa_na_peca(c % CASAS_DA_PECA)
+					+ (alvo["pecas"][p]["desloc"] as Vector3))).distance_squared_to(origem_pos))
 	# Seleção direta, e é de propósito: 24 elementos, estável, sem alocação de fechador e com o
 	# empate resolvido pela ordem local — `dist[j] < dist[menor]` nunca troca iguais.
 	for i in range(ordem.size()):
@@ -837,36 +844,67 @@ func noticiar_morte(bloco: Dictionary, c: int) -> void:
 
 ## ---- Linha de visada da massa ----
 
+## Onde a peça está no mundo: o posto local dela, mais a vaga capturada, mais a excursão, tudo girado e
+## transladado pelo bloco. A peça não guarda posição de mundo de propósito — ver `_pecas_novas`.
+func pos_da_peca(bloco: Dictionary, p: int) -> Vector3:
+	var pc: Dictionary = bloco["pecas"][p]
+	var rot := Basis.from_euler(Vector3(0.0, float(bloco["rumo"]), 0.0))
+	return (bloco["pos"] as Vector3) + rot * (peca_local(p)
+		+ (pc["vaga"] as Vector3) + (pc["desloc"] as Vector3))
+
+
+## Caixa de uma peça: a fileira de quatro cascos, pelos índices que vivem de fato. É a caixa que o
+## poço, o vento e a rocha medem (seção 3) — não a do bloco inteiro, que é o que fazia a muralha
+## inteira caber dentro do raio de um corpo só.
+func caixa_da_peca(bloco: Dictionary, p: int) -> AABB:
+	if not peca_viva(bloco, p) or not bool(bloco["vivo"]):
+		return AABB(Vector3.ZERO, Vector3(-1.0, -1.0, -1.0))
+	if _meia_casco == Vector3.ZERO:
+		_meia_casco = malha_replica().get_aabb().size * 0.5 * ESCALA_REPLICA
+	var rot := Basis.from_euler(Vector3(0.0, float(bloco["rumo"]), 0.0))
+	var centro := pos_da_peca(bloco, p)
+	var minimo := Vector3.ONE * 1e9
+	var maximo := Vector3.ONE * -1e9
+	for k in range(CASAS_DA_PECA):
+		var c := p * CASAS_DA_PECA + k
+		if not casa_viva(bloco, c):
+			continue
+		var local: Vector3 = rot * casa_na_peca(k)
+		minimo = Vector3(minf(minimo.x, local.x - _meia_casco.x),
+			minf(minimo.y, local.y - _meia_casco.y),
+			minf(minimo.z, local.z - _meia_casco.z))
+		maximo = Vector3(maxf(maximo.x, local.x + _meia_casco.x),
+			maxf(maximo.y, local.y + _meia_casco.y),
+			maxf(maximo.z, local.z + _meia_casco.z))
+	return AABB(centro + minimo, maximo - minimo)
+
+
 ## A caixa de um bloco: o volume dos cascos VIVOS, na atitude do bloco, mais a meia-caixa da malha.
 ## É lida casa a casa porque a ordem das casas fecha o TOPO antes do meio (`casa_local`): um bloco
 ## que perdeu um terço da lotação perde também a cobertura que dava a quem está atrás dele, e é
 ## isso que faz a escudeira ralada abrir corredor para a fileira seguinte. Sem navio, sem caixa:
 ## `size` negativo é o "não existe" do `AABB`, e `_entrada_na_caixa` recusa volume assim.
+##
+## Desde a lapidação 4 a geometria é a UNIÃO das caixas de peça — o bloco continua unidade de comando
+## e de ledger, mas quem manobra é a peça. Medido no motor 4.7.2: `AABB.merge()` NÃO ignora caixa de
+## volume negativo (`invalido.merge(valida)` devolve caixa esticada até a origem e o `merge_with` de
+## `core/math/aabb.cpp` grita "AABB size is negative" a cada chamada), então o laço recusa volume
+## negativo dos dois lados: a peça morta continua pelo `continue` da cota de cima, e a primeira caixa
+## viva SEDE a união em vez de ser mergida sobre o inválido inicial.
 func caixa_do_bloco(bloco: Dictionary) -> AABB:
 	var casas := casas_vivas(bloco)
 	if casas <= 0 or not bool(bloco["vivo"]):
 		return AABB(Vector3.ZERO, Vector3(-1.0, -1.0, -1.0))
-	if _meia_casco == Vector3.ZERO:
-		_meia_casco = malha_replica().get_aabb().size * 0.5 * ESCALA_REPLICA
-	var rot := Basis.from_euler(Vector3(0.0, float(bloco["rumo"]), 0.0))
-	var minimo := Vector3.ONE * 1e9
-	var maximo := Vector3.ONE * -1e9
-	# Casa a casa, pelos índices que vivem de fato: a que saiu da caixa é a que levou o tiro, não a
-	# que o `ceilf` escolhia.
-	for c in range(CASAS):
-		if not casa_viva(bloco, c):
+	var uniao := AABB(Vector3.ZERO, Vector3(-1.0, -1.0, -1.0))
+	for p in range(PECAS_NO_BLOCO):
+		var caixa := caixa_da_peca(bloco, p)
+		if not caixa.has_volume():
 			continue
-		var local: Vector3 = rot * casa_local(c)
-		minimo = Vector3(
-			minf(minimo.x, local.x - _meia_casco.x),
-			minf(minimo.y, local.y - _meia_casco.y),
-			minf(minimo.z, local.z - _meia_casco.z))
-		maximo = Vector3(
-			maxf(maximo.x, local.x + _meia_casco.x),
-			maxf(maximo.y, local.y + _meia_casco.y),
-			maxf(maximo.z, local.z + _meia_casco.z))
-	var centro: Vector3 = bloco["pos"]
-	return AABB(centro + minimo, maximo - minimo)
+		if not uniao.has_volume():
+			uniao = caixa
+		else:
+			uniao = uniao.merge(caixa)
+	return uniao
 
 
 ## Em que ponto do trecho `origem → origem+trecho` a linha entra na caixa. Devolve INF quando a
@@ -1709,8 +1747,11 @@ func _expulsar_mortos() -> int:
 	return removidos
 
 
-## Repinta o `MultiMesh` de um lado. Devolve quantos blocos foram de fato escritos, número que a
-## sonda confere: parado e inteiro, o bloco não custa uma escrita.
+## Repinta o `MultiMesh` de um lado. Devolve quantos **blocos** foram tocados — número que a sonda
+## confere. Desde a lapidação 4 a sujeira tem dois andares: o bloco sujo (casas, posição ou rumo do
+## corpo de comando mudaram) sujeita as seis peças, e uma peça suja sujeita só as quatro casas dela.
+## Sem o andar de baixo, a muralha que respira passaria a reescrever 5 760 transformados por quadro no
+## pior caso, que é o custo real desta fatia — não os ~25 mil vetoriais das leis de cenário.
 func pintar(mm: MultiMesh, lado: String, forcar := false) -> int:
 	var lista := lista_de(lado)
 	var tocados := 0
@@ -1719,35 +1760,47 @@ func pintar(mm: MultiMesh, lado: String, forcar := false) -> int:
 		var base := i * CASAS
 		var casas := casas_na_tela(b) if bool(b["vivo"]) else 0
 		var pintado: Dictionary = b["pintas"]
-		var sujo := forcar or casas != int(pintado["casas"]) \
+		var bloco_sujo := forcar or casas != int(pintado["casas"]) \
 			or (b["pos"] as Vector3).distance_squared_to(pintado["pos"]) > 0.0001 \
 			or absf(float(b["rumo"]) - float(pintado["rumo"])) > 0.001
-		if not sujo:
-			continue
-		tocados += 1
-		pintado["casas"] = casas
-		pintado["pos"] = b["pos"]
-		pintado["rumo"] = float(b["rumo"])
+		if bloco_sujo:
+			tocados += 1
+			pintado["casas"] = casas
+			pintado["pos"] = b["pos"]
+			pintado["rumo"] = float(b["rumo"])
 		var origem: Vector3 = b["pos"]
 		var rot := Basis.from_euler(Vector3(0.0, float(b["rumo"]), 0.0))
 		var escala := Vector3.ONE * ESCALA_REPLICA
 		var girada := rot.scaled(escala)
-		for c in range(CASAS):
-			if bool(b["vivo"]) and _casa_na_tela(b, c):
-				mm.set_instance_transform(base + c,
-					Transform3D(girada, origem + (rot * casa_local(c))))
-			else:
-				# Base nula é o "escondido" do MultiMesh: triângulo degenerado, nada rasteriza,
-				# e o orçamento de instâncias não muda — a casa some sem o motor realocar nada.
-				mm.set_instance_transform(base + c, Transform3D(Basis(), origem))
+		for p in range(PECAS_NO_BLOCO):
+			var pc: Dictionary = b["pecas"][p]
+			var pp: Dictionary = pc["pinta"]
+			var na_tela := casas_na_tela_da_peca(b, p) if bool(b["vivo"]) else 0
+			var suja := bloco_sujo or forcar \
+				or na_tela != int(pp["casas"]) \
+				or (pc["desloc"] as Vector3).distance_squared_to(pp["desloc"]) > 0.0001
+			if not suja:
+				continue
+			pp["desloc"] = pc["desloc"]
+			pp["casas"] = na_tela
+			var local_base: Vector3 = peca_local(p) + (pc["desloc"] as Vector3)
+			for k in range(CASAS_DA_PECA):
+				var c := p * CASAS_DA_PECA + k
+				if bool(b["vivo"]) and _casa_na_tela(b, c):
+					mm.set_instance_transform(base + c, Transform3D(girada,
+						origem + (rot * (local_base + casa_na_peca(k)))))
+				else:
+					# Base nula é o "escondido" do MultiMesh: triângulo degenerado, nada rasteriza,
+					# e o orçamento de instâncias não muda — a casa some sem o motor realocar nada.
+					mm.set_instance_transform(base + c, Transform3D(Basis(), origem))
 	# A lista encolheu (rendição, ou reset com menos blocos): a cauda que o lado pintou na última
 	# vez não pertence a bloco nenhum agora, e ficar calado aqui deixa um bloco fantasma de 24
 	# casas pendurado no campo. Apaga-se pela contagem antiga, não pela lista.
 	var limite := lista.size() * CASAS
 	var pintadas := int(_casas_pintadas[lado])
 	if pintadas > limite:
-		for k in range(limite, pintadas):
-			mm.set_instance_transform(k, Transform3D(Basis(), Vector3.ZERO))
+		for k2 in range(limite, pintadas):
+			mm.set_instance_transform(k2, Transform3D(Basis(), Vector3.ZERO))
 	_casas_pintadas[lado] = limite
 	return tocados
 
