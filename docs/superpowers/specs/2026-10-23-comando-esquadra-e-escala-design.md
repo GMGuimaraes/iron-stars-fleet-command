@@ -223,6 +223,21 @@ visado** (16 destinos diferentes, porque nem todo bloco alcança o alvo único) 
 30 blocos** com a ordem solta. O preço continua sendo **um** nó: **293 760 escritas** em cinquenta
 quadros mais a armação, que é `51 × 5 760` exato, contra os 5 760 nós que um nó por lance cobraria.
 
+**Prova da partida inteira — a régua que faltava.** Os números acima são lidos numa marcha sintética:
+núcleos congelados, salva montada à mão. O pedido do comandante da lapidação 3 («quero ver uma batalha
+real agora») exigia a curva da partida dirigida pelo próprio jogo, e ela virou sonda rastreada:
+`tools/probes/batalha_real.gd` chama `game._process(1/60)` por **12 000 quadros = 200 s de relógio
+virtual** com a frota marchando, o `fire_clock` correndo e `_resolve_volley` resolvendo, e imprime o
+census a cada 30 salvas. Medido na última rodada: **primeira salva aos 1,6 s**, **123 salvas** no trecho
+(a cadência de 1,6 s sobrevive aos dois lados desencontrados — a fase hostil de 0,5 s cabe dentro do
+pulso de 1,326 s), **maior salva com 1 440 lances**, e o ledger dos dois lados descendo junto: **90 →
+210 → 303 → 360 casas mortas** (de **2 880** por lado) nas salvas 30/60/90/120, **10 476** navios hostis
+contra **10 470** aliados no fim, razão **1,00** entre os lados. A quarta asserção é confessa e portada
+como aresta, não como vitória: **120/120 blocos dos dois lados ainda na lista** ao fim dos 200 s — em
+fogo de linha caem ~3 casas por salva por lado, então nenhum bloco afunda dentro do trecho, e afundar é
+alavanca de saldo do comandante (o `CONCENTRAR` e a economia da mira), não veredito da sonda. Veredito:
+`quebras=0 - conferencias=5`, e a sonda entrou na bateria como a 32ª de cabeça fria.
+
 **Lei 2 — a muralha respira.** `DERIVA_X` **0,6 u** em boreste com a fase do **andar**, `DERIVA_Y`
 **0,45 u** em altura com a fase do **esquadrão**, **zero em z**, ciclo `DERIVA_CICLO` = **9,0 s**.
 Lido no meio de seis esquadrões defasados de 60°: pico **0,60 u de 0,6** em boreste, **0,46 u de
