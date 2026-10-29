@@ -732,8 +732,10 @@ static func casas_na_tela_da_peca(bloco: Dictionary, p: int) -> int:
 const RAIO_DA_PECA := (float(CASAS_DA_PECA - 1) * PASSO_CASA_X + 0.912) / 2.0
 
 ## O buffer do censo: 1 440 dicionários por tique, e alocá-los de novo a cada quadro é o único custo
-## real da fatia (as cinco leis somam ~25 mil operações vetoriais, que é nada). O buffer cresce até o
-## censo máximo e então só reescreve campos — os invólucros vivem para sempre.
+## real da fatia (as cinco leis somam ~25 mil operações vetoriais, que é nada). O que fica é a **marca
+## de alta**: o `resize` da cauda segura a capacidade do array, mas solta as referências dos
+## invólucros cortados — eles são liberados, e cada novo crescimento aloca dicionários novos (é por
+## isso que o `append({})` de baixo continua existindo). O array vive para sempre, a cauda não.
 var _pecas_na_cena_buf: Array[Dictionary] = []
 
 
@@ -744,6 +746,16 @@ var _pecas_na_cena_buf: Array[Dictionary] = []
 ## velocidade é a do bloco mais a da peça girada na atitude do bloco, porque a lei de abalroamento do
 ## cenário cobra pela **velocidade relativa** e uma peça parada no bloco que anda não está parada no
 ## mundo.
+##
+## VIDA DO QUE VOLTA — contrato, não dica: o array devolvido **é** o buffer da esquadra, e cada `par`
+## dele é reescrito pela chamada seguinte. Quem chama a porta uma segunda vez no mesmo tique vê o array
+## e todos os `par` anteriores trocados de inquilino: `par["bloco"]` e `par["indice"]` passam a ser
+## outra peça, e `empurrar_peca(par["bloco"], par["indice"], ...)` empurra a peça errada **sem erro
+## nenhum**. Iterar o censo chamando a porta por dentro do laço é pior: o `resize` da cauda roda
+## embaixo do iterador, e em GDScript isso não invalida o laço — ele termina cedo ou pula entradas, e
+## a lei é pulada em silêncio em vez de quebrar a sonda. Então: uma passada por tique e leitura
+## imediata; quem precisa guardar alguma coisa guarda `bloco` e o índice **como valores** (ou
+## `par["peca"]`, o canal de escrita estável por referência), nunca o array nem um `par`.
 func pecas_na_cena() -> Array[Dictionary]:
 	var n := 0
 	for lado in ["aliado", "hostil"]:
@@ -753,9 +765,9 @@ func pecas_na_cena() -> Array[Dictionary]:
 			var rot := Basis.from_euler(Vector3(0.0, float(b["rumo"]), 0.0))
 			var origem: Vector3 = b["pos"]
 			for p in range(PECAS_NO_BLOCO):
-				var pc: Dictionary = b["pecas"][p]
 				if not peca_viva(b, p):
 					continue
+				var pc: Dictionary = b["pecas"][p]
 				while _pecas_na_cena_buf.size() <= n:
 					_pecas_na_cena_buf.append({})
 				var par: Dictionary = _pecas_na_cena_buf[n]

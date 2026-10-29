@@ -85,11 +85,14 @@ func _familia_censo() -> void:
 			and soma_vivas == pecas.size(),
 		("%d pecas na cena, %d vivas somadas bloco a bloco, %d x %d de 240 blocos x 6" % [
 			pecas.size(), soma_vivas, Esquadra.BLOCOS_NO_LADO * 2, Esquadra.PECAS_NO_BLOCO]))
+	# O número é MEDIDO, não derivado: quatro casas da fileira dão 3 vãos de PASSO_CASA_X = 3,2 u
+	# (9,6 u de casco a casco) mais os 0,912 u de asa da réplica escalada, tudo sobre dois = 5,256 u.
+	# Comparar a constante com a expressão que a define seria tautologia — a diferença sairia
+	# identicamente zero e a porta nunca cairia. Aqui, mexer na grade ou na caixa do casco quebra.
 	_assert("H raio: o raio de cadastro é a metade da fileira medida, asa a asa",
-		absf(Esquadra.RAIO_DA_PECA - (float(Esquadra.CASAS_DA_PECA - 1) * Esquadra.PASSO_CASA_X
-			+ 0.912) / 2.0) < 0.001,
-		("RAIO_DA_PECA=%.3f u para uma fileira de %.1f u de cascos + 0,912 de caixa" % [
-			Esquadra.RAIO_DA_PECA, float(Esquadra.CASAS_DA_PECA - 1) * Esquadra.PASSO_CASA_X]))
+		absf(Esquadra.RAIO_DA_PECA - 5.256) < 0.001,
+		("RAIO_DA_PECA=%.3f u contra a fileira medida: 9,6 u de cascos + 0,912 u de caixa, sobre 2" % [
+			Esquadra.RAIO_DA_PECA]))
 	# A peça morta sai do censo: apagar as quatro casas de p=1 de um bloco aliado tira uma peça do
 	# mundo sem tirar o bloco. É o devoramento do poço medido por contagem, antes de existir poço.
 	# A porta devolve o próprio buffer (é isso que a faz barata), então a contagem de antes é
@@ -100,8 +103,16 @@ func _familia_censo() -> void:
 		b0["casas"][c]["vida"] = 0.0
 	Esquadra._recalcular_agregados(b0)
 	var depois := e.pecas_na_cena().size()
+	# O `navios` é cobrado, não só impresso: a grade paga VIDA_DA_CASA = 100/24 = 4,1667 navios por
+	# casa, então perder CASAS_DA_PECA casas custa 16,667 navios — não o «1/4 de 100 = 25» que o
+	# rótulo antigo dizia. Com 20 casas vivas sobram exatamente 83,3333 no agregado.
 	_assert("H censo: peça sem casa viva não senta banco na cena, e o bloco continua vivo",
 		depois == n_antes - 1 and bool(b0["vivo"])
-			and Esquadra.casas_vivas(b0) == Esquadra.CASAS - Esquadra.CASAS_DA_PECA,
-		("cena caiu de %d para %d pecas; bloco com %d casas e navios %.4f (cai 1/4 de 100)" % [
-			n_antes, depois, Esquadra.casas_vivas(b0), float(b0["navios"])]))
+			and Esquadra.casas_vivas(b0) == Esquadra.CASAS - Esquadra.CASAS_DA_PECA
+			and float(b0["navios"]) == float(Esquadra.CASAS - Esquadra.CASAS_DA_PECA)
+				* Esquadra.VIDA_DA_CASA,
+		(("cena caiu de %d para %d pecas; bloco com %d casas e navios %.4f "
+			+ "(cai %d de %d casas → %.4f navios)") % [
+			n_antes, depois, Esquadra.casas_vivas(b0), float(b0["navios"]),
+			Esquadra.CASAS_DA_PECA, Esquadra.CASAS,
+			float(Esquadra.CASAS_DA_PECA) * Esquadra.VIDA_DA_CASA]))
