@@ -472,7 +472,9 @@ func empurrar_peca(bloco: Dictionary, p: int, empurrao: Vector3) -> void:
 - [ ] **Step 6: Checagem e sonda**
 
 Run (as três linhas do Step 5 da Tarefa 1, com `esquadra.gd` também):
-Expected: `SONDA-PECA: veredito - quebras=0 - conferencias=4`.
+Expected: `SONDA-PECA: veredito - quebras=0 - conferencias=5` (medido na tarefa 2; o texto antigo dizia 4
+porque contava dois `_assert` na família H-censo, que tem três — o censo honesto é o número de `_assert`
+do código, não o desta linha).
 
 - [ ] **Step 7: Bateria completa, porque a folha do bloco mudou de forma**
 
@@ -730,7 +732,8 @@ for p in peca casas comando massa_visivel esquadra; do
     -s res://tools/probes/$p.gd | tail -3
 done
 ```
-Expected: `peca` com `quebras=0 - conferencias=6`; `casas`, `comando` e `esquadra` verdes;
+Expected: `peca` com `quebras=0 - conferencias=7` (5 da tarefa 2 + 2 da família B; o texto antigo dizia 6
+porque herdou o censo errado de cima); `casas`, `comando` e `esquadra` verdes;
 `massa_visivel` **só roda em janela** (o `--headless` nela devolve textura null) — nesta tarefa,
 rode-a em janela com o comando do cabeçalho e leia o PNG de volta. Se ela reclamar de boca de casa
 ou de contagem de blocos tocados, declare a precondition na sonda (ela estava medindo o dirty-test
