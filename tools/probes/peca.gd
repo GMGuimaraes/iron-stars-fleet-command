@@ -28,6 +28,7 @@ func _assert(label: String, condition: bool, detail: String) -> void:
 
 func _initialize() -> void:
 	_familia_identidade()
+	_familia_censo()
 	for n in notes:
 		print(n)
 	print("SONDA-PECA: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
@@ -66,3 +67,41 @@ func _familia_identidade() -> void:
 		("PECAS_NO_BLOCO=%d x CASAS_DA_PECA=%d = %d casas, p(23)=%d" % [
 			Esquadra.PECAS_NO_BLOCO, Esquadra.CASAS_DA_PECA,
 			Esquadra.PECAS_NO_BLOCO * Esquadra.CASAS_DA_PECA, Esquadra.peca_da_casa(23)]))
+
+
+## ── Família H (parte 1): censo da peça ──
+func _familia_censo() -> void:
+	var e := Esquadra.new()
+	e.montar([Vector3.ZERO], [Vector3(0.0, 0.0, -130.0)])
+	var pecas := e.pecas_na_cena()
+	var soma_vivas := 0
+	for lado in ["aliado", "hostil"]:
+		for b in e.lista_de(lado):
+			for p in range(Esquadra.PECAS_NO_BLOCO):
+				if Esquadra.peca_viva(b, p):
+					soma_vivas += 1
+	_assert("H censo: cada bloco carrega PECAS_NO_BLOCO peças e a cena devolve as vivas",
+		pecas.size() == Esquadra.BLOCOS_NO_LADO * 2 * Esquadra.PECAS_NO_BLOCO
+			and soma_vivas == pecas.size(),
+		("%d pecas na cena, %d vivas somadas bloco a bloco, %d x %d de 240 blocos x 6" % [
+			pecas.size(), soma_vivas, Esquadra.BLOCOS_NO_LADO * 2, Esquadra.PECAS_NO_BLOCO]))
+	_assert("H raio: o raio de cadastro é a metade da fileira medida, asa a asa",
+		absf(Esquadra.RAIO_DA_PECA - (float(Esquadra.CASAS_DA_PECA - 1) * Esquadra.PASSO_CASA_X
+			+ 0.912) / 2.0) < 0.001,
+		("RAIO_DA_PECA=%.3f u para uma fileira de %.1f u de cascos + 0,912 de caixa" % [
+			Esquadra.RAIO_DA_PECA, float(Esquadra.CASAS_DA_PECA - 1) * Esquadra.PASSO_CASA_X]))
+	# A peça morta sai do censo: apagar as quatro casas de p=1 de um bloco aliado tira uma peça do
+	# mundo sem tirar o bloco. É o devoramento do poço medido por contagem, antes de existir poço.
+	# A porta devolve o próprio buffer (é isso que a faz barata), então a contagem de antes é
+	# snapshotada AQUI: segurar o array através de uma segunda chamada é segurar o número de depois.
+	var n_antes := pecas.size()
+	var b0: Dictionary = e.lista_de("aliado")[0]
+	for c in Esquadra.casas_da_peca(1):
+		b0["casas"][c]["vida"] = 0.0
+	Esquadra._recalcular_agregados(b0)
+	var depois := e.pecas_na_cena().size()
+	_assert("H censo: peça sem casa viva não senta banco na cena, e o bloco continua vivo",
+		depois == n_antes - 1 and bool(b0["vivo"])
+			and Esquadra.casas_vivas(b0) == Esquadra.CASAS - Esquadra.CASAS_DA_PECA,
+		("cena caiu de %d para %d pecas; bloco com %d casas e navios %.4f (cai 1/4 de 100)" % [
+			n_antes, depois, Esquadra.casas_vivas(b0), float(b0["navios"])]))

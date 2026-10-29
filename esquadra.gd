@@ -478,11 +478,25 @@ func fixar_lotacao(bloco: Dictionary, navios: float) -> void:
 	_recalcular_agregados(bloco)
 
 
+## As seis peças de um bloco novo, todas no próprio posto. O que a peça carrega é uma excursão no
+## referencial LOCAL do bloco (`desloc`), nunca uma posição de mundo: é isso que faz a pintura com
+## `desloc` zero ser a mesma conta aritmética de antes (soma com zero não arredonda) e faz a
+## transformada do mundo inteira sair de `b["pos"] + rot * (...)` como sempre saiu. `vaga` é o posto
+## extra que a peça capturou (seção 4); `pinta` é a memória suja por peça (seção 3).
+static func _pecas_novas() -> Array[Dictionary]:
+	var pecas: Array[Dictionary] = []
+	for p in range(PECAS_NO_BLOCO):
+		pecas.append({"desloc": Vector3.ZERO, "vel": Vector3.ZERO, "vaga": Vector3.ZERO,
+			"pinta": {"desloc": Vector3(1e9, 0.0, 0.0), "casas": -1}})
+	return pecas
+
+
 func _novo_bloco(id: int, esq: int, indice: int, lado: String, pos: Vector3) -> Dictionary:
 	return {"id": id, "esquadrao": esq, "formacao": indice, "lado": lado, "pos": pos,
 		"vel": Vector3.ZERO, "rumo": rumo_da_linha(lado), "giro": 0.0,
 		"navios": float(NAVIOS_NO_BLOCO),
 		"casas": _casas_novas(),
+		"pecas": _pecas_novas(),
 		# Placa de esquadra: `escudo_max` em zero é a forma que a lei lê como "não recomponha".
 		"escudo": Escudo.ESCUDO_DE_BLOCO, "escudo_max": 0.0, "escudo_cai": 0.0,
 		"MOTORES": 100.0, "ARMAS": 100.0, "TRIPULACAO": 100.0, "vivo": true, "presa": false,
@@ -710,6 +724,82 @@ static func casas_na_tela_da_peca(bloco: Dictionary, p: int) -> int:
 		if _casa_na_tela(bloco, p * CASAS_DA_PECA + k):
 			n += 1
 	return n
+
+
+## Raio de cadastro de uma peça, lido da caixa medida da fileira: (4 − 1) × 3,2 u de passo mais os
+## 0,912 u de asa da réplica escalada, tudo sobre dois. É o que a cena usa para distância de contato
+## com rocha e astro — não o braço do bloco inteiro, que é 10,5 u.
+const RAIO_DA_PECA := (float(CASAS_DA_PECA - 1) * PASSO_CASA_X + 0.912) / 2.0
+
+## O buffer do censo: 1 440 dicionários por tique, e alocá-los de novo a cada quadro é o único custo
+## real da fatia (as cinco leis somam ~25 mil operações vetoriais, que é nada). O buffer cresce até o
+## censo máximo e então só reescreve campos — os invólucros vivem para sempre.
+var _pecas_na_cena_buf: Array[Dictionary] = []
+
+
+## A cena mede peça por peça. Cada entrada é `{pos, vel, raio, bloco, peca, indice, lado}`, onde
+## `peca` é o dicionário da peça **por referência** — escrever nele é escrever no estado, a mesma
+## técnica de `_collision_bodies()`. `pos` e `vel` são instantâneos de leitura (o mundo), `desloc` é o
+## estado (o referencial do bloco): quem empurra passa por `empurrar_peca`, nunca escreve `pos`. A
+## velocidade é a do bloco mais a da peça girada na atitude do bloco, porque a lei de abalroamento do
+## cenário cobra pela **velocidade relativa** e uma peça parada no bloco que anda não está parada no
+## mundo.
+func pecas_na_cena() -> Array[Dictionary]:
+	var n := 0
+	for lado in ["aliado", "hostil"]:
+		for b in lista_de(lado):
+			if not bool(b["vivo"]):
+				continue
+			var rot := Basis.from_euler(Vector3(0.0, float(b["rumo"]), 0.0))
+			var origem: Vector3 = b["pos"]
+			for p in range(PECAS_NO_BLOCO):
+				var pc: Dictionary = b["pecas"][p]
+				if not peca_viva(b, p):
+					continue
+				while _pecas_na_cena_buf.size() <= n:
+					_pecas_na_cena_buf.append({})
+				var par: Dictionary = _pecas_na_cena_buf[n]
+				par["pos"] = origem + rot * (peca_local(p) + (pc["desloc"] as Vector3))
+				par["vel"] = (b["vel"] as Vector3) + rot * (pc["vel"] as Vector3)
+				par["raio"] = RAIO_DA_PECA
+				par["bloco"] = b
+				par["peca"] = pc
+				par["indice"] = p
+				par["lado"] = lado
+				n += 1
+	# A cauda de um tique anterior pode apontar para blocos que já não existem (rendição, expulsão de
+	# mortos). Encurtar o buffer é o que impede a cena de empurrar um cadáver.
+	_pecas_na_cena_buf.resize(n)
+	return _pecas_na_cena_buf
+
+
+## Folga da peça, por eixo, derivada da tabela de ar medida do bloco (seção 4 do design): metade do ar
+## mais apertado em que a peça participa, arredondada para baixo. É por construção que duas peças
+## vizinhas nunca se sobrepõem mesmo nos cursos extremos opostos — sobram 0,088 u (x), 0,132 (y) e
+## 0,150 (z) de ar. A liberdade que o commander pediu não vem daqui, vem da vaga (Tarefa 5).
+const FOLGA_DA_PECA := Vector3(1.2, 0.6, 0.9)
+
+
+## A excursão não pode passar da trela, eixo a eixo, em torno do posto que a peça persegue — que é o
+## próprio posto mais a vaga capturada. Clamp por eixo, não por módulo: com módulo o curso de uma peça
+## seria limitado na diagonal e livre contra o vizinho, que é exatamente o disco que a lei de voo
+## recusa.
+static func apertar_na_trela(desloc: Vector3, vaga: Vector3) -> Vector3:
+	return Vector3(
+		clampf(desloc.x, vaga.x - FOLGA_DA_PECA.x, vaga.x + FOLGA_DA_PECA.x),
+		clampf(desloc.y, vaga.y - FOLGA_DA_PECA.y, vaga.y + FOLGA_DA_PECA.y),
+		clampf(desloc.z, vaga.z - FOLGA_DA_PECA.z, vaga.z + FOLGA_DA_PECA.z))
+
+
+## Empurra a peça pelo mundo, pela porta dela. A rotação inversa é `from_euler(0, -rumo, 0)` porque o
+## bloco só gira em y — sem isso, um empurrão de mundo escrito direto em `desloc` seria um empurrão em
+## outro eixo assim que a linha manobrasse. E o empurrão sai logo apertado na trela: o poço tem
+## direito de puxar; quem paga o preço de voltar é a formação.
+func empurrar_peca(bloco: Dictionary, p: int, empurrao: Vector3) -> void:
+	var pc: Dictionary = bloco["pecas"][p]
+	var rot_inv := Basis.from_euler(Vector3(0.0, -float(bloco["rumo"]), 0.0))
+	pc["desloc"] = apertar_na_trela((pc["desloc"] as Vector3) + rot_inv * empurrao,
+		pc["vaga"] as Vector3)
 
 
 ## O que a tela ainda mostra daquela casa: a viva, e a morta cuja onda ainda não deu o recado. É a
