@@ -23,15 +23,22 @@ extends SceneTree
 ##    lendo `true` num tabuleiro morto: `is_processing()` não é prova de congelamento por modo, só
 ##    o relógio é.
 ##
-## O motor plantado é a asserção que não dá para fingir: reparo automático é fatura de `delta`, então
-## um casco a 76,000 que acorda em QUALQUER outro número denuncia processo rodando mesmo sem ninguém
-## ler o relógio. O que se cobra é o desvio do valor plantado, nunca o SINAL dele: o `rng` da batalha
-## nasce sem semente (`main.gd:557`), e medido em três rodadas seguidas o mesmo tabuleiro vivo acordou
-## em 78,8014 e 78,7311 (reparo ganhou) e em 74,5369 (a salva hostil chegou primeiro). Cobrar `>` era
-## cobrar qual dos dois canais venceu o sorteio, não o instrumento. A outra metade da prova — o
-## tabuleiro morto — já cobra os 76,0000 EXATOS (`absf(...) <= PASSO_ESPERADO`, com
-## `PASSO_ESPERADO = 0.0`). As duas metades agora leem a mesma régua: vivo = mexeu, morto = não mexeu
-## um dígito.
+## O motor plantado é a asserção que não dá para fingir, e o que dá poder a ela não é a lei do reparo
+## (agora ela aceita movimento dos DOIS canais): é o grafo de escritores. `grep` por escrita de
+## `["engines"]` fora de sondas devolve só `main.gd`, e as escritas ficam todas no caminho do laço de
+## quadro: reparo (o ramo AUTO), dano de salva (`_resolve_volley`), queima na coroa e poço
+## (`_devorado_pelo_poco`). Nenhum outro caminho mexe nesse número,
+## então `motor ≠ 76` denuncia processo rodando mesmo sem ninguém ler o relógio. O que se cobra é o
+## DESVIO do valor plantado, nunca o SINAL dele: o `rng` da batalha nasce sem semente
+## (`var rng := RandomNumberGenerator.new()` em `main.gd`), e a janela de 40 quadros mede ~1,775 s de
+## relógio de batalha — mais que os 1,6 s de cadência, então atravessa um reset e decide qual canal
+## chega primeiro. Cravar a semente não consertaria o `>` por esse motivo: o que manda é o comprimento
+## em SEGUNDOS de uma janela contada em QUADROS, que nesta casa varia ±35 %. Medido: na re-revisão, o
+## mesmo tabuleiro vivo acordou em 74,3435 e 74,4048 (salva ganhou) e em 78,5828 (reparo ganhou); a
+## asserção antiga, que cobrava subida, reprovaria duas das três rodadas sem carga nenhuma. A outra
+## metade da prova — o tabuleiro morto — cobra os 76,0000 EXATOS (`absf(...) <= PASSO_ESPERADO`, com
+## `PASSO_ESPERADO = 0.0`). As duas metades leem a mesma régua: vivo = mexeu, morto = não mexeu um
+## dígito.
 ##
 ## A mesma régua vale para a cadência da salva, e aqui a folha se contradizia sozinha: o `fire_clock`
 ## é contagem que sobe de `delta` e ZERA ao disparar (`main.gd`, `if fire_clock >= 1.6`), então dentro
@@ -55,6 +62,10 @@ extends SceneTree
 ## Uso: godot --headless --path . --quit-after 6000 -s res://tools/probes/congelamento.gd
 
 ## Motor plantado abaixo do teto de reparo: se ele subir, foi `delta`, não coincidência.
+## Precondição datada (31/10): o canal de SUBIDA existe enquanto o plantado ficar abaixo dos 85,0 do
+## ramo AUTO (`main.gd`, a guarda `if ally["engines"] < 85.0`). Plantar acima disso silencia o reparo,
+## e uma janela em que a salva não chega leria o próprio valor plantado → VERMELHO com o tabuleiro
+## rodando, sem nomear o que aconteceu. Mudou o teto do reparo, mudam as duas linhas aqui.
 const MOTOR_PLANTADO := 76.0
 ## Casco a 500 num teto de 100 por esquadrão — o reparo automático sobe de qualquer lado.
 const CASCA_PLANTADA := 500.0
