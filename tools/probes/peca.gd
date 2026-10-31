@@ -163,8 +163,7 @@ func _familia_censo() -> void:
 ## ponto flutuante. Ela faz UMA associação e a compara à tabela — não calcula a associação alternativa,
 ## então o que ela confere é a expressão e a `vaga`, não o agrupamento escolhido por `pintar` (esse é
 ## contrato do doc dele). É imitação deliberada do corpo de `pintar`, não chamada: chamar `pintar`
-## exigiria ler o `MultiMesh`, e a medição de
-## 31/10 acima prova que sob `--headless` a leitura devolve zero.
+## exigiria ler o `MultiMesh`, e a medição de 31/10 acima prova que sob `--headless` ele devolve zero.
 func _centros_contra_a_tabela(b: Dictionary) -> int:
 	var rot := Basis.from_euler(Vector3(0.0, float(b["rumo"]), 0.0))
 	var origem: Vector3 = b["pos"]
@@ -177,16 +176,20 @@ func _centros_contra_a_tabela(b: Dictionary) -> int:
 	return igual
 
 
-## Quantos grãos de float32 de diferença de tamanho a caixa dos dois blocos tem de tolerar. Quatro,
-## com o motivo no degrau abaixo: o resíduo medido é da ordem de UM grão, e a folga de 4 cobre o
-## erro de banda do `log2` desta folha sem abrir margem para peça faltando (que move a extensão por
-## ~2,6×10⁵ grãos na banda medida).
-const GRAOS_MAXIMOS := 4.0
+## Quantos grãos de float32 de diferença de tamanho a caixa dos dois blocos tem de tolerar. O resíduo
+## medido é da ordem de UM grão, e a folga cobre o erro de banda do `log2` desta folha sem abrir
+## margem para peça faltando — que move a extensão por um passo de grade (na banda medida: 1,6 u em
+## y = 3,36×10⁶ grãos; 3,2 u em x = 4,19×10⁵; 3,2 u em z = 2,10×10⁵). O valor 2,9 é o MAIOR teto que
+## não afrouxa nenhum eixo contra a folga relativa que esta régua substituiu (1e-5 × tamanho da caixa,
+## no cenário de hoje): x 2,21e-5 contra 1,05e-4 (aperta 4,8×), y 1,38e-6 contra 3,47e-5 (aperta 25×),
+## z 4,43e-5 contra 4,45e-5 (0,994×). O gargalo é o z, cujo grão é 2⁻¹⁶ = 1,52588e-5: 4,45e-5 ÷
+## 1,52588e-5 = 2,916, e é por isso que a constante é 2,9 e não 4 — com 4 o teto do z subia 1,37×.
+const GRAOS_MAXIMOS := 2.9
 
 
 ## Grão (ULP) do float32 para a magnitude `v`: `2^(floor(log2|v|) − 23)`, com o piso dos normais. Se
 ## `v` cair em cima de uma potência de dois o `log2` pode arredondar para a banda de baixo e o grão
-## sair 2× pequeno — é para isso que `GRAOS_MAXIMOS` é 4 e não 1, e o grão impresso no log é
+## sair 2× pequeno — é para isso que `GRAOS_MAXIMOS` é 2,9 e não 1, e o grão impresso no log é
 ## conferível contra a banda da posição publicada.
 func _grao_32(v: float) -> float:
 	var a := absf(v)
@@ -203,6 +206,11 @@ func _grao_32(v: float) -> float:
 ## tamanho da caixa é fixo — numa folga relativa, a razão cresce com a distância à origem e o portão
 ## quebra por geometria de cenário. Em grãos, teto e ruído dobram juntos na mesma binade.
 func _graus_de_ruido(a: AABB, h: AABB) -> Array:
+	# Guarda contra caixa degenerada: bloco morto devolve volume negativo (`caixa_do_bloco`), e sem
+	# isto os dois lados mortos dariam `dsize = 0` e passaram VERDES por vacuidade. Vermelho é a
+	# resposta certa para uma régua que não tem o que medir.
+	if not a.has_volume() or not h.has_volume():
+		return [INF, INF, INF]
 	var graus := []
 	for eixo in range(3):
 		var longe := 0.0
@@ -332,17 +340,19 @@ func _familia_inercia() -> void:
 	# de 2⁻¹⁶, e somado a um resultado de ~5 u em float32 não contribui um bit sequer. A prova de que
 	# o caminho é de precisão simples está no próprio resíduo: saiu 2⁻¹⁶; num core float64 seria 2⁻⁴⁵
 	# (≈2,8e-14) e estaria abaixo de qualquer régua que a pintura permite cobrar.
-	# Por isso o teto é contado em GRÃO da coordenada de mundo (`GRAOS_MAXIMOS` = 4 por eixo) e não em
-	# fração do tamanho da caixa: o ruído é ULP da posição e dobra a cada binade, enquanto o tamanho é
-	# fixo — numa folga relativa, a razão cresce com a distância à origem e o portão quebra por
-	# geometria de cenário. Medido no degrau de banda abaixo: o mesmo bloco a 600 u dá resíduo de
-	# 4,58e-5 u, e sobre a caixa de 4,45 u isso é 1,03e-5 — a folga relativa de 1e-5 da rodada
-	# anterior REPROVARIA esse caso, uma binade antes do ponto para onde a Tarefa 6 empurra a
-	# muralha. Em grãos, teto e ruído dobram juntos e a asserção cobra o modelo que o comentário
-	# afirma.
+	# Por isso o teto é contado em GRÃO da coordenada de mundo (`GRAOS_MAXIMOS` = 2,9 por eixo) e não
+	# em fração do tamanho da caixa: o ruído é ULP da posição e dobra a cada binade, enquanto o tamanho
+	# é fixo — numa folga relativa, a razão cresce com a distância à origem e o portão quebra por
+	# geometria de cenário. Medido no degrau de banda abaixo: o mesmo bloco plantado a 600 u dá resíduo
+	# de 4,58e-5 u, e sobre a caixa de 4,45 u isso é 1,03e-5 — a folga relativa de 1e-5 da rodada
+	# anterior REPROVARIA esse caso. Em grãos, teto e ruído dobram juntos e a asserção cobra o modelo
+	# que o comentário afirma. O plantio a 600 u é SINTÉTICO: é teste da régua, não previsão de
+	# cenário — nada nesta casa empurra um bloco hostil para lá (a estação para em
+	# `DISTANCIA_DE_CONTATO`).
 	# O que quebra de verdade: uma peça que entra na união de um lado e não do outro move a extensão
-	# por um passo de grade — 1,6 u em y, 3,2 u em x/z, ou 2,6×10⁴ a 5,2×10⁴ grãos na banda medida,
-	# contra o resíduo real de UM grão (0,25 do teto). Cinco ordens de margem continuam no portão.
+	# por um passo de grade. Na banda medida, em grãos do próprio eixo: 1,6 u em y = 3,36×10⁶, 3,2 u
+	# em x = 4,19×10⁵, 3,2 u em z = 2,10×10⁵ — isto é, de 7,2×10⁴ a 1,2×10⁶ VEZES o teto, contra o
+	# resíduo real de UM grão (0,34 do teto). Quatro a seis ordens de margem continuam no portão.
 	var caixa_a := e.caixa_do_bloco(b0)
 	var cobertura := 0
 	for c in range(Esquadra.CASAS):
@@ -356,7 +366,7 @@ func _familia_inercia() -> void:
 			cobertura, caixa_a.size.x, caixa_a.size.y, caixa_a.size.z]))
 	_assert("B inercia: a caixa hostil só difere da aliada por grão de float32 da posição de mundo",
 		_pior_grau(graus) < 1.0,
-		("grãos por eixo sobre o teto de 4 grãos: x %s, y %s, z %s; grão da banda do hostil = %s u; "
+		("grãos por eixo sobre o teto de 2,9 grãos: x %s, y %s, z %s; grão da banda do hostil = %s u; "
 			+ "pos aliada %s, hostil %s; dsize %s / %s / %s u, caixa aliada (%.4f, %.4f, %.4f)") % [
 			str(graus[0]), str(graus[1]), str(graus[2]),
 			str(_grao_32(absf((bh["pos"] as Vector3).z))),
@@ -368,7 +378,7 @@ func _familia_inercia() -> void:
 	# cima cobra o modelo de ruído que o comentário afirma, e não a sorte da binade atual. O grão de
 	# [512, 1024) é 2⁻¹⁴ = 6,10e-5 u e o resíduo medido sai 4,58e-5 u (0,75 grão); com a folga
 	# relativa de 1e-5 da rodada anterior este caso QUEBRARIA, porque 4,58e-5 / 4,45 = 1,03e-5 passa
-	# do teto. Contado em grãos, fica a 0,19 do teto.
+	# do teto. Contado em grãos, fica a 0,26 do teto (0,75 grão contra o teto de 2,9).
 	# `pos` é escrito e restaurado sem quadro no meio do caminho: nada mais nesta folha vê o bloco
 	# fora do posto, e a família C logo abaixo recebe o hostil exatamente como a cena montou.
 	var posto_h: Vector3 = bh["pos"]

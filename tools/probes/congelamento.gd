@@ -25,10 +25,11 @@ extends SceneTree
 ##
 ## O motor plantado é a asserção que não dá para fingir, e o que dá poder a ela não é a lei do reparo
 ## (agora ela aceita movimento dos DOIS canais): é o grafo de escritores. `grep` por escrita de
-## `["engines"]` fora de sondas devolve só `main.gd`, e as escritas ficam todas no caminho do laço de
-## quadro: reparo (o ramo AUTO), dano de salva (`_resolve_volley`), queima na coroa e poço
-## (`_devorado_pelo_poco`). Nenhum outro caminho mexe nesse número,
-## então `motor ≠ 76` denuncia processo rodando mesmo sem ninguém ler o relógio. O que se cobra é o
+## `["engines"]` fora de sondas devolve só `main.gd`, com sete linhas em cinco funções, todas no
+## caminho do laço de quadro — `_devorado_pelo_poco`, `_queimar_na_corona`, `_update_fleet` (ramo
+## MOTORES e ramo AUTO), `_apply_impact` (dano de colisão/abalroamento) e `_resolve_volley` (salva,
+## uma escrita hostil e uma aliada). Nenhuma delas é chamada fora do laço, então `motor ≠ 76` denuncia
+## processo rodando mesmo sem ninguém ler o relógio. O que se cobra é o
 ## DESVIO do valor plantado, nunca o SINAL dele: o `rng` da batalha nasce sem semente
 ## (`var rng := RandomNumberGenerator.new()` em `main.gd`), e a janela de 40 quadros mede ~1,775 s de
 ## relógio de batalha — mais que os 1,6 s de cadência, então atravessa um reset e decide qual canal
