@@ -3,12 +3,17 @@ extends SceneTree
 ##
 ## O queixa do commander é de leitura — «o bloco parece bloco único» — e a causa medida é que o bloco
 ## tem UMA posição e as vinte e quatro casas são vinte e quatro deslocamentos rígidos dela. Esta sonda
-## prova as três coisas que tornam a subdivisão honesta: (A) a identidade da peça é a grade que já
+## prova as coisas que tornam a subdivisão honesta: (A) a identidade da peça é a grade que já
 ## existe, byte a byte; (B) com a peça viva mas sem força, a pintura é a mesma expressão aritmética de
 ## antes (inércia provada por construção, não por screenshot); (C) a trela segura a excursão e o quadro
 ## zero da estação é o de hoje; (D) o ar de par de peça nunca fecha; (E) captura só em vaga; (F) a
 ## frase do commander — arrastar um núcleo não move a estação; (G) o poço come a peça, quatro casas, e
-## 35 ≡ 840 continua de pé; (H) censo das leis medindo peça, com zero vetor fora do raio de cada lei.
+## 35 ≡ 840 continua de pé; (H) censo das leis medindo peça, com zero vetor fora do raio de cada lei;
+## (S) a estrela esférica.
+##
+## Rodadas: A, B, C e D já rodam (tarefas 1, 2 e 3). E, F, G, H e S são as famílias que as tarefas 5 a 9
+## ligam aqui — o `CENSO_CONFERENCIAS` desta folha é o que roda hoje, e quem acrescenta família
+## acrescenta o censo no mesmo commit, senão é a asserção final que grita.
 ##
 ## Uso: godot --headless --path . --quit-after 1800 -s res://tools/probes/peca.gd
 
@@ -18,6 +23,25 @@ const Esquadra := preload("res://esquadra.gd")
 ## pelo `_recalcular_agregados` não fecham o produto exato no último dígito. É resolução de double,
 ## não afrouxamento de portão.
 const FOLGA_SOMA := 1e-9
+
+## As 24 casas do bloco como a grade rígida SEMPRE as escreveu, copiadas da aritmética de índice
+## anterior à lapidação 4. É a única fonte de verdade da família A e da inércia da família B: as duas
+## cobram contra ESTES vetores, nunca contra uma função do próprio módulo — comparar duas rotinas
+## que podem estar erradas juntas é a asserção que não pode falhar.
+const TABULA_CASA_LOCAL := [
+	Vector3(-4.8, -1.6, -1.6), Vector3(-1.6, -1.6, -1.6), Vector3(1.6, -1.6, -1.6),
+	Vector3(4.8, -1.6, -1.6), Vector3(-4.8, -1.6, 1.6), Vector3(-1.6, -1.6, 1.6),
+	Vector3(1.6, -1.6, 1.6), Vector3(4.8, -1.6, 1.6), Vector3(-4.8, 0.0, -1.6),
+	Vector3(-1.6, 0.0, -1.6), Vector3(1.6, 0.0, -1.6), Vector3(4.8, 0.0, -1.6),
+	Vector3(-4.8, 0.0, 1.6), Vector3(-1.6, 0.0, 1.6), Vector3(1.6, 0.0, 1.6),
+	Vector3(4.8, 0.0, 1.6), Vector3(-4.8, 1.6, -1.6), Vector3(-1.6, 1.6, -1.6),
+	Vector3(1.6, 1.6, -1.6), Vector3(4.8, 1.6, -1.6), Vector3(-4.8, 1.6, 1.6),
+	Vector3(-1.6, 1.6, 1.6), Vector3(1.6, 1.6, 1.6), Vector3(4.8, 1.6, 1.6)]
+
+## Quantas conferências esta sonda tem de imprimir. É asserção (família final), não rodapé: uma
+## família morta por SCRIPT ERROR encolhe a lista e deixa `quebras=0` — o RED da própria Tarefa 3
+## mostrou exatamente isso com 5 no lugar de 7.
+const CENSO_CONFERENCIAS := 23
 
 var breaks := 0
 var notes: Array[String] = []
@@ -36,6 +60,14 @@ func _initialize() -> void:
 	_familia_censo()
 	await _familia_inercia()
 	await _familia_trela_e_ar()
+	# O censo é asserção, não rodapé. Uma família que morre por SCRIPT ERROR dentro de `_initialize`
+	# encolhe `notes` e deixa `quebras=0` — o portão passaria exatamente no caso em que a sonda não
+	# rodou, e foi assim que o RED da Tarefa 3 devolveu 5 conferências no lugar de 7 sem um QUEBRA.
+	var antes := notes.size()
+	var censo := "%d conferências das famílias + esta = %d esperadas" % [antes, CENSO_CONFERENCIAS]
+	_assert("Z censo: a sonda confere as suas %d asserções" % CENSO_CONFERENCIAS,
+		antes + 1 == CENSO_CONFERENCIAS,
+		censo + " (CENSO_CONFERENCIAS é o número que a rodada imprime, nunca o que a memória lembra)")
 	for n in notes:
 		print(n)
 	print("SONDA-PECA: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
@@ -43,19 +75,11 @@ func _initialize() -> void:
 
 
 ## ── Família A: identidade ──
-## A cota é uma tabela literal de 24 vetores, escrita à mão a partir da definição de `casa_local`
-## anterior a esta fatia. Se a soma nova divergir em qualquer ULP de qualquer casa, é esta tabela que
-## grita — não uma comparação entre duas funções que podem estar erradas juntas.
+## A cota é a tabela literal `TABULA_CASA_LOCAL`, copiada à mão da definição de `casa_local` anterior
+## a esta fatia. Se a soma nova divergir em qualquer ULP de qualquer casa, é esta tabela que grita —
+## não uma comparação entre duas funções que podem estar erradas juntas.
 func _familia_identidade() -> void:
-	var esperada := [
-		Vector3(-4.8, -1.6, -1.6), Vector3(-1.6, -1.6, -1.6), Vector3(1.6, -1.6, -1.6),
-		Vector3(4.8, -1.6, -1.6), Vector3(-4.8, -1.6, 1.6), Vector3(-1.6, -1.6, 1.6),
-		Vector3(1.6, -1.6, 1.6), Vector3(4.8, -1.6, 1.6), Vector3(-4.8, 0.0, -1.6),
-		Vector3(-1.6, 0.0, -1.6), Vector3(1.6, 0.0, -1.6), Vector3(4.8, 0.0, -1.6),
-		Vector3(-4.8, 0.0, 1.6), Vector3(-1.6, 0.0, 1.6), Vector3(1.6, 0.0, 1.6),
-		Vector3(4.8, 0.0, 1.6), Vector3(-4.8, 1.6, -1.6), Vector3(-1.6, 1.6, -1.6),
-		Vector3(1.6, 1.6, -1.6), Vector3(4.8, 1.6, -1.6), Vector3(-4.8, 1.6, 1.6),
-		Vector3(-1.6, 1.6, 1.6), Vector3(1.6, 1.6, 1.6), Vector3(4.8, 1.6, 1.6)]
+	var esperada := TABULA_CASA_LOCAL
 	var iguais := 0
 	for c in range(Esquadra.CASAS):
 		var p := Esquadra.peca_da_casa(c)
@@ -127,11 +151,17 @@ func _familia_censo() -> void:
 
 
 ## ── Família B: inércia ──
-## O headless não lê o `MultiMesh` de volta, então esta família prova a igualdade pelas duas premissas
-## que a compõem: a algebraica (a soma dos dois termos é `casa_local`, tabela literal da família A) e a
-## fisica (com a alavanca desligada, os 1 440 `desloc` são exatamente ZERO, e a transformada escrita é
-## a mesma expressão de antes, bit a bit). A leitura de que o quadro mudou é do commander na janela
-## (Tarefa 10) — afirmar "pixel idêntico" medido em headless seria o portão falhando aberto.
+## O portão que a regra da casa (`godot-subdivision-inert-identity-proof`, passo 3) manda fechar:
+## provar PINTURA, CAIXA DE COLISÃO e MIRA, não uma delas. Duas metades, e a segunda é a que a
+## revisão da Tarefa 3 exigiu:
+##
+## 1. Nenhuma superfície é lida do `MultiMesh`. Medido nesta casa em 31/10 com `_tmp_leitura_mm.gd`:
+## sob `--headless` o motor NÃO devolve a transformada escrita — a pintura tocou os 120 blocos
+## (`tocados=120`, 2 880 instâncias) e a instância 0 pediu `-95,652, -7,419, -52,600` e devolveu
+## `0, 0, 0`. Cobrar "transformado lido == tabela" aqui seria um portão que passa porque os DOIS lados
+## leem zero. A leitura de que o quadro mudou é do commander na janela (Tarefa 10).
+## 2. Toda conta é cobrada contra `TABULA_CASA_LOCAL`, a tabela literal, e a família ainda prova que
+## SABE FALHAR: com uma peça empurrada para fora do posto, as casas dela têm de deixar de bater.
 func _familia_inercia() -> void:
 	var game := (load("res://main.tscn") as PackedScene).instantiate()
 	# Precondition declarada no criador do estado, nunca na tolerância: `esquadra` nasce no construtor de
@@ -151,23 +181,79 @@ func _familia_inercia() -> void:
 				total += 1
 				if (pc["desloc"] as Vector3) == Vector3.ZERO:
 					zero += 1
-	_assert("B inercia: com a alavanca desligada, nenhuma peça tem excursão",
-		not e.pecas_livres and total == 240 * Esquadra.PECAS_NO_BLOCO and zero == total,
+	# O censo pela constante do lado, não pelo 240 escrito à mão: a família H deste mesmo arquivo já
+	# tem a fonte, e duas fontes para o mesmo número é como se descobre tarde que ele mudou.
+	var censo := 2 * Esquadra.BLOCOS_NO_LADO * Esquadra.PECAS_NO_BLOCO
+	_assert("B inercia: a cena montou o censo da muralha, contado pelas constantes do lado",
+		total == censo,
+		("%d pecas na cena contra 2 x BLOCOS_NO_LADO(%d) x PECAS_NO_BLOCO(%d) = %d" % [
+			total, Esquadra.BLOCOS_NO_LADO, Esquadra.PECAS_NO_BLOCO, censo]))
+	# A excursão é a asserção separada, com a alavanca como conjuncto seu: se a Tarefa 4 afrouxar o
+	# default e alguém esquecer a precondition de cima, o que quebra é esta linha, e ela nomeia a
+	# alavanca — não um censo que de repente depende de quantos blocos foram expelidos nos 3 quadros.
+	_assert("B inercia: com a alavanca desligada, nenhuma peça da cena tem excursão",
+		not e.pecas_livres and zero == total,
 		("%d/%d pecas com desloc exatamente ZERO, alavanca=%s" % [zero, total, str(e.pecas_livres)]))
-	# O outro lado da premissa: os leitores novos dão o mesmo valor dos velhos, medido contra a
-	# expressão anterior ainda viva em `casa_local` (que a Tarefa 1 re-definiu como a soma).
-	var igual := 0
+	# A pintura, cobrada pelo AGRUPAMENTO que `pintar` compõe (`local_base` hoisted por peça, mais o
+	# resíduo da casa) contra a tabela literal. Não contra `casa_local`: esta folha chamou a si mesma
+	# de `peca_local + casa_na_peca` na Tarefa 1, e comparar a expressão com ela mesma dá 24/24 por
+	# construção, que é a asserção que não pode falhar.
 	var b0: Dictionary = e.lista_de("aliado")[0]
 	var rot := Basis.from_euler(Vector3(0.0, float(b0["rumo"]), 0.0))
 	var origem: Vector3 = b0["pos"]
+	var igual := 0
 	for c in range(Esquadra.CASAS):
-		var p := Esquadra.peca_da_casa(c)
-		var somado: Vector3 = origem + rot * (Esquadra.peca_local(p)
+		var local_base: Vector3 = Esquadra.peca_local_viva(b0, Esquadra.peca_da_casa(c))
+		var pintada: Vector3 = origem + rot * (local_base
 			+ Esquadra.casa_na_peca(c % Esquadra.CASAS_DA_PECA))
-		if somado == origem + rot * Esquadra.casa_local(c):
+		if pintada == origem + rot * TABULA_CASA_LOCAL[c]:
 			igual += 1
-	_assert("B inercia: a conta nova da pintura é a conta velha, nos 24 vetores de mundo",
-		igual == Esquadra.CASAS, "%d/24 vetores de mundo byte-idênticos" % igual)
+	_assert("B inercia: o agrupamento que a pintura compõe é a tabela literal nos 24 vetores de mundo",
+		igual == Esquadra.CASAS,
+		"%d/24 vetores byte-idênticos contra TABULA_CASA_LOCAL" % igual)
+	# A metade que faltava: a mesma conta, com uma peça fora do posto, TEM de deixar de bater. Empurrada
+	# 0,5 u em boreste (dentro da trela de 1,2, então o clamp não interfere), as quatro casas de p=0
+	# viram outras tantas divergências. Sem esta asserção, a de cima é indistinguível de álgebra de
+	# mesa que passa por construção — foi exatamente assim que a revisão pegou a versão antiga.
+	e.empurrar_peca(b0, 0, Vector3(0.5, 0.0, 0.0))
+	var caiu := 0
+	for c in Esquadra.casas_da_peca(0):
+		var local_voada: Vector3 = Esquadra.peca_local_viva(b0, Esquadra.peca_da_casa(c))
+		var pintada_voada: Vector3 = origem + rot * (local_voada
+			+ Esquadra.casa_na_peca(c % Esquadra.CASAS_DA_PECA))
+		if pintada_voada != origem + rot * TABULA_CASA_LOCAL[c]:
+			caiu += 1
+	(b0["pecas"][0] as Dictionary)["desloc"] = Vector3.ZERO
+	_assert("B inercia: a asserção da pintura sabe falhar — peça fora do posto derruba as casas dela",
+		caiu == Esquadra.CASAS_DA_PECA and (b0["pecas"][0] as Dictionary)["desloc"] == Vector3.ZERO,
+		("empurrão de 0,5 u mudou %d/%d casas de p=0 contra a tabela; trela devolveu %s" % [
+			caiu, Esquadra.CASAS_DA_PECA, str((b0["pecas"][0] as Dictionary)["desloc"])]))
+	# A segunda superfície do degrau: a CAIXA de colisão. Cobrada aqui, e não de raspão na família D,
+	# porque a regra da casa avisa: se um eixo ficar partido entre os dois lados, a igualdade passa a
+	# depender de ruído de float32 e a FOLGA tem de ser declarada na asserção, com o número medido ao
+	# lado. O único dado que distingue os dois blocos é o `rumo` (aliado 0, hostil PI), e a caixa é a
+	# união das caixas de peça rotacionadas — então o que sobra aqui é resíduo de arredondamento, não
+	# uma lei diferente. Medido nesta rodada, eixo a eixo: x = 0,0, y = 0,0, z = 1,53e-5 u (a asserção
+	# imprime os três). A folga declarada é 1e-4, uma ordem acima do resíduo; um eixo partido de
+	# verdade — uma peça que entra na união de um lado e não do outro — é de ordem 1e-3 e quebra.
+	var caixa_a := e.caixa_do_bloco(b0)
+	var cobertura := 0
+	for c in range(Esquadra.CASAS):
+		if caixa_a.has_point(origem + rot * Esquadra.casa_local_viva(b0, c)):
+			cobertura += 1
+	var caixa_h := e.caixa_do_bloco(e.lista_de("hostil")[0])
+	var dx := absf(caixa_a.size.x - caixa_h.size.x)
+	var dy := absf(caixa_a.size.y - caixa_h.size.y)
+	var dz := absf(caixa_a.size.z - caixa_h.size.z)
+	var pior_eixo := maxf(dx, maxf(dy, dz))
+	_assert("B inercia: a caixa do bloco cobre os 24 centros que a pintura escreve",
+		cobertura == Esquadra.CASAS,
+		("%d/24 centros dentro de %.2f x %.2f x %.2f u" % [
+			cobertura, caixa_a.size.x, caixa_a.size.y, caixa_a.size.z]))
+	_assert("B inercia: a caixa hostil só difere da aliada pelo ruído de float32 do rumo = PI, folga 1e-4",
+		pior_eixo < 1e-4,
+		("dsize por eixo = %s / %s / %s u, com a caixa aliada em (%.4f, %.4f, %.4f)" % [
+			dx, dy, dz, caixa_a.size.x, caixa_a.size.y, caixa_a.size.z]))
 	game.queue_free()
 
 

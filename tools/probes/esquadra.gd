@@ -480,7 +480,11 @@ static func _blocos_alvo_distintos(fila: Array[Dictionary], aliado: bool) -> int
 
 
 ## Posições pintadas das casas de um bloco, na ordem do desenho. É a régua que prova que a boca do
-## cano É o casco: a fila do lance tem de dar exatamente estes pontos, e nenhum outro.
+## cano É o casco: a fila do lance tem de dar exatamente estes pontos, e nenhum outro. É o MESMO termo
+## que `Esquadra.pintar` escreve (`casa_local_viva`), não a grade rígida `casa_local`: com a alavanca
+## das peças ligada, depois que alguma força agir, o casco pintado e o cano que dele sai têm de
+## carregar a mesma excursão — medir a rígida seria ter duas fontes para o mesmo número e uma
+## asserção que só passa enquanto a excursão for zero.
 static func _casas_no_mundo(bloco: Dictionary) -> PackedStringArray:
 	var rot := Basis.from_euler(Vector3(0.0, float(bloco["rumo"]), 0.0))
 	var base: Vector3 = bloco["pos"]
@@ -488,7 +492,7 @@ static func _casas_no_mundo(bloco: Dictionary) -> PackedStringArray:
 	for c in range(Esquadra.CASAS):
 		if not Esquadra.casa_viva(bloco, c):
 			continue
-		partes.append(str(base + (rot * Esquadra.casa_local(c))))
+		partes.append(str(base + (rot * Esquadra.casa_local_viva(bloco, c))))
 	partes.sort()
 	return partes
 

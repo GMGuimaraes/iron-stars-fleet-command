@@ -221,10 +221,11 @@ func _luz(img: Image, p: Vector2) -> float:
 	return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
 
 ## Posição mundial de uma casa, recalculada exatamente como `Esquadra.pintar` escreve: origem + base
-## girada pela casa local. É a Malha do MultiMesh, não uma aposta sobre onde ela "deveria" estar.
+## girada pela casa local VIVA (grade + vaga + excursão), o mesmo termo da pintura. É a Malha do
+## MultiMesh, não uma aposta sobre onde ela "deveria" estar.
 static func _casa_no_mundo(b: Dictionary, c: int) -> Vector3:
 	var rot := Basis.from_euler(Vector3(0.0, float(b["rumo"]), 0.0))
-	return (b["pos"] as Vector3) + rot * Esquadra.casa_local(c)
+	return (b["pos"] as Vector3) + rot * Esquadra.casa_local_viva(b, c)
 
 ## O vizinho de boreste na grade do lado, achado pelo POSTO e nao pela posicao pintada. Desde a
 ## muralha que respira dois blocos de esquadroes vizinhos tem a mesma fase em boreste (a fase e do

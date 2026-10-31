@@ -349,8 +349,30 @@ static func casa_na_peca(k: int) -> Vector3:
 ## `peca_local + casa_na_peca` devolve os mesmos bits que a aritmética de índice antiga devolvia, e a
 ## pintura com `desloc == ZERO` escreve a mesma transformada de antes. A tabela literal da família A da
 ## sonda `tools/probes/peca.gd` é quem confere.
+##
+## É a GRADE RÍGIDA, e é por isso que continua existindo: é a régua dos índices (ordem do topo, ar
+## publicado, censo da sonda). Quem lê o corpo de um bloco de verdade usa `casa_local_viva` ou
+## `peca_local_viva`, que somam também a vaga e a excursão.
 static func casa_local(c: int) -> Vector3:
 	return peca_local(peca_da_casa(c)) + casa_na_peca(c % CASAS_DA_PECA)
+
+
+## O posto vivo da peça dentro do bloco: o posto de grade, mais a vaga capturada, mais a excursão que
+## a trela tolera. É UM só termo para os quatro leitores — caixa (`pos_da_peca`), pintura (`pintar`),
+## mira (`_casas_por_proximidade`) e traço do lance (`troca_salva`) — de propósito: a partir da
+## Tarefa 5 a `vaga` deixa de ser ZERO, e um leitor que a omitisse passaria a desenhar ou a mirar o
+## casco no posto velho enquanto a caixa de colisão está no posto capturado. Com `vaga` e `desloc`
+## zerados os dois termos são soma exata com zero, então o valor devolvido é byte-idêntico ao de
+## `peca_local` — é a família A e a inércia da sonda `tools/probes/peca.gd` que cobram isso.
+static func peca_local_viva(bloco: Dictionary, p: int) -> Vector3:
+	var pc: Dictionary = bloco["pecas"][p]
+	return peca_local(p) + (pc["vaga"] as Vector3) + (pc["desloc"] as Vector3)
+
+
+## A casa viva, no mesmo termo dos quatro leitores: a peça da casa com sua excursão e vaga, mais o
+## resíduo de asa da própria casa.
+static func casa_local_viva(bloco: Dictionary, c: int) -> Vector3:
+	return peca_local_viva(bloco, peca_da_casa(c)) + casa_na_peca(c % CASAS_DA_PECA)
 
 
 ## Posto do bloco na grade do lado: posição do esquadrão no tabuleiro do lado mais o posto do
@@ -421,10 +443,8 @@ static func _casas_por_proximidade(alvo: Dictionary, origem_pos: Vector3) -> Arr
 	for c in range(CASAS):
 		if float(alvo["casas"][c]["vida"]) > 0.0:
 			ordem.append(c)
-			var p := peca_da_casa(c)
 			dist.append(((alvo["pos"] as Vector3)
-				+ rot * (peca_local(p) + casa_na_peca(c % CASAS_DA_PECA)
-					+ (alvo["pecas"][p]["desloc"] as Vector3))).distance_squared_to(origem_pos))
+				+ rot * casa_local_viva(alvo, c)).distance_squared_to(origem_pos))
 	# Seleção direta, e é de propósito: 24 elementos, estável, sem alocação de fechador e com o
 	# empate resolvido pela ordem local — `dist[j] < dist[menor]` nunca troca iguais.
 	for i in range(ordem.size()):
@@ -866,18 +886,16 @@ func noticiar_morte(bloco: Dictionary, c: int) -> void:
 
 ## ---- Linha de visada da massa ----
 
-## Onde a peça está no mundo: o posto local dela, mais a vaga capturada, mais a excursão, tudo girado e
-## transladado pelo bloco. A peça não guarda posição de mundo de propósito — ver `_pecas_novas`.
+## Onde a peça está no mundo: o posto vivo local dela (grade + vaga + excursão), girado e transladado
+## pelo bloco. A peça não guarda posição de mundo de propósito — ver `_pecas_novas`.
 func pos_da_peca(bloco: Dictionary, p: int) -> Vector3:
-	var pc: Dictionary = bloco["pecas"][p]
 	var rot := Basis.from_euler(Vector3(0.0, float(bloco["rumo"]), 0.0))
-	return (bloco["pos"] as Vector3) + rot * (peca_local(p)
-		+ (pc["vaga"] as Vector3) + (pc["desloc"] as Vector3))
+	return (bloco["pos"] as Vector3) + rot * peca_local_viva(bloco, p)
 
 
-## Caixa de uma peça: a fileira de quatro cascos, pelos índices que vivem de fato. É a caixa que o
-## poço, o vento e a rocha medem (seção 3) — não a do bloco inteiro, que é o que fazia a muralha
-## inteira caber dentro do raio de um corpo só.
+## Caixa de uma peça: a fileira de quatro cascos, pelos índices que vivem de fato. Vai ser a caixa que
+## o poço, o vento e a rocha medem (Tarefas 7 e 8) — não a do bloco inteiro, que é o que fazia a
+## muralha inteira caber dentro do raio de um corpo só. Hoje só `caixa_do_bloco` a lê.
 func caixa_da_peca(bloco: Dictionary, p: int) -> AABB:
 	if not peca_viva(bloco, p) or not bool(bloco["vivo"]):
 		return AABB(Vector3.ZERO, Vector3(-1.0, -1.0, -1.0))
@@ -902,8 +920,9 @@ func caixa_da_peca(bloco: Dictionary, p: int) -> AABB:
 
 
 ## A caixa de um bloco: o volume dos cascos VIVOS, na atitude do bloco, mais a meia-caixa da malha.
-## É lida casa a casa porque a ordem das casas fecha o TOPO antes do meio (`casa_local`): um bloco
-## que perdeu um terço da lotação perde também a cobertura que dava a quem está atrás dele, e é
+## É lida peça a peça, pela união das caixas de peça; a ordem de `casa_local` continua sendo a que
+## fecha o TOPO antes do meio dentro de cada fileira. Um bloco que perdeu um terço da lotação perde
+## também a cobertura que dava a quem está atrás dele, e é
 ## isso que faz a escudeira ralada abrir corredor para a fileira seguinte. Sem navio, sem caixa:
 ## `size` negativo é o "não existe" do `AABB`, e `_entrada_na_caixa` recusa volume assim.
 ##
@@ -1555,8 +1574,8 @@ func troca_salva() -> Dictionary:
 				afundou_o_bloco = afundou_o_bloco or afundou
 				matou = float((bate["casas"][casa_alvo] as Dictionary)["vida"]) <= 0.0
 			fila_da_salva.append({
-				"de": base + (rot * casa_local(c)),
-				"para": base_alvo + (rot_alvo * casa_local(casa_alvo)),
+				"de": base + (rot * casa_local_viva(origem, c)),
+				"para": base_alvo + (rot_alvo * casa_local_viva(bate, casa_alvo)),
 				"aliado": String(par["lado"]) == "aliado", "casa": c,
 				"bloco": id, "alvo_bloco": int(bate["id"]),
 				"bate": bate, "casa_alvo": casa_alvo, "matou": matou})
@@ -1816,6 +1835,13 @@ func pintar(mm: MultiMesh, lado: String, forcar := false) -> int:
 			pintado["casas"] = casas
 			pintado["pos"] = b["pos"]
 			pintado["rumo"] = float(b["rumo"])
+		# O early-out do bloco limpo, que a Tarefa 3 quase perdeu: com a alavanca desligada a peça
+		# não tem lei de voo (`_passo_das_pecas` só roda em `pecas_livres`) e o `desloc` não tem
+		# writer, então o andar de baixo não tem o que ler — a varredura das seis peças seria custo
+		# puro (dois trig + 24 leituras de dicionário) em todo bloco limpo, todo quadro. Com a
+		# alavanca ligada ele continua vivo, e é aqui que a `pecas_livres` acha seu primeiro leitor.
+		if not bloco_sujo and not pecas_livres:
+			continue
 		var origem: Vector3 = b["pos"]
 		var rot := Basis.from_euler(Vector3(0.0, float(b["rumo"]), 0.0))
 		var escala := Vector3.ONE * ESCALA_REPLICA
@@ -1831,7 +1857,7 @@ func pintar(mm: MultiMesh, lado: String, forcar := false) -> int:
 				continue
 			pp["desloc"] = pc["desloc"]
 			pp["casas"] = na_tela
-			var local_base: Vector3 = peca_local(p) + (pc["desloc"] as Vector3)
+			var local_base: Vector3 = peca_local_viva(b, p)
 			for k in range(CASAS_DA_PECA):
 				var c := p * CASAS_DA_PECA + k
 				if bool(b["vivo"]) and _casa_na_tela(b, c):
