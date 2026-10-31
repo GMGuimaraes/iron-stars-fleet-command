@@ -727,8 +727,10 @@ static func casas_da_peca(p: int) -> Array[int]:
 ## Vizinhos de peça DENTRO do próprio bloco, derivados do índice: a outra meia-fileira da mesma camada
 ## (um em z) e as camadas vizinhas com a mesma profundidade (dois em y). No máximo três, e sem
 ## transbordo de bloco — os vizinhos de fora são régua de grade, cobertos pela família 2 da sonda
-## `esquadra.gd` mais o piso analítico desta folha. Seis peças x três vizinhos x 240 blocos dá os
-## ~11 520 testes de par por tique que a seção 4 conta, e aqui só os intra-bloco são lidos de caixa.
+## `esquadra.gd` mais o piso analítico desta folha. Contado na grade de 3 camadas x 2 profundidades,
+## cada peça devolve 2 ou 3 (nas pontas da pilha só 2): 14 chamadas direcionadas e 7 pares únicos por
+## bloco, ou seja 3 360 e 1 680 por tique nos 240 blocos da muralha. Aqui só os intra-bloco são lidos
+## de caixa.
 static func vizinhos_locais_da_peca(p: int) -> Array[int]:
 	var out: Array[int] = []
 	var camada := int(float(p) / float(CASAS_Z))

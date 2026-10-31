@@ -209,7 +209,8 @@ func _familia_trela_e_ar() -> void:
 					pior.y = maxf(pior.y, absf(d.y - vaga.y))
 					pior.z = maxf(pior.z, absf(d.z - vaga.z))
 					leitura += 1
-				# Os quinze pares de peça viva dentro do bloco: é aqui que o ar é apertado (1,332 u em y,
+				# Os sete pares únicos de peça viva dentro do bloco (14 chamadas direcionadas de
+				# `vizinhos_locais_da_peca`, filtradas em `q > p`): é aqui que o ar é apertado (1,332 u em y,
 				# 1,950 u em z) e é aqui que a peça anda. Caixa de peça, não raio de esfera — a fileira tem
 				# 10,5 u de asa e medir distância de centro com `RAIO_DA_PECA` daria negativo sempre.
 				for p in range(Esquadra.PECAS_NO_BLOCO):
