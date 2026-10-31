@@ -147,9 +147,11 @@ const DERIVA_CICLO := 9.0
 var _derivas: Array[Vector3] = []
 ## Alavanca da fatia, e é um instrumento de medição, não um recurso de jogo. Desligada, as peças existem
 ## como estado mas nenhuma força as move: é assim que a família B mede a inércia numa partida inteira e
-## não num quadro isolado. Ligada pela Tarefa 4, ela é a lei. Não tem entrada de painel, não tem tecla,
-## e nenhum save a grava.
-var pecas_livres := false
+## não num quadro isolado. Desde a Tarefa 4 o default é LIGADO — é isso que faz a fileira manobrar — e a
+## família B passou a declarar `false` na própria montagem, no criador do estado, em vez de herdar o
+## valor da folha. Ligada, ela é a lei: `passo` integra as seis peças de cada bloco vivo. Não tem entrada
+## de painel, não tem tecla, e nenhum save a grava.
+var pecas_livres := true
 ## Marcha da massa, em u/s: um bloco cruza a faixa do próprio esquadrão (32 u de largura) em cinco
 ## segundos, o bastante para a manobra ser lida no visor sem a linha virar formiga.
 const MARCHA_DE_BLOCO := 6.0
@@ -722,6 +724,24 @@ static func casas_da_peca(p: int) -> Array[int]:
 	return out
 
 
+## Vizinhos de peça DENTRO do próprio bloco, derivados do índice: a outra meia-fileira da mesma camada
+## (um em z) e as camadas vizinhas com a mesma profundidade (dois em y). No máximo três, e sem
+## transbordo de bloco — os vizinhos de fora são régua de grade, cobertos pela família 2 da sonda
+## `esquadra.gd` mais o piso analítico desta folha. Seis peças x três vizinhos x 240 blocos dá os
+## ~11 520 testes de par por tique que a seção 4 conta, e aqui só os intra-bloco são lidos de caixa.
+static func vizinhos_locais_da_peca(p: int) -> Array[int]:
+	var out: Array[int] = []
+	var camada := int(float(p) / float(CASAS_Z))
+	var iz := p % CASAS_Z
+	var otro_iz := (iz + 1) % CASAS_Z
+	out.append(camada * CASAS_Z + otro_iz)
+	if camada > 0:
+		out.append((camada - 1) * CASAS_Z + iz)
+	if camada < CASAS_Y - 1:
+		out.append((camada + 1) * CASAS_Z + iz)
+	return out
+
+
 ## Casas da peça que a tela ainda mostra: a viva, e a morta cuja onda ainda não deu o recado. É o
 ## número que a checagem suja por peça compara (seção 3 da folha de design) — o agregado `navios` já
 ## morreu, o pixel ainda não.
@@ -1158,7 +1178,33 @@ func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 			# 5,5 s que a sonda lê em 0,1 s de precisão.
 			if int(b["rodizio_fase"]) > ROD_NA_LINHA:
 				_avancar_rodizio(b, String(lado))
+	if pecas_livres:
+		for lado in ["aliado", "hostil"]:
+			for b in lista_de(lado):
+				if bool(b["vivo"]):
+					_passo_das_pecas(b, delta)
 	_reparar(delta)
+
+
+## Lei de voo das seis peças de um bloco, no referencial local dele. O bloco integra primeiro, com a
+## lei intacta; a peça obedece depois, e o que ela persegue é o próprio posto local mais a vaga
+## capturada. `rumo` 0.0 é de propósito: no referencial do bloco a proa local é sempre −z (é assim que
+## `casa_local` ordena as casas e `rot` as leva para o mundo), e uma peça que girasse para o resíduo de
+## perseguição apresentaria través dentro da formação — o mesmo erro que `_pilotar`/`_empuxar` já
+## nomeiam no `main`. Marcha e ficha são as do bloco: a peça não é uma classe nova de navio, é parte
+## de um, e a única coisa nova aqui é o tempo de resposta interno.
+func _passo_das_pecas(bloco: Dictionary, delta: float) -> void:
+	for p in range(PECAS_NO_BLOCO):
+		var pc: Dictionary = bloco["pecas"][p]
+		if not peca_viva(bloco, p):
+			pc["desloc"] = Vector3.ZERO
+			pc["vel"] = Vector3.ZERO
+			continue
+		var alvo: Vector3 = pc["vaga"]
+		var voo := Voo.marchar(pc["desloc"] as Vector3, pc["vel"] as Vector3, 0.0, alvo, delta,
+			MARCHA_DE_BLOCO, Voo.FICHA_BLOCO, 0.0)
+		pc["vel"] = voo["vel"]
+		pc["desloc"] = apertar_na_trela(voo["pos"] as Vector3, alvo)
 
 
 ## Os três eixos que se consertam sobem até o teto, na taxa cravada. O casco fica de fora: é a

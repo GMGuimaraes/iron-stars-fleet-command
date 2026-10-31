@@ -94,6 +94,14 @@ const BOCA_FECHADO_MIN := 0.18
 ## Orçamento por quadro: metade dos 16,6 ms de uma janela de 60 Hz. Metade porque a outra metade é o
 ## resto da cena — visor trincado, holograma, cenário e pós — que esta régua não mede.
 const TETO_MS := 8.0
+## Piso do diferencial, em FRAÇÃO do quadro sem massa — não em milissegundo absoluto. O portão foi
+## calibrado contra um quadro de 6,1 ms (−2 ms ≈ um terço dele); a mesma máquina hoje entrega 62 ms
+## nas DUAS pontas do par, e o ruído do relógio escala junto com o quadro, não com o feature:
+## 25/10 14,50/14,52 ms (pares de −0,36 a +1,04), 25/10 12,39/12,38 (+0,02 a +2,09), 29/10
+## 34,22/33,84 (−2,51 a +3,16), 31/10 61,94/64,17, 62,74/63,08 e 62,23/68,90 (medianas −3,53,
+## −1,10, −4,96). Um terço do quadro pega a mesma inversão bruta de instrumento em qualquer era; um
+## −2 ms fixo reprovaria um build bom só porque a máquina esfriou o frame.
+const PISO_FRACAO_DO_QUADRO := 0.33
 ## Teto de chamadas de desenho para a esquadra inteira: uma ordem de grandeza abaixo do
 ## contrafactual. O número que esta lei protege não é "duas" — é "não um por bloco". Com um nó por
 ## bloco, duzentos e quarenta cascos custariam duzentas e quarenta chamadas; em dois `MultiMesh` a
@@ -495,16 +503,21 @@ func _initialize() -> void:
 		1000.0 / maxf(float(com["ms"]), 0.001), 2 * Esquadra.BLOCOS_NO_LADO] \
 		+ "%d casas por quadro (%.2f ms por quadro), contra %.1f fps sem a massa" % [
 			2 * Esquadra.INSTANCIAS_POR_LADO, com["ms"], 1000.0 / maxf(float(sem["ms"]), 0.001)])
-	# O portão é o TETO, e a banda de ruído vai impressa junto: exigir sinal positivo num par único
-	# de 150 quadros é perguntar ao drift quem mandou — com 6,1 ms de quadro e um custo de massa
-	# menor que isso, a régua antiga reprovava um build bom. O piso largo (−2 ms) continua pegando
-	# instrumento quebrado, que é o que um diferencial fortemente negativo significa.
+	# O portão é o TETO (orçamento absoluto: a massa não pode passar de meia janela de 60 Hz) e o
+	# PISO é relativo ao quadro medido (banda de ruído do relógio de parede — ver
+	# PISO_FRACAO_DO_QUADRO). Exigir sinal positivo num par único de 150 quadros é perguntar ao
+	# drift quem mandou: entre as duas janelas do par só a VISIBILIDADE dos dois nós muda, a
+	# simulação da esquadra roda igual nas duas pontas, então um diferencial negativo não é o
+	# feature indo mais rápido — é o instrumento. O que assina o custo continua sendo a contagem.
+	var piso_ms := -PISO_FRACAO_DO_QUADRO * float(sem["ms"])
 	_assert("o tempo de quadro que a massa acrescenta cabe no orçamento de uma janela de 60 Hz",
-		custo_ms <= TETO_MS and custo_ms > -2.0,
+		custo_ms <= TETO_MS and custo_ms > piso_ms,
 		("%d pares de %d quadros: %.2f ms por quadro com a massa contra %.2f sem ela (mediana "
-			+ "%+.2f ms, pares de %+.2f a %+.2f ms), teto %.1f ms") % [
+			+ "%+.2f ms, pares de %+.2f a %+.2f ms), teto %.1f ms, piso %.1f ms (%.0f%% do quadro "
+			+ "sem massa)") % [
 			PARES_AB, QUADROS_FPS, com["ms"], sem["ms"], custo_ms,
-			deltas.min(), deltas.max(), TETO_MS])
+			deltas.min(), deltas.max(), TETO_MS, piso_ms,
+			100.0 * PISO_FRACAO_DO_QUADRO])
 	_assert("os 5 760 cascos entram de fato no quadro, medido em primitivas",
 		float(com["primitivas"]) > float(sem["primitivas"]) * 1.5,
 		"%.0f primitivas por quadro com a massa contra %.0f sem ela (x%.1f)" % [

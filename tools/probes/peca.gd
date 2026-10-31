@@ -35,6 +35,7 @@ func _initialize() -> void:
 	_familia_identidade()
 	_familia_censo()
 	await _familia_inercia()
+	await _familia_trela_e_ar()
 	for n in notes:
 		print(n)
 	print("SONDA-PECA: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
@@ -133,6 +134,12 @@ func _familia_censo() -> void:
 ## (Tarefa 10) — afirmar "pixel idêntico" medido em headless seria o portão falhando aberto.
 func _familia_inercia() -> void:
 	var game := (load("res://main.tscn") as PackedScene).instantiate()
+	# Precondition declarada no criador do estado, nunca na tolerância: `esquadra` nasce no construtor de
+	# `main.gd`, e esta linha é a primeira coisa que ele recebe antes de entrar na árvore. Desde a
+	# Tarefa 4 o default da alavanca é LIGADO (é a lei nova), e esta família cobra o regime contrário —
+	# a muralha rígida, os 1 440 `desloc` em ZERO. Medir inércia com o voo rodando seria medir outra
+	# coisa; desligar aqui é o que deixa a asserção cobrando os mesmos números de antes.
+	game.esquadra.pecas_livres = false
 	get_root().add_child(game)
 	await _frames(3)
 	var e: Esquadra = game.esquadra
@@ -162,6 +169,129 @@ func _familia_inercia() -> void:
 	_assert("B inercia: a conta nova da pintura é a conta velha, nos 24 vetores de mundo",
 		igual == Esquadra.CASAS, "%d/24 vetores de mundo byte-idênticos" % igual)
 	game.queue_free()
+
+
+## ── Família C (trela) e D (ar) ──
+## A folga é ±1,2/0,6/0,9, e a tabela de ar publicada é de grade SEM excursão: com os dois vizinhos de
+## grade no extremo oposto da trela os pisos analíticos caem para 0,088 (x) / 7,333 (y) / 0,750 (z) u —
+## os três números que a asserção do piso imprime. Por isso D cobra duas asserções distintas e nenhuma
+## delas afrouxa a antiga: o ar do par intra-bloco medido quadro a quadro tem de ser estritamente
+## positivo (é a garantia da construção), e o piso entre blocos vizinhos com excursão extrema oposta
+## também. A tabela publicada de ar continua sendo cobrada pela família 2 da sonda `esquadra.gd`, régua
+## de bloco com `AR_MINIMO = 2,4`, que passa com a alavanca ligada porque nenhuma daquelas famílias
+## empurra peça para fora da trela: onde nenhuma força age, a excursão é zero e o ar é o de grade.
+func _familia_trela_e_ar() -> void:
+	var game := (load("res://main.tscn") as PackedScene).instantiate()
+	get_root().add_child(game)
+	await _frames(3)
+	var e: Esquadra = game.esquadra
+	e.pecas_livres = true
+	# O empurrão que dá material à folha: uma peça lançada para fora do posto pela porta da lei
+	# (`empurrar_peca`, que já clampa na trela) é o único jeito de `pior` não ser o três-zero de um lote
+	# que nunca integrou. É o caso que a nota da Tarefa 3 deixou pendurado: sem força nenhuma, o verde de
+	# C é indistinguível de laço ausente.
+	var bloco_empurrado: Dictionary = e.lista_de("aliado")[0]
+	e.empurrar_peca(bloco_empurrado, 0, Vector3(2.0, 0.0, 0.0))
+	var antes: Vector3 = (bloco_empurrado["pecas"][0] as Dictionary)["desloc"]
+	var pior := Vector3(-1.0, -1.0, -1.0)
+	var leitura := 0
+	var ar_min := 1e9
+	var onde := "nenhum par medido"
+	for f in range(900):
+		game._process(1.0 / 60.0)
+		for lado in ["aliado", "hostil"]:
+			for b in e.lista_de(lado):
+				for p in range(Esquadra.PECAS_NO_BLOCO):
+					var pc: Dictionary = b["pecas"][p]
+					var d: Vector3 = pc["desloc"]
+					var vaga: Vector3 = pc["vaga"]
+					pior.x = maxf(pior.x, absf(d.x - vaga.x))
+					pior.y = maxf(pior.y, absf(d.y - vaga.y))
+					pior.z = maxf(pior.z, absf(d.z - vaga.z))
+					leitura += 1
+				# Os quinze pares de peça viva dentro do bloco: é aqui que o ar é apertado (1,332 u em y,
+				# 1,950 u em z) e é aqui que a peça anda. Caixa de peça, não raio de esfera — a fileira tem
+				# 10,5 u de asa e medir distância de centro com `RAIO_DA_PECA` daria negativo sempre.
+				for p in range(Esquadra.PECAS_NO_BLOCO):
+					if not Esquadra.peca_viva(b, p):
+						continue
+					var ca := e.caixa_da_peca(b, p)
+					if not ca.has_volume():
+						continue
+					for q in Esquadra.vizinhos_locais_da_peca(p):
+						if q <= p or not Esquadra.peca_viva(b, q):
+							continue
+						var cb := e.caixa_da_peca(b, q)
+						if not cb.has_volume():
+							continue
+						var ar := _ar_entre_caixas(ca, cb)
+						if ar < ar_min:
+							ar_min = ar
+							onde = "bloco %d p%d/p%d salva %d" % [int(b["id"]), p, q, e.salva_numero]
+	# O caso carregado da Tarefa 3, e a premissa do verde abaixo: o posto perseguido com a vaga zerada é
+	# um ponto FIXO da trela, então `pior=(0,0,0)` passa tanto com a lei rodando quanto sem ela. Dito e
+	# medido aqui, não presumido.
+	_assert("C trela: o três-zero é ponto fixo (apertar_na_trela(ZERO, ZERO) == ZERO)",
+		Esquadra.apertar_na_trela(Vector3.ZERO, Vector3.ZERO) == Vector3.ZERO,
+		("devolvido %s; é o posto que as 1 440 peças perseguem com a vaga zerada" % [
+			str(Esquadra.apertar_na_trela(Vector3.ZERO, Vector3.ZERO))]))
+	_assert("C trela: nenhuma excursão passou da folga em nenhum eixo em 900 quadros",
+		pior.x <= Esquadra.FOLGA_DA_PECA.x + 0.0001
+			and pior.y <= Esquadra.FOLGA_DA_PECA.y + 0.0001
+			and pior.z <= Esquadra.FOLGA_DA_PECA.z + 0.0001,
+		("max |desloc-vaga| = (%.3f, %.3f, %.3f) contra a folga (%.1f, %.1f, %.1f) em %d leituras" % [
+			pior.x, pior.y, pior.z, Esquadra.FOLGA_DA_PECA.x, Esquadra.FOLGA_DA_PECA.y,
+			Esquadra.FOLGA_DA_PECA.z, leitura]))
+	var depois: Vector3 = (bloco_empurrado["pecas"][0] as Dictionary)["desloc"]
+	# A outra metade do portão: a trela morde o empurrão de 2,0 u em 1,2 (o clamp da porta, eixo a eixo)
+	# e o VOO devolve a peça ao posto exato — o que só acontece se `passo` chamar `_passo_das_pecas`. Sem
+	# o laço a peça fica colada em 1,2 para sempre e esta asserção quebra: é ele que não deixa a família
+	# C acima aprovar um voo que não existe.
+	_assert("C voo: o empurrão bate na folga e a lei de voo pousa a peça de volta na vaga",
+		absf(antes.x) == Esquadra.FOLGA_DA_PECA.x and depois == Vector3.ZERO,
+		("empurrada a 2,0 u em boreste => desloc %.3f (trela %.1f); após os 900 quadros => %s" % [
+			antes.x, Esquadra.FOLGA_DA_PECA.x, str(depois)]))
+	_assert("D ar intra-bloco: o par de peça mais apertado do lote inteiro nunca fechou",
+		ar_min > 0.0,
+		("minimo medido %.3f u em %s, com a folga viva dos dois lados" % [ar_min, onde]))
+	# O piso analítico entre BLOCOS vizinhos: o ar publicado menos as duas metades de folga, por eixo.
+	# É conta sobre constantes, e os três números saem impressos — se algum fechar, a folga daquele eixo
+	# está errada e é ela que se corrige, nunca o portão.
+	var x := Esquadra.PASSO_BLOCO_X - 10.512 - 2.0 * Esquadra.FOLGA_DA_PECA.x
+	var z := Esquadra.PASSO_BLOCO_Z - 4.450 - 2.0 * Esquadra.FOLGA_DA_PECA.z
+	var y := Esquadra.PASSO_ESQUADRAO_Y - 3.467 - 2.0 * Esquadra.FOLGA_DA_PECA.y
+	_assert("D ar entre blocos: com os dois vizinhos no extremo oposto da trela ainda sobra ar",
+		x > 0.0 and z > 0.0 and y > 0.0,
+		("pisos analíticos x=%.3f (de 2,488 publicado) z=%.3f (de 2,550) y=%.3f (de 8,533)" % [x, z, y]))
+	# A segunda asserção prometida pelo desvio 1 da folha de plano: a TABELA PUBLICADA do §4, recontada
+	# com a excursão zerada. É a régua que a família 2 de `esquadra.gd` já cobra em bloco; aqui ela é
+	# coberta na escala de peça, e por isso é conta sobre as constantes da grade, não medida de quadro.
+	# Os seis pares do §4, cada um `passo − caixa`, com o literal publicado ao lado: se a subdivisão
+	# mexeu em passo ou caixa qualquer, é aqui que o número deixa de bater.
+	var pares := [
+		["casa-casa x (dentro da peça)", Esquadra.PASSO_CASA_X - 0.912, 2.288],
+		["casa-casa z (dentro do bloco)", Esquadra.PASSO_CASA_Z - 1.25, 1.95],
+		["casa-casa y (dentro do bloco)", Esquadra.PASSO_CASA_Y - 0.268, 1.332],
+		["bloco-bloco x (na fileira)", Esquadra.PASSO_BLOCO_X - 10.512, 2.488],
+		["fileira-fileira z", Esquadra.PASSO_BLOCO_Z - 4.45, 2.55],
+		["andar-andar y", Esquadra.PASSO_ESQUADRAO_Y - 3.467, 8.533],
+	]
+	for par in pares:
+		_assert("D tabela publicada: %s = %.3f u com a excursão zerada" % [par[0], par[2]],
+			absf(float(par[1]) - float(par[2])) < 0.001,
+			("recalcado %.4f contra o publicado %.4f" % [float(par[1]), float(par[2])]))
+	game.queue_free()
+
+
+## Distância entre duas AABBs de mundo: 0 se se encostam ou sobrepõem, senão a norma dos vãos por eixo.
+func _ar_entre_caixas(a: AABB, b: AABB) -> float:
+	var dx := maxf(0.0, maxf(b.position.x - (a.position.x + a.size.x),
+		a.position.x - (b.position.x + b.size.x)))
+	var dy := maxf(0.0, maxf(b.position.y - (a.position.y + a.size.y),
+		a.position.y - (b.position.y + b.size.y)))
+	var dz := maxf(0.0, maxf(b.position.z - (a.position.z + a.size.z),
+		a.position.z - (b.position.z + b.size.z)))
+	return Vector3(dx, dy, dz).length()
 
 
 func _frames(n: int) -> void:
