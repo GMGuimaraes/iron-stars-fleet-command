@@ -358,18 +358,21 @@ static func casa_local(c: int) -> Vector3:
 
 
 ## O posto vivo da peça dentro do bloco: o posto de grade, mais a vaga capturada, mais a excursão que
-## a trela tolera. É UM só termo para os quatro leitores — caixa (`pos_da_peca`), pintura (`pintar`),
-## mira (`_casas_por_proximidade`) e traço do lance (`troca_salva`) — de propósito: a partir da
-## Tarefa 5 a `vaga` deixa de ser ZERO, e um leitor que a omitisse passaria a desenhar ou a mirar o
-## casco no posto velho enquanto a caixa de colisão está no posto capturado. Com `vaga` e `desloc`
-## zerados os dois termos são soma exata com zero, então o valor devolvido é byte-idêntico ao de
-## `peca_local` — é a família A e a inércia da sonda `tools/probes/peca.gd` que cobram isso.
+## a trela tolera. É UM só termo para os leitores de corpo em `esquadra.gd` — caixa (`pos_da_peca`),
+## pintura (`pintar`), mira (`_casas_por_proximidade`) e traço do lance (`troca_salva`) — de propósito:
+## a partir da Tarefa 5 a `vaga` deixa de ser ZERO, e um leitor que a omitisse passaria a desenhar ou a
+## mirar o casco no posto velho enquanto a caixa de colisão está no posto capturado. A lista NÃO é
+## fechada: `pecas_na_cena` compõe posição de mundo de peça pela soma antiga, sem `vaga`, e é o quinto
+## leitor — ela é a porta que as leis de cenário usam, então fecha no commit da Tarefa 5, junto de quem
+## escreve a primeira vaga. Com `vaga` e `desloc` zerados os dois termos são soma exata com zero, então
+## o valor devolvido é byte-idêntico ao de `peca_local` — é a família A e a inércia da sonda
+## `tools/probes/peca.gd` que cobram isso.
 static func peca_local_viva(bloco: Dictionary, p: int) -> Vector3:
 	var pc: Dictionary = bloco["pecas"][p]
 	return peca_local(p) + (pc["vaga"] as Vector3) + (pc["desloc"] as Vector3)
 
 
-## A casa viva, no mesmo termo dos quatro leitores: a peça da casa com sua excursão e vaga, mais o
+## A casa viva, no mesmo termo dos leitores de cima: a peça da casa com sua excursão e vaga, mais o
 ## resíduo de asa da própria casa.
 static func casa_local_viva(bloco: Dictionary, c: int) -> Vector3:
 	return peca_local_viva(bloco, peca_da_casa(c)) + casa_na_peca(c % CASAS_DA_PECA)
@@ -895,7 +898,9 @@ func pos_da_peca(bloco: Dictionary, p: int) -> Vector3:
 
 ## Caixa de uma peça: a fileira de quatro cascos, pelos índices que vivem de fato. Vai ser a caixa que
 ## o poço, o vento e a rocha medem (Tarefas 7 e 8) — não a do bloco inteiro, que é o que fazia a
-## muralha inteira caber dentro do raio de um corpo só. Hoje só `caixa_do_bloco` a lê.
+## muralha inteira caber dentro do raio de um corpo só. Lê-la hoje: `caixa_do_bloco` logo abaixo, que
+## faz a união, e a família D de `tools/probes/peca.gd`, que mede com ela o ar do par de peça quadro a
+## quadro (as duas chamadas de `e.caixa_da_peca(b, p)` dentro de `_familia_trela_e_ar`).
 func caixa_da_peca(bloco: Dictionary, p: int) -> AABB:
 	if not peca_viva(bloco, p) or not bool(bloco["vivo"]):
 		return AABB(Vector3.ZERO, Vector3(-1.0, -1.0, -1.0))
@@ -1819,6 +1824,13 @@ func _expulsar_mortos() -> int:
 ## corpo de comando mudaram) sujeita as seis peças, e uma peça suja sujeita só as quatro casas dela.
 ## Sem o andar de baixo, a muralha que respira passaria a reescrever 5 760 transformados por quadro no
 ## pior caso, que é o custo real desta fatia — não os ~25 mil vetoriais das leis de cenário.
+##
+## CONTRATO DO HOIST: o laço compõe `local_base` UMA vez por peça (`peca_local_viva`) e soma o resíduo
+## de asa casa a casa, em vez de chamar `casa_local_viva(b, c)` por casa. As duas expressões são a
+## mesma soma, e o que prende o agrupamento é a asserção «B inercia: o agrupamento que a pintura
+## compõe é a tabela literal» da sonda `tools/probes/peca.gd`, que reproduce esta exata associação contra
+## a tabela literal nos 24 vetores, num bloco aliado e num hostil. Quem mudar o agrupamento aqui muda a
+## régua lá, no mesmo commit.
 func pintar(mm: MultiMesh, lado: String, forcar := false) -> int:
 	var lista := lista_de(lado)
 	var tocados := 0
@@ -1836,10 +1848,16 @@ func pintar(mm: MultiMesh, lado: String, forcar := false) -> int:
 			pintado["pos"] = b["pos"]
 			pintado["rumo"] = float(b["rumo"])
 		# O early-out do bloco limpo, que a Tarefa 3 quase perdeu: com a alavanca desligada a peça
-		# não tem lei de voo (`_passo_das_pecas` só roda em `pecas_livres`) e o `desloc` não tem
-		# writer, então o andar de baixo não tem o que ler — a varredura das seis peças seria custo
-		# puro (dois trig + 24 leituras de dicionário) em todo bloco limpo, todo quadro. Com a
-		# alavanca ligada ele continua vivo, e é aqui que a `pecas_livres` acha seu primeiro leitor.
+		# não tem lei de voo (`_passo_das_pecas` só roda em `pecas_livres`) e o andar de baixo não tem
+		# o que ler — a varredura das seis peças seria custo puro (dois trig + 24 leituras de
+		# dicionário) em todo bloco limpo, todo quadro. Com a alavanca ligada ele continua vivo, e é
+		# aqui que a `pecas_livres` acha seu primeiro leitor.
+		# PREMISSA DATADA, declarada: o que garante o `continue` é o grafo de chamadas de HOJE —
+		# `empurrar_peca` ainda só tem chamador de sonda, nenhum de lei. As Tarefas 7 e 8 (poço,
+		# vento) vão escrever `desloc` pela porta da lei, e aí desligar a alavanca para medir inércia
+		# deixa de significar "nenhuma peça mudou": o ramo poderia pular uma peça excursionada. O
+		# predicado honesto é "nenhuma peça mudou", não "a alavanca está off"; quem der chamador de
+		# lei a `empurrar_peca` troca esta condição no mesmo commit.
 		if not bloco_sujo and not pecas_livres:
 			continue
 		var origem: Vector3 = b["pos"]

@@ -24,7 +24,24 @@ extends SceneTree
 ##    o relógio é.
 ##
 ## O motor plantado é a asserção que não dá para fingir: reparo automático é fatura de `delta`, então
-## um casco a 76,000 que acorda em 76,344 denuncia processo rodando mesmo sem ninguém ler o relógio.
+## um casco a 76,000 que acorda em QUALQUER outro número denuncia processo rodando mesmo sem ninguém
+## ler o relógio. O que se cobra é o desvio do valor plantado, nunca o SINAL dele: o `rng` da batalha
+## nasce sem semente (`main.gd:557`), e medido em três rodadas seguidas o mesmo tabuleiro vivo acordou
+## em 78,8014 e 78,7311 (reparo ganhou) e em 74,5369 (a salva hostil chegou primeiro). Cobrar `>` era
+## cobrar qual dos dois canais venceu o sorteio, não o instrumento. A outra metade da prova — o
+## tabuleiro morto — já cobra os 76,0000 EXATOS (`absf(...) <= PASSO_ESPERADO`, com
+## `PASSO_ESPERADO = 0.0`). As duas metades agora leem a mesma régua: vivo = mexeu, morto = não mexeu
+## um dígito.
+##
+## A mesma régua vale para a cadência da salva, e aqui a folha se contradizia sozinha: o `fire_clock`
+## é contagem que sobe de `delta` e ZERA ao disparar (`main.gd`, `if fire_clock >= 1.6`), então dentro
+## da janela de 40 quadros ele descreve uma serra — cobrar `depois > antes` era cobrar a fase do
+## dente, não o processo. A própria espera por «a salva saiu», mais abaixo, lê `agora < antes - 0,5`,
+## que é exatamente o dente virando. Medido em cinco rodadas desta mesma ponte antes do conserto:
+## quatro em que `depois > antes` segurou (a asserção passava) e uma com ele virado —
+## `fire_clock 0,2010 -> 0,1946` — que reprovava sem que o tabuleiro estivesse parado.
+## Consertada, a mesma ponte caiu no dente virado em três rodadas seguidas (`0,1833 -> 0,0870`,
+## `0,2000 -> 0,1115`, `0,2000 -> 0,0836`) e as três leram OK — a versão velha reprovaria as três.
 ## E o sorteio é da salva, não do quadro: quarenta quadros ociosos não movem gerador nenhum (medido).
 ## Por isso a prova de contaminação espera o `fire_clock` virar — é ali que a cauda do `rng` e do
 ## `visual_rng` anda, e é exatamente ela que uma corrida A/B compara.
@@ -124,12 +141,13 @@ func _initialize() -> void:
 		_delta_clock(a_depois, a_antes) > 0.0,
 		"battle_clock %0.4f -> %0.4f em %d quadros"
 			% [a_antes["clock"], a_depois["clock"], QUADROS])
-	_assert("a cadência da salva anda junto",
-		float(a_depois["fire"]) > float(a_antes["fire"]),
-		"fire_clock %0.4f -> %0.4f" % [a_antes["fire"], a_depois["fire"]])
-	_assert("e o motor plantado sobe: é assim que um A/B «idêntico» diverge",
-		float(a_depois["motor"]) > MOTOR_PLANTADO,
-		"motor %0.4f -> %0.4f com casco a %0.1f"
+	_assert("a cadência da salva anda junto: ela VIRA, não sobe — é contagem que zera ao disparar",
+		absf(float(a_depois["fire"]) - float(a_antes["fire"])) > PASSO_ESPERADO,
+		"fire_clock %0.4f -> %0.4f (descer aqui é salva disparada, não tabuleiro parado)"
+			% [a_antes["fire"], a_depois["fire"]])
+	_assert("e o motor plantado sai do lugar: é assim que um A/B «idêntico» diverge",
+		absf(float(a_depois["motor"]) - MOTOR_PLANTADO) > PASSO_ESPERADO,
+		"motor %0.4f -> %0.4f com casco a %0.1f (sobe por reparo, desce por tiro — o sinal não é do instrumento)"
 			% [MOTOR_PLANTADO, a_depois["motor"], a_depois["casca"]])
 	_assert("e a bandeira confirma a ordem perdida — ela lê `true`",
 		bool(a_depois["flag"]),

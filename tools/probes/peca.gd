@@ -11,9 +11,11 @@ extends SceneTree
 ## 35 ≡ 840 continua de pé; (H) censo das leis medindo peça, com zero vetor fora do raio de cada lei;
 ## (S) a estrela esférica.
 ##
-## Rodadas: A, B, C e D já rodam (tarefas 1, 2 e 3). E, F, G, H e S são as famílias que as tarefas 5 a 9
-## ligam aqui — o `CENSO_CONFERENCIAS` desta folha é o que roda hoje, e quem acrescenta família
-## acrescenta o censo no mesmo commit, senão é a asserção final que grita.
+## Rodadas: A, B, C, D e a parte 1 da H já rodam (tarefas 1 a 4, mais as duas rodadas de fix da 3) — o
+## censo abaixo as conta. E, F, G
+## (a segunda metade da H é a do poço) e S são as famílias que as tarefas 5 a 9 ligam aqui, e o
+## `CENSO_CONFERENCIAS` desta folha é o que roda hoje: quem acrescenta família acrescenta o censo no
+## mesmo commit, senão é a asserção final que grita.
 ##
 ## Uso: godot --headless --path . --quit-after 1800 -s res://tools/probes/peca.gd
 
@@ -40,8 +42,10 @@ const TABULA_CASA_LOCAL := [
 
 ## Quantas conferências esta sonda tem de imprimir. É asserção (família final), não rodapé: uma
 ## família morta por SCRIPT ERROR encolhe a lista e deixa `quebras=0` — o RED da própria Tarefa 3
-## mostrou exatamente isso com 5 no lugar de 7.
-const CENSO_CONFERENCIAS := 23
+## mostrou exatamente isso com 5 no lugar de 7. Cadeia medida, por tarefa: 2 (T1, família A) → 5 (T2,
+## +censo H) → 7 (T3, +inércia B) → 18 (T4, +voo/trela/ar) → 23 (rodada 1 do fix da T3) → 24 (rodada 2:
+## os 24 centros pintados também no bloco hostil, onde `rumo = PI` não é identidade).
+const CENSO_CONFERENCIAS := 24
 
 var breaks := 0
 var notes: Array[String] = []
@@ -150,10 +154,48 @@ func _familia_censo() -> void:
 			float(Esquadra.CASAS_DA_PECA) * Esquadra.VIDA_DA_CASA]))
 
 
+## ── Auxiliares da família B ──
+## O AGRUPAMENTO que `pintar` compõe — `local_base` hoisted uma vez por peça (`peca_local_viva`) mais o
+## resíduo de asa da casa — conferido casa a casa contra a tabela literal. Devolve quantos dos 24
+## vetores de mundo batem byte a byte. É função separada porque a mesma régua corre nos dois lados:
+## só o aliado tem `rot` = identidade, e é no hostil (`rumo = PI`) que a ordem das somas tem
+## consequência de float32. É imitação deliberada do corpo de `pintar` (o contrato do hoist está no doc
+## dele, em `esquadra.gd`), não chamada: chamar `pintar` exigiria ler o `MultiMesh`, e a medição de
+## 31/10 acima prova que sob `--headless` a leitura devolve zero.
+func _centros_contra_a_tabela(b: Dictionary) -> int:
+	var rot := Basis.from_euler(Vector3(0.0, float(b["rumo"]), 0.0))
+	var origem: Vector3 = b["pos"]
+	var igual := 0
+	for c in range(Esquadra.CASAS):
+		var pintada: Vector3 = origem + rot * (Esquadra.peca_local_viva(b, Esquadra.peca_da_casa(c))
+			+ Esquadra.casa_na_peca(c % Esquadra.CASAS_DA_PECA))
+		if pintada == origem + rot * TABULA_CASA_LOCAL[c]:
+			igual += 1
+	return igual
+
+
+## A pior diferença relativa de tamanho entre duas caixas, eixo a eixo (|Δtamanho| / tamanho). É
+## relativa de propósito: o grão do float32 escala com a coordenada de mundo envolvida na subtração
+## que o `AABB.merge` refaz, então só a razão sobre o tamanho é comparável entre cenários.
+func _razao_de_ruido(a: AABB, h: AABB) -> float:
+	var pior := 0.0
+	for eixo in range(3):
+		var t: float = a.size[eixo]
+		if t <= 0.0:
+			return INF
+		pior = maxf(pior, absf(a.size[eixo] - h.size[eixo]) / t)
+	return pior
+
+
 ## ── Família B: inércia ──
-## O portão que a regra da casa (`godot-subdivision-inert-identity-proof`, passo 3) manda fechar:
-## provar PINTURA, CAIXA DE COLISÃO e MIRA, não uma delas. Duas metades, e a segunda é a que a
-## revisão da Tarefa 3 exigiu:
+## O portão que a regra da casa (`godot-subdivision-inert-identity-proof`, passo 3) manda fechar. Esta
+## folha cobra DUAS superfícies por asserção própria — PINTURA e CAIXA DE COLISÃO — e a terceira, a
+## MIRA, pelo mesmo termo: ela lê `casa_local_viva`, a mesma expressão cobrada abaixo, então o risco que
+## a regra nomeia («a mira ler a rígida enquanto a pintura lê a peça») está morto por construção. O
+## COMPORTAMENTO da mira — a ordem de proximidade das 24 casas — não é cego: quem o assereciona é a
+## sonda `tools/probes/casas.gd`, na lei da convergência dos canos (`casas.gd:364`), no enxugo de campo
+## (`:372`) e no concentrar-vs-dispersar (`:386`). Dizer o contrário aqui seria a folha prometer um
+## degrau a mais do que entrega.
 ##
 ## 1. Nenhuma superfície é lida do `MultiMesh`. Medido nesta casa em 31/10 com `_tmp_leitura_mm.gd`:
 ## sob `--headless` o motor NÃO devolve a transformada escrita — a pintura tocou os 120 blocos
@@ -197,20 +239,26 @@ func _familia_inercia() -> void:
 	# A pintura, cobrada pelo AGRUPAMENTO que `pintar` compõe (`local_base` hoisted por peça, mais o
 	# resíduo da casa) contra a tabela literal. Não contra `casa_local`: esta folha chamou a si mesma
 	# de `peca_local + casa_na_peca` na Tarefa 1, e comparar a expressão com ela mesma dá 24/24 por
-	# construção, que é a asserção que não pode falhar.
+	# construção, que é a asserção que não pode falhar. O hoist é contrato declarado no doc de `pintar`
+	# (`esquadra.gd`), e esta régua é o leitor dele: mudou o agrupamento lá, muda aqui no mesmo commit.
 	var b0: Dictionary = e.lista_de("aliado")[0]
-	var rot := Basis.from_euler(Vector3(0.0, float(b0["rumo"]), 0.0))
 	var origem: Vector3 = b0["pos"]
-	var igual := 0
-	for c in range(Esquadra.CASAS):
-		var local_base: Vector3 = Esquadra.peca_local_viva(b0, Esquadra.peca_da_casa(c))
-		var pintada: Vector3 = origem + rot * (local_base
-			+ Esquadra.casa_na_peca(c % Esquadra.CASAS_DA_PECA))
-		if pintada == origem + rot * TABULA_CASA_LOCAL[c]:
-			igual += 1
+	var rot := Basis.from_euler(Vector3(0.0, float(b0["rumo"]), 0.0))
+	var igual_a := _centros_contra_a_tabela(b0)
 	_assert("B inercia: o agrupamento que a pintura compõe é a tabela literal nos 24 vetores de mundo",
-		igual == Esquadra.CASAS,
-		"%d/24 vetores byte-idênticos contra TABULA_CASA_LOCAL" % igual)
+		igual_a == Esquadra.CASAS,
+		"%d/24 vetores byte-idênticos contra TABULA_CASA_LOCAL no bloco aliado 0 (rumo %s)" % [
+			igual_a, str(b0["rumo"])])
+	# O mesmo laço no lado hostil, que é o único onde a ressociação pode mover 1 ULP: lá o `rumo` é PI,
+	# então `rot` não é identidade exata e a ordem das somas tem consequência de ponto flutuante. Sem
+	# esta asserção, a pintura seria cobrada só no lado onde girar não faz nada — a razão de existir do
+	# degrau da caixa logo abaixo, que nasceu justamente porque os dois blocos não fecham bit a bit.
+	var bh: Dictionary = e.lista_de("hostil")[0]
+	var igual_h := _centros_contra_a_tabela(bh)
+	_assert("B inercia: o mesmo agrupamento bate a tabela no hostil, onde rumo = PI não é identidade",
+		igual_h == Esquadra.CASAS,
+		"%d/24 vetores byte-idênticos contra TABULA_CASA_LOCAL no bloco hostil 0 (rumo %s)" % [
+			igual_h, str(bh["rumo"])])
 	# A metade que faltava: a mesma conta, com uma peça fora do posto, TEM de deixar de bater. Empurrada
 	# 0,5 u em boreste (dentro da trela de 1,2, então o clamp não interfere), as quatro casas de p=0
 	# viram outras tantas divergências. Sem esta asserção, a de cima é indistinguível de álgebra de
@@ -223,37 +271,53 @@ func _familia_inercia() -> void:
 			+ Esquadra.casa_na_peca(c % Esquadra.CASAS_DA_PECA))
 		if pintada_voada != origem + rot * TABULA_CASA_LOCAL[c]:
 			caiu += 1
+	# A sonda RESTAURA o posto aqui, e esta linha é escrita antes da asserção de baixo: o que ela prova
+	# é só que a divergência apareceu (e, por tabela, que `desloc` entra no termo — se alguém tirar
+	# `desloc` de `peca_local_viva`, `caiu` vira 0 e o RED vem buscar). Que a LEI DE VOO pousa a peça de
+	# volta na vaga é a família C, e lá a medição é de verdade: 900 quadros de `passo` entre o empurrão
+	# e a leitura (`peca.gd` «C voo»). Cobrar o devolvimento daqui seria ler ZERO logo depois de ter
+	# escrito ZERO — um conjuncto que não pode falhar, e um detalhe impresso que atribuiria ao clamp da
+	# trela uma restauração feita pela própria linha acima.
 	(b0["pecas"][0] as Dictionary)["desloc"] = Vector3.ZERO
 	_assert("B inercia: a asserção da pintura sabe falhar — peça fora do posto derruba as casas dela",
-		caiu == Esquadra.CASAS_DA_PECA and (b0["pecas"][0] as Dictionary)["desloc"] == Vector3.ZERO,
-		("empurrão de 0,5 u mudou %d/%d casas de p=0 contra a tabela; trela devolveu %s" % [
-			caiu, Esquadra.CASAS_DA_PECA, str((b0["pecas"][0] as Dictionary)["desloc"])]))
+		caiu == Esquadra.CASAS_DA_PECA,
+		("empurrão de 0,5 u em boreste mudou %d/%d casas de p=0 contra a tabela" % [
+			caiu, Esquadra.CASAS_DA_PECA]))
 	# A segunda superfície do degrau: a CAIXA de colisão. Cobrada aqui, e não de raspão na família D,
 	# porque a regra da casa avisa: se um eixo ficar partido entre os dois lados, a igualdade passa a
 	# depender de ruído de float32 e a FOLGA tem de ser declarada na asserção, com o número medido ao
-	# lado. O único dado que distingue os dois blocos é o `rumo` (aliado 0, hostil PI), e a caixa é a
-	# união das caixas de peça rotacionadas — então o que sobra aqui é resíduo de arredondamento, não
-	# uma lei diferente. Medido nesta rodada, eixo a eixo: x = 0,0, y = 0,0, z = 1,53e-5 u (a asserção
-	# imprime os três). A folga declarada é 1e-4, uma ordem acima do resíduo; um eixo partido de
-	# verdade — uma peça que entra na união de um lado e não do outro — é de ordem 1e-3 e quebra.
+	# lado. Medido nesta rodada, eixo a eixo: x = 0, y = 0, z = 1,525878906e-5 u. O valor É exatamente
+	# 2⁻¹⁶, o grão do float32 para coordenadas entre 128 e 256 u, e a asserção imprime as posições dos
+	# dois blocos para a banda ser conferível no log. A origem é a subtração de duas posições de mundo
+	# grandes dentro do `uniao = uniao.merge(caixa)` de `caixa_do_bloco` (`esquadra.gd`, que refaz o
+	# tamanho como `máx(fim) − mín(posição)`), e NÃO o `sin(PI)` do rumo hostil: 1,22e-16 vezes um
+	# braço de 4,8 u dá 5,9e-16, três ordens abaixo do grão, e some na soma.
+	# Por isso a folga é RELATIVA ao tamanho de cada eixo (1e-5) em vez de um absoluto: o piso de ruído
+	# escala com a distância do bloco à origem, então um teto fixo quebraria por geometria de cenário
+	# (posições acima de ~1 024 u têm grão de 1,2e-4 e passariam de um 1e-4 sozinho). Contra os
+	# tamanhos publicados (10,51 × 3,467 × 4,45 u) a folga relativa vale 1,05e-4 / 3,47e-5 / 4,45e-5:
+	# mais APERTADA que 1e-4 nos dois eixos curtos, e o resíduo medido fica a ~3× do teto do z.
+	# O que quebraria de verdade: uma peça que entra na união de um lado e não do outro move a
+	# extensão por um passo de grade — 1,6 u em y, 3,2 u em x/z, razão ~0,46 — quatro ordens acima.
 	var caixa_a := e.caixa_do_bloco(b0)
 	var cobertura := 0
 	for c in range(Esquadra.CASAS):
 		if caixa_a.has_point(origem + rot * Esquadra.casa_local_viva(b0, c)):
 			cobertura += 1
-	var caixa_h := e.caixa_do_bloco(e.lista_de("hostil")[0])
-	var dx := absf(caixa_a.size.x - caixa_h.size.x)
-	var dy := absf(caixa_a.size.y - caixa_h.size.y)
-	var dz := absf(caixa_a.size.z - caixa_h.size.z)
-	var pior_eixo := maxf(dx, maxf(dy, dz))
+	var caixa_h := e.caixa_do_bloco(bh)
+	var pior := _razao_de_ruido(caixa_a, caixa_h)
 	_assert("B inercia: a caixa do bloco cobre os 24 centros que a pintura escreve",
 		cobertura == Esquadra.CASAS,
 		("%d/24 centros dentro de %.2f x %.2f x %.2f u" % [
 			cobertura, caixa_a.size.x, caixa_a.size.y, caixa_a.size.z]))
-	_assert("B inercia: a caixa hostil só difere da aliada pelo ruído de float32 do rumo = PI, folga 1e-4",
-		pior_eixo < 1e-4,
-		("dsize por eixo = %s / %s / %s u, com a caixa aliada em (%.4f, %.4f, %.4f)" % [
-			dx, dy, dz, caixa_a.size.x, caixa_a.size.y, caixa_a.size.z]))
+	_assert("B inercia: a caixa hostil só difere da aliada pelo grão de float32 da posição de mundo",
+		pior < 1e-5,
+		("pior razao de ruido entre eixos = %s do tamanho (teto 1e-5); pos aliada %s, hostil %s; "
+			+ "dsize %s / %s / %s u, caixa aliada (%.4f, %.4f, %.4f)") % [
+			pior, str((b0["pos"] as Vector3)), str((bh["pos"] as Vector3)),
+			absf(caixa_a.size.x - caixa_h.size.x), absf(caixa_a.size.y - caixa_h.size.y),
+			absf(caixa_a.size.z - caixa_h.size.z),
+			caixa_a.size.x, caixa_a.size.y, caixa_a.size.z])
 	game.queue_free()
 
 

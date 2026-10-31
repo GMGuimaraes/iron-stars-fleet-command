@@ -303,6 +303,12 @@ func _contraste(img: Image, camera: Camera3D, bloco: Dictionary, passo: Vector3)
 ## viva do nó, não a que estava gravada no `Image` quando ele foi salvo. Na primeira rodada esta
 ## função rodou depois das duas capturas e devolveu 353 px para os dois lados — a régua estava cega,
 ## não a lente.
+##
+## ESTA FOLHA É A RÉGUA DE EXTENSÃO NOMINAL, e fica na grade rígida de propósito: ela compara os cantos
+## do piso de um mesmo bloco entre DOIS níveis de zoom, então o que cobra é «a silhueta cresce». Quem
+## lê casco vivo é `_casa_no_mundo`, logo acima. Não trocar esta por `casa_local_viva` na varredura da
+## Tarefa 10 — com `desloc` em voo a régua passaria a medir excursão e perderia justamente o número
+## estável que ela precisa ser.
 func _boca_px(camera: Camera3D, bloco: Dictionary) -> float:
 	var rot := Basis.from_euler(Vector3(0.0, float(bloco["rumo"]), 0.0))
 	var a := camera.unproject_position((bloco["pos"] as Vector3)
