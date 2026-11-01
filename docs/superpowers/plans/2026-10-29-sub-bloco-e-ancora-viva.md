@@ -1184,13 +1184,17 @@ for p in peca esquadra casas comando; do
     -s res://tools/probes/$p.gd | tail -4
 done
 ```
-Expected: `peca` com `quebras=0` e `conferencias=27`; `esquadra`, `casas` e `comando` verdes. O censo de
+Expected: `peca` com `quebras=0` e `conferencias=30` (medido na Tarefa 5; ver a nota abaixo); `esquadra`, `casas` e `comando` verdes. O censo de
 conferências desta linha é o que a Tarefa 6 vai comparar — anote o número do log, não o deste plano.
 **Corrigido em 31/10, medido:** o `11` desta linha estava vencido antes mesmo de a Tarefa 5 começar. A
 família E abaixo tem **duas** `_assert` («E cota» e «E vaga»), não as onze que o número supunha, e as
 tarefas anteriores já tinham subido o censo de `peca.gd` de 7 (T3) para 18 (T4) e 25 (rodada 3 da T3,
-que acrescentou o caso de banda longa da caixa). A expectativa certa desta tarefa é **25 + 2 = 27**, e o
+que acrescentou o caso de banda longa da caixa). A expectativa certa desta tarefa era **25 + 2 = 27**, e o
 que faz fé continua sendo a linha impressa no log.
+**Corrigido de novo, medido no log:** o medido não foi 27, foi **30**. O ruling R14 acrescentou
+três asserções à folha (E corpo, E ar, E passo), então a conta certa era 25 + 5. O
+`CENSO_CONFERENCIAS` de `tools/probes/peca.gd` é 30 e a bateria imprime `conferencias=30` com
+`quebras=0`; quem confere os dois números é a asserção de censo da própria sonda, não esta linha.
 
 - [ ] **Step 6: Bateria + janela, com o PNG relido**
 
