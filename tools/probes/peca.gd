@@ -11,14 +11,15 @@ extends SceneTree
 ## 35 ≡ 840 continua de pé; (H) censo das leis medindo peça, com zero vetor fora do raio de cada lei;
 ## (S) a estrela esférica.
 ##
-## Rodadas: A, B, C, D e a parte 1 da H já rodam (tarefas 1 a 4, mais as três rodadas de fix da 3) — o
-## censo abaixo as conta. E, F, G (a segunda metade da H é a do poço) e S são as famílias que as
-## tarefas 5 a 9 ligam aqui, e o `CENSO_CONFERENCIAS` desta folha é o que roda hoje: quem acrescenta
+## Rodadas: A, B, C, D, E e a parte 1 da H já rodam (tarefas 1 a 5, mais as quatro rodadas de fix da 3)
+## — o censo abaixo as conta. F, G (a segunda metade da H é a do poço) e S são as famílias que as
+## tarefas 6 a 9 ligam aqui, e o `CENSO_CONFERENCIAS` desta folha é o que roda hoje: quem acrescenta
 ## família acrescenta o censo no mesmo commit, senão é a asserção final que grita.
 ##
 ## Uso: godot --headless --path . --quit-after 1800 -s res://tools/probes/peca.gd
 
 const Esquadra := preload("res://esquadra.gd")
+const Voo := preload("res://voo.gd")
 
 ## Folga de soma, espelho de `tools/probes/casas.gd`: `VIDA_DA_CASA` é 100 ÷ 24 e as parcelas somadas
 ## pelo `_recalcular_agregados` não fecham o produto exato no último dígito. É resolução de double,
@@ -45,8 +46,9 @@ const TABULA_CASA_LOCAL := [
 ## +censo H) → 7 (T3, +inércia B) → 18 (T4, +voo/trela/ar) → 23 (rodada 1 do fix da T3) → 24 (rodada 2:
 ## os 24 centros pintados também no bloco hostil, onde `rumo = PI` não é identidade) → 25 (rodada 3: a
 ## régua da caixa passou a ser contada em grão de float32 e ganhou o caso de banda longa, o bloco a
-## 600 u da origem).
-const CENSO_CONFERENCIAS := 25
+## 600 u da origem) → 30 (T5, família E com as cinco asserções: as duas da folha de plano mais corpo,
+## ar e passo, que são as medidas do ruling R14 e que o texto do plano não fazia).
+const CENSO_CONFERENCIAS := 30
 
 var breaks := 0
 var notes: Array[String] = []
@@ -65,6 +67,7 @@ func _initialize() -> void:
 	_familia_censo()
 	await _familia_inercia()
 	await _familia_trela_e_ar()
+	_familia_vaga()
 	# O censo é asserção, não rodapé. Uma família que morre por SCRIPT ERROR dentro de `_initialize`
 	# encolhe `notes` e deixa `quebras=0` — o portão passaria exatamente no caso em que a sonda não
 	# rodou, e foi assim que o RED da Tarefa 3 devolveu 5 conferências no lugar de 7 sem um QUEBRA.
@@ -419,6 +422,7 @@ func _familia_trela_e_ar() -> void:
 	e.empurrar_peca(bloco_empurrado, 0, Vector3(2.0, 0.0, 0.0))
 	var antes: Vector3 = (bloco_empurrado["pecas"][0] as Dictionary)["desloc"]
 	var pior := Vector3(-1.0, -1.0, -1.0)
+	var vaga_pior := Vector3.ZERO
 	var leitura := 0
 	var ar_min := 1e9
 	var onde := "nenhum par medido"
@@ -430,10 +434,20 @@ func _familia_trela_e_ar() -> void:
 					var pc: Dictionary = b["pecas"][p]
 					var d: Vector3 = pc["desloc"]
 					var vaga: Vector3 = pc["vaga"]
-					pior.x = maxf(pior.x, absf(d.x - vaga.x))
-					pior.y = maxf(pior.y, absf(d.y - vaga.y))
-					pior.z = maxf(pior.z, absf(d.z - vaga.z))
 					leitura += 1
+					# Desde a Tarefa 5 `desloc` é desvio em torno do POSTO OCUPADO (grade + vaga), e a
+					# peça morta tem o corpo zerado mas continua carregando a vaga de quando estava viva:
+					# medir `|desloc − vaga|` daria excursão de 1,6 u a um cadáver. A régua é o alcance do
+					# corredor, `|desloc| ≤ |vaga| + folga` eixo a eixo, contada só em peça viva. Sem
+					# captura nenhuma no lote, `vaga_pior` é três-zero e a cota é a de sempre, byte a byte.
+					if not Esquadra.peca_viva(b, p):
+						continue
+					pior.x = maxf(pior.x, absf(d.x))
+					pior.y = maxf(pior.y, absf(d.y))
+					pior.z = maxf(pior.z, absf(d.z))
+					vaga_pior.x = maxf(vaga_pior.x, absf(vaga.x))
+					vaga_pior.y = maxf(vaga_pior.y, absf(vaga.y))
+					vaga_pior.z = maxf(vaga_pior.z, absf(vaga.z))
 				# Os sete pares únicos de peça viva dentro do bloco (14 chamadas direcionadas de
 				# `vizinhos_locais_da_peca`, filtradas em `q > p`): é aqui que o ar é apertado (1,332 u em y,
 				# 1,950 u em z) e é aqui que a peça anda. Caixa de peça, não raio de esfera — a fileira tem
@@ -461,13 +475,13 @@ func _familia_trela_e_ar() -> void:
 		Esquadra.apertar_na_trela(Vector3.ZERO, Vector3.ZERO) == Vector3.ZERO,
 		("devolvido %s; é o posto que as 1 440 peças perseguem com a vaga zerada" % [
 			str(Esquadra.apertar_na_trela(Vector3.ZERO, Vector3.ZERO))]))
-	_assert("C trela: nenhuma excursão passou da folga em nenhum eixo em 900 quadros",
-		pior.x <= Esquadra.FOLGA_DA_PECA.x + 0.0001
-			and pior.y <= Esquadra.FOLGA_DA_PECA.y + 0.0001
-			and pior.z <= Esquadra.FOLGA_DA_PECA.z + 0.0001,
-		("max |desloc-vaga| = (%.3f, %.3f, %.3f) contra a folga (%.1f, %.1f, %.1f) em %d leituras" % [
+	_assert("C trela: nenhuma excursão passou do alcance do corredor em nenhum eixo em 900 quadros",
+		pior.x <= Esquadra.FOLGA_DA_PECA.x + vaga_pior.x + FOLGA_SOMA
+			and pior.y <= Esquadra.FOLGA_DA_PECA.y + vaga_pior.y + FOLGA_SOMA
+			and pior.z <= Esquadra.FOLGA_DA_PECA.z + vaga_pior.z + FOLGA_SOMA,
+		("max |desloc| = (%.3f, %.3f, %.3f) contra folga (%.1f, %.1f, %.1f) + vaga (%.1f, %.1f, %.1f) em %d leituras" % [
 			pior.x, pior.y, pior.z, Esquadra.FOLGA_DA_PECA.x, Esquadra.FOLGA_DA_PECA.y,
-			Esquadra.FOLGA_DA_PECA.z, leitura]))
+			Esquadra.FOLGA_DA_PECA.z, vaga_pior.x, vaga_pior.y, vaga_pior.z, leitura]))
 	var depois: Vector3 = (bloco_empurrado["pecas"][0] as Dictionary)["desloc"]
 	# A outra metade do portão: a trela morde o empurrão de 2,0 u em 1,2 (o clamp da porta, eixo a eixo)
 	# e o VOO devolve a peça ao posto exato — o que só acontece se `passo` chamar `_passo_das_pecas`. Sem
@@ -507,6 +521,99 @@ func _familia_trela_e_ar() -> void:
 			absf(float(par[1]) - float(par[2])) < 0.001,
 			("recalcado %.4f contra o publicado %.4f" % [float(par[1]), float(par[2])]))
 	game.queue_free()
+
+
+## ── Família E: captura ──
+## O portão é quádruplo e os quatro lados saem impressos: a grade abre espaço nos dois eixos (conta
+## sobre constantes), a peça captura o posto do vizinho morto e nunca um posto vivo, o CASCO pousa onde
+## a vaga anuncia, e nenhum corpo anda mais que a própria marcha permite num quadro. As duas últimas
+## são as medidas que a folha de plano não faz: o `fora_da_vaga` dela confere o **vetor** da vaga, nunca
+## a posição do corpo, e `donos > 0` vale também para a captura que estaciona o casco em cima do vizinho
+## vivo — o contrário exato da queixa do commander. É o ruling R14 da ledger, medido antes de codar:
+## `desloc` é desvio em torno do POSTO OCUPADO (grade + vaga), então o alvo do voo é ZERO e a captura
+## desloca o corpo (`desloc -= tomada`) em vez de teleportá-lo.
+func _familia_vaga() -> void:
+	var e := Esquadra.new()
+	e.montar([Vector3.ZERO], [Vector3(0.0, 0.0, -130.0)])
+	e.pecas_livres = true
+	var b: Dictionary = e.lista_de("aliado")[0]
+	# A porta da lei é a morte casa a casa: apagar as quatro casas de p=2 (camada 1, meia-fileira de
+	# vante) deixa o posto dele como o único vagante do bloco. Os candidatos são p=0 e p=4 (em y) e p=3
+	# (em z), e quem fica com o posto é decidido por ÍNDICE, não por sorteio: o mapa de ocupação é
+	# preenchido na ordem do laço, então p=0 chega antes de p=4.
+	for c in Esquadra.casas_da_peca(2):
+		b["casas"][c]["vida"] = 0.0
+	Esquadra._recalcular_agregados(b)
+	var postos := {}
+	for p in range(Esquadra.PECAS_NO_BLOCO):
+		if Esquadra.peca_viva(b, p):
+			postos[p] = Esquadra.peca_local_viva(b, p)
+	var pulo_max := 0.0
+	var onde_pulo := "nenhum corpo andou"
+	for f in range(600):
+		e.passo(1.0 / 60.0, [Vector3.ZERO], [Vector3(0.0, 0.0, -130.0)])
+		for p in postos:
+			var agora: Vector3 = Esquadra.peca_local_viva(b, int(p))
+			var salto: float = agora.distance_to(postos[p])
+			if salto > pulo_max:
+				pulo_max = salto
+				onde_pulo = "p%d no quadro %d" % [int(p), f]
+			postos[p] = agora
+	var donos := 0
+	var fora_da_vaga := 0
+	var corpo_fora := 0
+	var sobrepostas := 0
+	var vivos := []
+	for p in range(Esquadra.PECAS_NO_BLOCO):
+		if not Esquadra.peca_viva(b, p):
+			continue
+		var pc: Dictionary = b["pecas"][p]
+		var v: Vector3 = pc["vaga"]
+		if v != Vector3.ZERO:
+			donos += 1
+			var para: Vector3 = Esquadra.peca_local(p) + v
+			for q in range(Esquadra.PECAS_NO_BLOCO):
+				if Esquadra.peca_viva(b, q) and Esquadra.peca_local(q) == para:
+					fora_da_vaga += 1
+		var corpo := Esquadra.peca_local_viva(b, p)
+		if corpo != Esquadra.peca_local(p) + v:
+			corpo_fora += 1
+		for outro in vivos:
+			if corpo == outro:
+				sobrepostas += 1
+		vivos.append(corpo)
+	# O piso analítico das cotas, contado das constantes: os dois eixos têm de abrir porta, e a
+	# aritmética é a que a sonda imprime, não a que o comentário promete. No RED desta família a cota
+	# estava escrita como o literal 1,3 (a constante ainda não existia); agora lê `FATOR_DE_VAGA`, que é
+	# o número que a lei usa — se alguém mover a histerese para além do que a grade entrega, é aqui que
+	# a porta fecha.
+	var cota_y := Esquadra.FATOR_DE_VAGA * Esquadra.PASSO_CASA_Y
+	var cota_z := Esquadra.FATOR_DE_VAGA * Esquadra.PASSO_CASA_Z
+	_assert("E cota: a grade abre espaço suficiente nos dois eixos para a captura existir",
+		2.0 * Esquadra.PASSO_CASA_Y >= cota_y and Esquadra.PASSO_BLOCO_Z >= cota_z,
+		("y: 3,2 u abertos contra %.2f de cota; z: %.1f u abertos contra %.2f" % [
+			cota_y, Esquadra.PASSO_BLOCO_Z, cota_z]))
+	_assert("E vaga: a peça captura o posto do vizinho morto e nunca um posto vivo",
+		donos > 0 and fora_da_vaga == 0,
+		("%d pecas do bloco terminaram 600 quadros com vaga tomada, %d apontando para posto vivo" % [
+			donos, fora_da_vaga]))
+	_assert("E corpo: a peça pousa no posto que a vaga anuncia, não no dobro do deslocamento",
+		corpo_fora == 0,
+		("%d das %d pecas vivas com corpo != peca_local + vaga depois de 600 quadros" % [
+			corpo_fora, vivos.size()]))
+	_assert("E ar: nenhum casco vivo senta exatamente em cima do posto de outro casco vivo",
+		sobrepostas == 0,
+		("%d pares de postos vivos sobrepostos entre os %d corpos do bloco" % [
+			sobrepostas, vivos.size()]))
+	# O teto é a própria marcha: 6,0 u/s sobre o passo de 1/60 s, mais a boca de pouso de `Voo.marchar`
+	# (0,02 u), que troca o resultado do quadro pelo destino quando entra nela. É o portão que pega
+	# teleport: escrita como `vaga` sem o `desloc -= tomada` correspondente, o corpo daria um passo de
+	# 1,6 u num quadro e isto cairia vermelho — nenhuma das outras quatro asserções lê o quadro a quadro.
+	var teto := Esquadra.MARCHA_DE_BLOCO / 60.0 + Voo.CAPTURA_DE_POUSO
+	_assert("E passo: nenhum corpo anda mais que a marcha permite em um único quadro",
+		pulo_max <= teto,
+		("maior passo medido %.4f u (%s) contra o teto de %.4f u (marcha %.1f u/s / 60 + boca %.2f u)" % [
+			pulo_max, onde_pulo, teto, Esquadra.MARCHA_DE_BLOCO, Voo.CAPTURA_DE_POUSO]))
 
 
 ## Distância entre duas AABBs de mundo: 0 se se encostam ou sobrepõem, senão a norma dos vãos por eixo.

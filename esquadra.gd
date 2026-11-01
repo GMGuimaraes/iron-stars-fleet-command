@@ -358,14 +358,12 @@ static func casa_local(c: int) -> Vector3:
 
 
 ## O posto vivo da peça dentro do bloco: o posto de grade, mais a vaga capturada, mais a excursão que
-## a trela tolera. É UM só termo para os leitores de corpo em `esquadra.gd` — caixa (`pos_da_peca`),
-## pintura (`pintar`), mira (`_casas_por_proximidade`) e traço do lance (`troca_salva`) — de propósito:
-## a partir da Tarefa 5 a `vaga` deixa de ser ZERO, e um leitor que a omitisse passaria a desenhar ou a
-## mirar o casco no posto velho enquanto a caixa de colisão está no posto capturado. A lista NÃO é
-## fechada: `pecas_na_cena` compõe posição de mundo de peça pela soma antiga, sem `vaga`, e é o quinto
-## leitor — ela é a porta que as leis de cenário usam, então fecha no commit da Tarefa 5, junto de quem
-## escreve a primeira vaga. Com `vaga` e `desloc` zerados os dois termos são soma exata com zero, então
-## o valor devolvido é byte-idêntico ao de `peca_local` — é a família A e a inércia da sonda
+## a trela tolera. É UM só termo para os cinco leitores de corpo — caixa (`pos_da_peca`), pintura
+## (`pintar`), mira (`_casas_por_proximidade`), traço do lance (`troca_salva`) e a porta da cena
+## (`pecas_na_cena`, fechada na Tarefa 5) — de propósito: desde a Tarefa 5 a `vaga` deixa de ser ZERO, e
+## um leitor que a omitisse passaria a desenhar ou a mirar o casco no posto velho enquanto a caixa de
+## colisão está no posto capturado. Com `vaga` e `desloc` zerados os dois termos são soma exata com
+## zero, então o valor devolvido é byte-idêntico ao de `peca_local` — é a família A e a inércia da sonda
 ## `tools/probes/peca.gd` que cobram isso.
 static func peca_local_viva(bloco: Dictionary, p: int) -> Vector3:
 	var pc: Dictionary = bloco["pecas"][p]
@@ -823,7 +821,7 @@ func pecas_na_cena() -> Array[Dictionary]:
 				while _pecas_na_cena_buf.size() <= n:
 					_pecas_na_cena_buf.append({})
 				var par: Dictionary = _pecas_na_cena_buf[n]
-				par["pos"] = origem + rot * (peca_local(p) + (pc["desloc"] as Vector3))
+				par["pos"] = origem + rot * peca_local_viva(b, p)
 				par["vel"] = (b["vel"] as Vector3) + rot * (pc["vel"] as Vector3)
 				par["raio"] = RAIO_DA_PECA
 				par["bloco"] = b
@@ -844,15 +842,86 @@ func pecas_na_cena() -> Array[Dictionary]:
 const FOLGA_DA_PECA := Vector3(1.2, 0.6, 0.9)
 
 
-## A excursão não pode passar da trela, eixo a eixo, em torno do posto que a peça persegue — que é o
-## próprio posto mais a vaga capturada. Clamp por eixo, não por módulo: com módulo o curso de uma peça
-## seria limitado na diagonal e livre contra o vizinho, que é exatamente o disco que a lei de voo
-## recusa.
+## Histerese de vaga, em múltiplos do passo de casa do eixo: y cobra 1,3 × 1,6 = 2,08 u e z cobra
+## 1,3 × 3,2 = 4,16 u. É a escala de peça do rodízio de fileiras, e o precedente está lido: a folga
+## vertical real do rodízio saiu 1,023 u no pior dos 5 179 quadros em que a pista esteve em uso, contra
+## os 2,533 u que a geometria sem deriva prometia. Quem abre a porta é a morte casa a casa.
+const FATOR_DE_VAGA := 1.3
+
+
+## A excursão não pode passar da trela, eixo a eixo, em torno do posto que a peça persegue. Clamp por
+## eixo, não por módulo: com módulo o curso de uma peça seria limitado na diagonal e livre contra o
+## vizinho, que é exatamente o disco que a lei de voo recusa.
+##
+## A banda é ASSIMÉTRICA porque `desloc` é desvio em torno do POSTO OCUPADO, que depois da Tarefa 5 é
+## `grade + vaga`, e o alvo do voo é ZERO: a peça que captura o posto 1,6 u acima tem de atravessar os
+## 1,6 u, e uma banda simétrica em torno de zero a prenderia no meio do caminho. `[min(0,−vaga)−folga,
+## max(0,−vaga)+folga]` é exatamente o corredor entre os dois postos, folga nas duas pontas: com
+## `vaga` ZERO a fórmula é byte-idêntica à simétrica de sempre, e é por isso que as famílias C e D de
+## `tools/probes/peca.gd` (nenhuma morte no cenário delas) medem os mesmos números de antes.
+##
+## O corredor não rasga o ar: o corpo de uma peça que capturou o posto vizinho fica em `[próprio−folga,
+## capturado+folga]`, e o posto capturado é MORTO por definição (`_vaga_para`), então nenhum outro corpo
+## vivo tem direito a ele; o vizinho vivo seguinte começa a 1,6 u do capturado e desce no máximo 0,6,
+## sobrando os mesmos 0,4 u centro a centro (0,132 u de ar em y) de antes da captura.
 static func apertar_na_trela(desloc: Vector3, vaga: Vector3) -> Vector3:
 	return Vector3(
-		clampf(desloc.x, vaga.x - FOLGA_DA_PECA.x, vaga.x + FOLGA_DA_PECA.x),
-		clampf(desloc.y, vaga.y - FOLGA_DA_PECA.y, vaga.y + FOLGA_DA_PECA.y),
-		clampf(desloc.z, vaga.z - FOLGA_DA_PECA.z, vaga.z + FOLGA_DA_PECA.z))
+		clampf(desloc.x, minf(0.0, -vaga.x) - FOLGA_DA_PECA.x, maxf(0.0, -vaga.x) + FOLGA_DA_PECA.x),
+		clampf(desloc.y, minf(0.0, -vaga.y) - FOLGA_DA_PECA.y, maxf(0.0, -vaga.y) + FOLGA_DA_PECA.y),
+		clampf(desloc.z, minf(0.0, -vaga.z) - FOLGA_DA_PECA.z, maxf(0.0, -vaga.z) + FOLGA_DA_PECA.z))
+
+
+## Os postos que já têm dono no bloco: o de grade de cada peça viva, mais a vaga que ela tomou. No
+## máximo seis entradas, comparação linear, sem hash e sem leitura de outro bloco.
+static func postos_efetivos(bloco: Dictionary) -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	for p in range(PECAS_NO_BLOCO):
+		if not peca_viva(bloco, p):
+			continue
+		var pc: Dictionary = bloco["pecas"][p]
+		out.append(peca_local(p) + (pc["vaga"] as Vector3))
+	return out
+
+
+## Quanto de espaço existe, naquele eixo, do posto de quem move até o primeiro posto ainda vivo além da
+## vaga. Em z é sempre `PASSO_BLOCO_Z` (com `CASAS_Z = 2` não existe camada além da vaga dentro do
+## bloco — o próximo corpo vivo é de outro bloco, e a grade diz onde: 7,0 u). Em y é `2 × PASSO_CASA_Y`
+## quando a camada do outro lado vive, e `PASSO_ESQUADRAO_Y` quando ela também morreu e o próximo posto
+## é o do andar de cima. Os dois cortam a respectiva cota: 3,2 ≥ 2,08 e 7,0 ≥ 4,16.
+static func _espaco_aberto(bloco: Dictionary, p: int, q: int, em_z: bool) -> float:
+	if em_z:
+		return PASSO_BLOCO_Z
+	var camada := int(float(q) / float(CASAS_Z))
+	var iz := q % CASAS_Z
+	for c in [camada - 1, camada + 1]:
+		if c < 0 or c >= CASAS_Y:
+			continue
+		var vizinho: int = c * CASAS_Z + iz
+		if vizinho == p or not peca_viva(bloco, vizinho):
+			continue
+		return 2.0 * PASSO_CASA_Y
+	return PASSO_ESQUADRAO_Y
+
+
+## Captura para frente, só em vaga: o vizinho está morto de verdade (as quatro casas apagadas), o posto
+## dele não é de peça viva nenhuma — nem como posto de grade, nem como vaga já tomada — e o espaço
+## aberto vale `FATOR_DE_VAGA` × o passo do eixo. Não tem volta: casa morta não revive, a decisão é de
+## índice e não de sorteio, e é ESTA lei (não a folga de meio passo) que dá ao bloco a liberdade que o
+## commander pediu.
+static func _vaga_para(bloco: Dictionary, p: int, ocupados: Array[Vector3]) -> Vector3:
+	var proprio := peca_local(p)
+	for q in vizinhos_locais_da_peca(p):
+		if q < 0 or q >= PECAS_NO_BLOCO or peca_viva(bloco, q):
+			continue
+		var destino := peca_local(q)
+		if destino in ocupados:
+			continue
+		var em_z := not is_zero_approx(destino.z - proprio.z)
+		var cota := FATOR_DE_VAGA * (PASSO_CASA_Z if em_z else PASSO_CASA_Y)
+		if _espaco_aberto(bloco, p, q, em_z) < cota:
+			continue
+		return destino - proprio
+	return Vector3.ZERO
 
 
 ## Empurra a peça pelo mundo, pela porta dela. A rotação inversa é `from_euler(0, -rumo, 0)` porque o
@@ -1213,24 +1282,34 @@ func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 
 
 ## Lei de voo das seis peças de um bloco, no referencial local dele. O bloco integra primeiro, com a
-## lei intacta; a peça obedece depois, e o que ela persegue é o próprio posto local mais a vaga
-## capturada. `rumo` 0.0 é de propósito: no referencial do bloco a proa local é sempre −z (é assim que
-## `casa_local` ordena as casas e `rot` as leva para o mundo), e uma peça que girasse para o resíduo de
-## perseguição apresentaria través dentro da formação — o mesmo erro que `_pilotar`/`_empuxar` já
-## nomeiam no `main`. Marcha e ficha são as do bloco: a peça não é uma classe nova de navio, é parte
-## de um, e a única coisa nova aqui é o tempo de resposta interno.
+## lei intacta; a peça obedece depois. O que ela persegue é ZERO, de propósito: `desloc` é desvio em
+## torno do POSTO OCUPADO (`peca_local + vaga`), que é a soma que os cinco leitores de corpo fazem
+## (`peca_local_viva`), então perseguir a vaga seria somá-la duas vezes e o corpo pousaria um passo de
+## grade adiante — em cima do vizinho vivo. Capturar é trocar de posto SEM mover o corpo: a vaga entra
+## e o `desloc` sai com o sinal invertido no mesmo quadro, e a partir daí é a lei de voo que anda o
+## corredor até o posto novo. `rumo` 0.0 é de propósito: no referencial do bloco a proa local é sempre
+## −z (é assim que `casa_local` ordena as casas e `rot` as leva para o mundo), e uma peça que girasse
+## para o resíduo de perseguição apresentaria través dentro da formação — o mesmo erro que
+## `_pilotar`/`_empuxar` já nomeiam no `main`. Marcha e ficha são as do bloco: a peça não é uma classe
+## nova de navio, é parte de um, e a única coisa nova aqui é o tempo de resposta interno.
 func _passo_das_pecas(bloco: Dictionary, delta: float) -> void:
+	var ocupados := postos_efetivos(bloco)
 	for p in range(PECAS_NO_BLOCO):
 		var pc: Dictionary = bloco["pecas"][p]
 		if not peca_viva(bloco, p):
 			pc["desloc"] = Vector3.ZERO
 			pc["vel"] = Vector3.ZERO
 			continue
-		var alvo: Vector3 = pc["vaga"]
-		var voo := Voo.marchar(pc["desloc"] as Vector3, pc["vel"] as Vector3, 0.0, alvo, delta,
-			MARCHA_DE_BLOCO, Voo.FICHA_BLOCO, 0.0)
+		if (pc["vaga"] as Vector3) == Vector3.ZERO:
+			var tomada := _vaga_para(bloco, p, ocupados)
+			if tomada != Vector3.ZERO:
+				pc["vaga"] = tomada
+				pc["desloc"] = (pc["desloc"] as Vector3) - tomada
+				ocupados.append(peca_local(p) + tomada)
+		var voo := Voo.marchar(pc["desloc"] as Vector3, pc["vel"] as Vector3, 0.0, Vector3.ZERO,
+			delta, MARCHA_DE_BLOCO, Voo.FICHA_BLOCO, 0.0)
 		pc["vel"] = voo["vel"]
-		pc["desloc"] = apertar_na_trela(voo["pos"] as Vector3, alvo)
+		pc["desloc"] = apertar_na_trela(voo["pos"] as Vector3, pc["vaga"] as Vector3)
 
 
 ## Os três eixos que se consertam sobem até o teto, na taxa cravada. O casco fica de fora: é a

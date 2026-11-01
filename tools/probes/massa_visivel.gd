@@ -179,6 +179,9 @@ const RESPIRA_DA_MURALHA := 0.45
 const JANELA_DE_PROFUNDIDADE := 1.0
 ## Piso de luminância (Rec.709, média sobre o retângulo) que conta como «acendeu».
 const PISTA_GANHO_MIN := 0.002
+## Quadros andados na seção da captura: 2 s de simulação, e a marcha de bloco é 6,0 u/s com aceleração
+## 3,0 — os 1,6 u do corredor de `y` se percorrem em ~1,0 s, então 120 quadros é o dobro do pouso.
+const QUADROS_DA_CAPTURA := 120
 
 var breaks := 0
 var notes: Array[String] = []
@@ -409,6 +412,17 @@ static func _boca_na_tela(cam: Camera3D, p: Vector3) -> Dictionary:
 	var c := cam.unproject_position(p)
 	var lx := cam.unproject_position(p + Vector3(LARGURA_DA_CAIXA * 0.5, 0.0, 0.0))
 	var ly := cam.unproject_position(p + Vector3(0.0, ALTURA_DA_CAIXA * 0.5, 0.0))
+	return {"x": c.x, "y": c.y,
+		"rx": maxf(absf(lx.x - c.x), 1.0), "ry": maxf(absf(ly.y - c.y), 1.0)}
+
+## O retângulo de tela de UMA PEÇA, não do bloco inteiro: a fileira de quatro cascos em `x` (3,2 u de
+## passo, meio passo de sobra em cada ponta) e a altura de uma meia-casa. Medir o buraco com a boca do
+## bloco amostraria as três fileiras vivas ao redor e o ganho viria delas, não do casco que capturou —
+## é a mesma lição do «centro cai num vão» de `_luz_ret`, agora em escala de peça.
+static func _boca_da_peca(cam: Camera3D, p: Vector3) -> Dictionary:
+	var c := cam.unproject_position(p)
+	var lx := cam.unproject_position(p + Vector3(PASSO_X * 2.0, 0.0, 0.0))
+	var ly := cam.unproject_position(p + Vector3(0.0, PASSO_Y, 0.0))
 	return {"x": c.x, "y": c.y,
 		"rx": maxf(absf(lx.x - c.x), 1.0), "ry": maxf(absf(ly.y - c.y), 1.0)}
 
@@ -889,11 +903,95 @@ func _initialize() -> void:
 			+ "de respira projetada (%.2f u de deriva, caixa de %.1f px de altura lida a %.0f u)" % [
 				RESPIRA_DA_MURALHA, px_da_caixa, DISTANCIA_DA_LEITURA])
 
+	# ── 6. A captura fecha o buraco? (lapidação 4, Tarefa 5) ──────────────────────────────────
+	# A queixa do commander é visual: um bloco com uma fileira de peça apagada não pode continuar com o
+	# vão aberto, porque vão aberto é justamente o que faz a muralha parecer UM corpo só. A lei que
+	# fecha o vão mora em `_vaga_para`/`_passo_das_pecas` e a família E de `tools/probes/peca.gd` já a
+	# cobra quadro a quadro em headless; aqui a mesma lei é cobrada em PIXEL, com o buraco escolhido por
+	# ÍNDICE (a peça 2 do bloco mais adiantado) e não por sorteio.
+	#
+	# Precondition declarada no instrumento, não afrouxada na régua: o tabuleiro é REMONTADO antes do
+	# corte. Sem isso, uma morte da batalha viva poderia ter dado vaga a p=0 ANTES do meu corte — a
+	# peça já teria para onde ir, o buraco de p=2 ficaria aberto, e a régua leria «a captura não fecha
+	# vão» quando o que houve foi duas vagas concorrendo. É o mesmo controle que a seção do rodízio usa.
+	jogo._remontar_esquadras()
+	jogo.massa_tracos.visible = false
+	var sujeito: Dictionary = {}
+	for b_c in jogo.esquadra.lista_de("aliado"):
+		if not bool(b_c["vivo"]):
+			continue
+		if sujeito.is_empty() or float((b_c["pos"] as Vector3).z) > float((sujeito["pos"] as Vector3).z):
+			sujeito = b_c
+	var vagas_antes := 0
+	var lotes := {}
+	for p_c in range(Esquadra.PECAS_NO_BLOCO):
+		var v_a: Vector3 = (sujeito["pecas"][p_c] as Dictionary)["vaga"]
+		if v_a != Vector3.ZERO:
+			vagas_antes += 1
+		lotes[p_c] = Esquadra.peca_local_viva(sujeito, p_c)
+	_assert("a captura começa de tabuleiro limpo: nenhuma peça do sujeito tem vaga antes do corte",
+		vagas_antes == 0 and Esquadra.casas_vivas(sujeito) == Esquadra.CASAS,
+			("%d pecas com vaga e %d de %d casas vivas no bloco mais adiantado antes do corte" % [
+				vagas_antes, Esquadra.casas_vivas(sujeito), Esquadra.CASAS]))
+	# O corte, pela porta da lei: apaga as quatro casas da peça 2 (a meia-fileira de vante, camada 1) e
+	# recalcula o agregado na sequência — nada de `vivo = false`, o bloco continua em formação e é o
+	# vão dele que se fotografa.
+	for c_c in Esquadra.casas_da_peca(2):
+		sujeito["casas"][c_c]["vida"] = 0.0
+	Esquadra._recalcular_agregados(sujeito)
+	var buraco: Vector3 = jogo.esquadra.pos_da_peca(sujeito, 2)
+	jogo.bridge_rig.global_position = buraco + Vector3(0.0, 0.0, 46.0)
+	jogo.bridge_rig.rotation = Vector3.ZERO
+	jogo.campo_zoom = 1.0
+	jogo._update_bridge(0.0)
+	await _frames(4)
+	var aberto := get_root().get_texture().get_image()
+	_salvar(aberto, "captura_aberto")
+	var boca_aberta := _boca_da_peca(cam, buraco)
+	for q_c in range(QUADROS_DA_CAPTURA):
+		jogo._atualizar_esquadras(PASSO_DA_PISTA)
+	await _frames(4)
+	var fechado_c := get_root().get_texture().get_image()
+	_salvar(fechado_c, "captura_fechado")
+	var tomou := -1
+	var andou := 0.0
+	for p_c in range(Esquadra.PECAS_NO_BLOCO):
+		if not Esquadra.peca_viva(sujeito, p_c):
+			continue
+		var v_t: Vector3 = (sujeito["pecas"][p_c] as Dictionary)["vaga"]
+		if v_t == Vector3.ZERO:
+			continue
+		tomou = p_c
+		andou = float((lotes[p_c] as Vector3).distance_to(Esquadra.peca_local_viva(sujeito, p_c)))
+		break
+	# Os dois retângulos são recomeçados do zero de cada quadro, cada um com a posição que o buraco
+	# tinha QUANDO o quadro foi tomado: a muralha marcha e o olho está parado, então o vão viaja na
+	# tela entre os dois quadros e um retângulo único leria duas faixas diferentes de céu.
+	var boca_fechada := _boca_da_peca(cam, jogo.esquadra.pos_da_peca(sujeito, 2))
+	var luz_aberto := _luz_ret(aberto, boca_aberta)
+	var luz_fechado := _luz_ret(fechado_c, boca_fechada)
+	_assert("a lei captura no tabuleiro do jogo: apagada a peca 2, uma peca viva tomou o posto dela",
+		tomou >= 0 and andou >= PASSO_Y - 0.1,
+			("p%d tomou a vaga e o corpo local andou %.3f u (passo de casa em y e %.3f u), " % [
+				tomou, andou, PASSO_Y])
+			+ "%d casas vivas continuam no bloco depois de %d quadros" % [
+				Esquadra.casas_vivas(sujeito), QUADROS_DA_CAPTURA])
+	_assert("o buraco acende pixel: o vao da peça morta tem casco depois da marcha",
+		_dentro_da_tela(boca_aberta, aberto) and _dentro_da_tela(boca_fechada, fechado_c)
+			and luz_fechado >= luz_aberto + PISTA_GANHO_MIN,
+			(("luminancia media do retangulo da peca morta: %.4f com o buraco aberto contra %.4f depois " % [
+				luz_aberto, luz_fechado])
+			+ "de %d quadros (piso %.4f, retangulo %.0f x %.0f px; quadros salvos em %scaptura_aberto.png " % [
+				QUADROS_DA_CAPTURA, PISTA_GANHO_MIN, 2.0 * float(boca_fechada["rx"]) + 1.0,
+				2.0 * float(boca_fechada["ry"]) + 1.0, OUT])
+			+ "e %scaptura_fechado.png)" % OUT)
+
 	print("SONDA-MASSA-VISIVEL: veredito - quebras=%d - conferencias=%d" % [breaks, notes.size()])
 	for nota in notes:
 		print(nota)
 	print(("SONDA-MASSA-VISIVEL: quadros salvos em %s (massa_largo, massa_zoom, massa_apagada, "
-		+ "salva_voando, salva_apagada, rodizio_na_pista, rodizio_pista_apagada, rodizio_desligado)")
+		+ "salva_voando, salva_apagada, rodizio_na_pista, rodizio_pista_apagada, rodizio_desligado, "
+		+ "captura_aberto, captura_fechado)")
 		% OUT)
 	quit(1 if breaks > 0 else 0)
 
