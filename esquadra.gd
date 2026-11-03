@@ -145,6 +145,20 @@ const DERIVA_CICLO := 9.0
 ## O deslocamento de cada esquadrão neste instante, recalculado uma vez por `passo`. O componente em
 ## x só depende do andar, o em y depende do esquadrão — é a divisão acima aplicada.
 var _derivas: Array[Vector3] = []
+## A âncora da muralha, agora como ESTADO por lado. Antes desta folha `estacao()` era derivada da média
+## dos seis núcleos do lado a cada tick (`_nucleos_da_esquadra` corta em `ESQUADROES_NO_LADO`), e era
+## isso que fazia a muralha inteira entrar no poço porque um único núcleo foi sugado: herança, não
+## medida. Hoje a estação persegue a média dos próprios blocos em custódia, e um bloco que recebeu ordem
+## do comandante sai dessa média — é a exclusão que fecha a conta da frase do commander. Semeada em
+## `montar()` com o valor da fórmula antiga, e o quadro zero é byte-idêntico.
+var _estacao := {"aliado": Vector3.ZERO, "hostil": Vector3.ZERO}
+var _vel_estacao := {"aliado": Vector3.ZERO, "hostil": Vector3.ZERO}
+## Atitude da âncora, o quarto estado do voo dela. Não é enfeite: `Voo.quadro` limita o comando ao
+## envelope por eixo do casco, então um ponto que nunca carrega o próprio rumo está preso a ré — medido
+## 1,2 u/s (= `MARCHA_DE_BLOCO 6,0 × re 0,2`) contra os 6,0 u/s de proa. Quem semeia é `montar`, com a
+## proa da linha que `rumo_da_linha` já define para os blocos: a muralha respira de frente, e a âncora
+## respira com ela.
+var _rumo_estacao := {"aliado": 0.0, "hostil": 0.0}
 ## Alavanca da fatia, e é um instrumento de medição, não um recurso de jogo. Desligada, as peças existem
 ## como estado mas nenhuma força as move: é assim que a família B mede a inércia numa partida inteira e
 ## não num quadro isolado. Desde a Tarefa 4 o default é LIGADO — é isso que faz a fileira manobrar — e a
@@ -669,10 +683,19 @@ func montar(nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 	centro_aliado = _centro_de(nucleos_aliados)
 	centro_hostil = _centro_de(nucleos_hostis)
 	recuo_hostil = -float(CAMPO_DE_APROXIMACAO)
+	# A semente da estação é o valor da fórmula antiga, byte a byte — é o que faz o quadro zero desta
+	# folha ser o quadro zero de hoje (família C-semente). O hostil já nasce recuado porque o recuo da
+	# largada é o campo inteiro, e a linha acima é quem o crava antes daqui.
+	_estacao["aliado"] = centro_aliado
+	_estacao["hostil"] = centro_hostil + Vector3(0.0, 0.0, recuo_hostil)
+	_vel_estacao["aliado"] = Vector3.ZERO
+	_vel_estacao["hostil"] = Vector3.ZERO
+	_rumo_estacao["aliado"] = rumo_da_linha("aliado")
+	_rumo_estacao["hostil"] = rumo_da_linha("hostil")
 	var id := 0
 	for lado in ["aliado", "hostil"]:
 		var lista := blocos_aliados if lado == "aliado" else blocos_hostis
-		var ancora := estacao(lado)
+		var ancora: Vector3 = _estacao[lado]
 		for esq in range(ESQUADROES_NO_LADO):
 			for indice in range(BLOCOS_NO_ESQUADRAO):
 				lista.append(_novo_bloco(id, esq, indice, lado,
@@ -693,12 +716,100 @@ func centros(lado: String) -> Vector3:
 	return centro_aliado if lado == "aliado" else centro_hostil
 
 
-## Ponto do tabuleiro ao qual a grade do lado está presa: o centro dos próprios núcleos para o
-## aliado, que defende a própria linha, e o centro recuado para o hostil, que ainda está cruzando o
-## campo. É a âncora real da muralha; `centros()` continua sendo a régua dos núcleos, que as sondas
-## e o README citam.
-func estacao(lado: String) -> Vector3:
+## A fórmula antiga: os núcleos, mais o recuo que a lei da largada manda. Não manda em nada na muralha
+## desde a ruling R17 — quem puxa a estação hostil é `_cota_de_contato()`, medida da estação aliada, e
+## deixá-la como teto seria reabrir o arrasto que o comandante apontou (um núcleo aliado arrancado
+## moveria a cota, que sai de `centro_aliado.z`). Continua existindo como a régua contra a qual a
+## família F da sonda mede o arranco que a herança dava, e como a semente do quadro zero.
+func _estacao_derivada(lado: String) -> Vector3:
 	return centros(lado) + Vector3(0.0, 0.0, recuo_hostil if lado == "hostil" else 0.0)
+
+
+## Ponto do tabuleiro ao qual a grade do lado está presa. Estado, não derivada: ver `_estacao`.
+## `centros()` continua sendo a régua dos núcleos, que as sondas e o README citam.
+func estacao(lado: String) -> Vector3:
+	return _estacao[lado]
+
+
+## Onde a grade manda este bloco ficar neste quadro: o posto da formação sobre a âncora, mais a
+## respira do próprio andar. É UMA conta, lida de dois lados: `passo` persegue e `_media_da_linha`
+## subtrai. Manter as duas na mesma função é o que impede a média de ler a deriva como erro de
+## custódia — medida em R19, quando ela subtraía o posto nu, o alvo da âncora virava um ponto que
+## anda com ela, e a muralha deslizava a `MARCHA_DE_BLOCO` 6,0 u/s para sempre, reescrevendo os cento
+## e vinte blocos a cada quadro.
+func _posto_de_custodia(b: Dictionary, lado: String) -> Vector3:
+	var e := int(b["esquadrao"])
+	var respira: Vector3 = Vector3.ZERO
+	if not _derivas.is_empty():
+		respira = _derivas[e % _derivas.size()]
+	return posto_no_lado(e, int(b["formacao"]), _estacao[lado]) + respira
+
+
+## A média dos blocos do lado que ainda estão sob custódia da grade, lida como ESTIMATIVA da âncora:
+## cada bloco devolve `ancora + (corpo - posto de custódia)`, que é o erro dele em relação à grade.
+## Quem a lê hoje é a muralha hostil, em x e y (ver `_ancorar`): o aliado tem motor próprio desde R20.
+## Ficam de fora quem recebeu destino da ponte, quem está na pista do rodízio e quem passou da trela —
+## é essa exclusão que faz a ordem do comandante não arrastar a muralha inteira.
+##
+## A subtração do posto é a exclusão que paga, e o centróide bruto é onde ela cobra: tirar vinte dos
+## cento e vinte desloca o centro da grade, e um alvo que fica sempre à MESMA distância de quem o
+## persegue é força motriz sem fim. Como estimativa do próprio erro, o ponto fixo volta a ser a âncora
+## (a média dos blocos que perseguem a estação É a estação, que é a afirmação da spec seção 2 item 3),
+## e o resíduo que sobra — o erro de perseguimento, zero quando a muralha está assentada — cabe em
+## `Voo.CAPTURA_DE_POUSO` 0,02, a boca onde a velocidade morre.
+func _media_da_linha(lado: String) -> Vector3:
+	var soma := Vector3.ZERO
+	var n := 0
+	for b in lista_de(lado):
+		if not bool(b["vivo"]) or bool(b["com_destino"]) \
+				or int(b["rodizio_fase"]) > ROD_NA_LINHA:
+			continue
+		var pos := b["pos"] as Vector3
+		if pos.distance_to(_estacao[lado]) > CAMPO_DE_APROXIMACAO:
+			continue
+		soma += _estacao[lado] + (pos - _posto_de_custodia(b, lado))
+		n += 1
+	if n == 0:
+		return _estacao[lado]
+	return soma / float(n)
+
+
+## A coleira de contato, medida da ESTAÇÃO aliada e não dos núcleos dela. É essa escolha de leitura
+## que fecha o arrasto que o comandante apontou: se a cota saísse de `centro_aliado.z`, um núcleo
+## arrancado 40 u moveria a cota em `40 / ESQUADROES_NO_LADO` u e a muralha hostil iria junto — a
+## herança voltaria pela porta dos fundos. As duas fachadas medem o mesmo braço (`FACHADA_DA_MURALHA`)
+## a partir de cada centro, por isso ele entra duas vezes na conta.
+func _cota_de_contato() -> float:
+	return _estacao["aliado"].z - 2.0 * FACHADA_DA_MURALHA - DISTANCIA_DE_CONTATO
+
+
+## Um passo de âncora por lado. `Voo.marchar` capped a `MARCHA_DE_BLOCO` com a ficha do bloco.
+## ALIADO: persegue o centro das seis capitânias vivas (`centros("aliado")`), o motor que a ruling R20
+## deu à muralha — a massa segue os cascos. HOSTIL: persegue a cota da coleira, o alvo explícito que
+## substitui a herança dos núcleos (spec seção 2), e em x/y a média estimada dos próprios blocos, que é
+## o que segura a muralha no próprio largo enquanto ela avança. Trocar o alvo hostil por cota é o que
+## faz ela fechar o campo de aproximação, e a família 10 e as sondas de combate existem para provar que
+## ela fecha. O aliado anda primeiro no mesmo laço, então a cota que o hostil persegue é a do quadro
+## corrente — e é por isso que arrancar uma capitânia aliada empurra as duas muralhas, em cascata, sem
+## nenhuma delas herdar posição de núcleo.
+func _ancorar(delta: float) -> void:
+	for lado in ["aliado", "hostil"]:
+		# Ruling R20: a muralha aliada tem motor explícito — o centro das próprias capitânias. A massa
+		# obedece aos cascos, nunca o contrário, e é isso que faz o bloco de muitas naves ler como frota
+		# em manobra em vez de grade pregada. O cap de `MARCHA_DE_BLOCO` é o preço da coleira: uma
+		# capitânia arrancada 40 u desloca o alvo em `40 / ESQUADROES_NO_LADO` = 6,67 u, que a estação
+		# percorre em 1,1 s, em vez de teleportar a grade inteira.
+		var alvo := centros(lado) if lado == "aliado" else _media_da_linha(lado)
+		if lado == "hostil":
+			alvo.z = _cota_de_contato()
+		# `proa_comandada` fica NAN de propósito: a âncora não tem atitude a guardar, e cravá-la em 0,0
+		# seria pedir proa -Z num campo onde o inimigo avança em +Z — o envelope por eixo comeria o
+		# comando inteiro e a muralha pararia de marchar sem erro nenhum.
+		var voo := Voo.marchar(_estacao[lado], _vel_estacao[lado], float(_rumo_estacao[lado]),
+			alvo, delta, MARCHA_DE_BLOCO, Voo.FICHA_BLOCO)
+		_estacao[lado] = voo["pos"]
+		_vel_estacao[lado] = voo["vel"]
+		_rumo_estacao[lado] = float(voo["rumo"])
 
 
 ## Para onde o recuo anda: o tanto de trás que põe a nossa fachada e a deles a
@@ -1218,6 +1329,9 @@ func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 	centro_aliado = _centro_de(nucleos_aliados)
 	centro_hostil = _centro_de(nucleos_hostis)
 	recuo_hostil = _recuo_alvo()
+	# A respira é calculada ANTES da âncora, e pelo mesmo `tempo` que os blocos vão ver neste quadro:
+	# `_media_da_linha` subtrai o posto de custódia que a lei manda perseguir, e subtrair a deriva do
+	# quadro anterior deixaria na média um resíduo de fase que a âncora perseguiria sem fim.
 	tempo += delta
 	if _derivas.size() != ESQUADROES_NO_LADO:
 		_derivas.resize(ESQUADROES_NO_LADO)
@@ -1227,11 +1341,15 @@ func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 		var fase_x := base + float(andar) * TAU / float(CAMADAS_NO_LADO)
 		var fase_y := base + float(e) * TAU / float(ESQUADROES_NO_LADO)
 		_derivas[e] = Vector3(cos(fase_x) * DERIVA_X, sin(fase_y * 0.5) * DERIVA_Y, 0.0)
+	# A ordem é a lei: a estação anda primeiro, os blocos perseguem a estação nova no mesmo quadro, e a
+	# média do quadro seguinte já reflete o deslocamento. Inverter faz a muralha correr atrás do próprio
+	# quadro anterior e abre oscilação que a família 10 leria como marchar mais devagar.
+	_ancorar(delta)
 	for lado in ["aliado", "hostil"]:
 		for b in lista_de(lado):
 			if not bool(b["vivo"]):
 				continue
-			var posto := posto_no_lado(int(b["esquadrao"]), int(b["formacao"]), estacao(lado))
+			var posto: Vector3
 			# Ordem da ponte ganha do posto de formação: o bloco persegue o ponto que o comandante
 			# apontou e segura lá, em vez de ser puxado de volta pela estação. Mesma lei para os dois
 			# casos, então nem o posto nem o destino teleportam.
@@ -1252,7 +1370,7 @@ func passo(delta: float, nucleos_aliados: Array, nucleos_hostis: Array) -> void:
 				# nuvem de mosquitos. Em `z` a deriva não entra de propósito: é o eixo do contato, e a
 				# lei de aproximação (`DISTANCIA_DE_CONTATO`, `FACHADA_DA_MURALHA`) é medida centro a
 				# centro; balançar vante e trás mudaria a fachada que as sondas assinam.
-				posto += _derivas[int(b["esquadrao"]) % _derivas.size()]
+				posto = _posto_de_custodia(b, String(lado))
 			var partida: Vector3 = b["pos"]
 			var marcha := MARCHA_DE_BLOCO * (0.35 + float(b["MOTORES"]) / 100.0 * 0.65)
 			# Proa comandada, só na custódia: o único resíduo que um bloco de linha persegue é o

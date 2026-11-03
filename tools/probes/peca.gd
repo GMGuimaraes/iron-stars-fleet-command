@@ -11,9 +11,9 @@ extends SceneTree
 ## 35 ≡ 840 continua de pé; (H) censo das leis medindo peça, com zero vetor fora do raio de cada lei;
 ## (S) a estrela esférica.
 ##
-## Rodadas: A, B, C, D, E e a parte 1 da H já rodam (tarefas 1 a 5, mais as quatro rodadas de fix da 3)
-## — o censo abaixo as conta. F, G (a segunda metade da H é a do poço) e S são as famílias que as
-## tarefas 6 a 9 ligam aqui, e o `CENSO_CONFERENCIAS` desta folha é o que roda hoje: quem acrescenta
+## Rodadas: A, B, C, D, E, F e a parte 1 da H já rodam (tarefas 1 a 6, mais as quatro rodadas de fix da
+## 3) — o censo abaixo as conta. G (a segunda metade da H é a do poço) e S são as famílias que as
+## tarefas 7 a 9 ligam aqui, e o `CENSO_CONFERENCIAS` desta folha é o que roda hoje: quem acrescenta
 ## família acrescenta o censo no mesmo commit, senão é a asserção final que grita.
 ##
 ## Uso: godot --headless --path . --quit-after 1800 -s res://tools/probes/peca.gd
@@ -25,6 +25,12 @@ const Voo := preload("res://voo.gd")
 ## pelo `_recalcular_agregados` não fecham o produto exato no último dígito. É resolução de double,
 ## não afrouxamento de portão.
 const FOLGA_SOMA := 1e-9
+
+## Quantos quadros, no fim do assentamento, servem de janela para medir quanto a âncora anda por
+## dinâmica própria. É o número que responde à pergunta que a folha de plano não fez: "andar ZERO" não
+## é promessa de design nenhum — uma âncora viva persegue a média dos blocos e a deriva move os postos
+## todo quadro, então ela anda um pouco sempre.
+const JANELA_DA_BANDA := 120
 
 ## As 24 casas do bloco como a grade rígida SEMPRE as escreveu, copiadas da aritmética de índice
 ## anterior à lapidação 4. É a única fonte de verdade da família A e da inércia da família B: as duas
@@ -47,8 +53,14 @@ const TABULA_CASA_LOCAL := [
 ## os 24 centros pintados também no bloco hostil, onde `rumo = PI` não é identidade) → 25 (rodada 3: a
 ## régua da caixa passou a ser contada em grão de float32 e ganhou o caso de banda longa, o bloco a
 ## 600 u da origem) → 30 (T5, família E com as cinco asserções: as duas da folha de plano mais corpo,
-## ar e passo, que são as medidas do ruling R14 e que o texto do plano não fazia).
-const CENSO_CONFERENCIAS := 30
+## ar e passo, que são as medidas do ruling R14 e que o texto do plano não fazia) → 36 (T6, família C
+## semente + F com as seis: o quadro zero byte-idêntico lido logo após o `montar` sem tick no meio, a
+## banda natural da âncora assentada, a precondition de que o arranco chega na régua antiga, a estação
+## que não sai do teto do quadro quando um núcleo é arrancado 40 u, a média colada na estação e a média
+## que não segue o núcleo. As duas a mais que a folha de plano não tinha são o ruling R16, medida no
+## RED: a âncora viva anda ~0,016 u por quadro por dinâmica própria, então "anda ZERO" cobrava um
+## repouso que o design nunca prometeu e o portão ficaria vermelho por razão alheia ao núcleo).
+const CENSO_CONFERENCIAS := 36
 
 var breaks := 0
 var notes: Array[String] = []
@@ -68,6 +80,7 @@ func _initialize() -> void:
 	await _familia_inercia()
 	await _familia_trela_e_ar()
 	_familia_vaga()
+	await _familia_ancora()
 	# O censo é asserção, não rodapé. Uma família que morre por SCRIPT ERROR dentro de `_initialize`
 	# encolhe `notes` e deixa `quebras=0` — o portão passaria exatamente no caso em que a sonda não
 	# rodou, e foi assim que o RED da Tarefa 3 devolveu 5 conferências no lugar de 7 sem um QUEBRA.
@@ -614,6 +627,79 @@ func _familia_vaga() -> void:
 		pulo_max <= teto,
 		("maior passo medido %.4f u (%s) contra o teto de %.4f u (marcha %.1f u/s / 60 + boca %.2f u)" % [
 			pulo_max, onde_pulo, teto, Esquadra.MARCHA_DE_BLOCO, Voo.CAPTURA_DE_POUSO]))
+
+
+## ── Família C (semente) e F (a frase do commander) ──
+## A causa medida da queixa é esta: `estacao()` herdava de `centros()`, que é a média dos SEIS núcleos
+## do lado re-derivada a cada tick (`_nucleos_da_esquadra` corta em `ESQUADROES_NO_LADO` = 3 × 2), e um
+## núcleo arrastado 40 u movia a estação em 40 ÷ 6 = 6,67 u e a estação movia os 120 postos — inclusive
+## os blocos a mais de 46 u do poço. O portão NÃO é "a estação anda ZERO": uma âncora viva persegue a
+## média dos próprios blocos, os blocos chegam atrasados aos postos e a deriva move os postos todo
+## quadro, então ela anda um pouco a cada tick mesmo sem estímulo. O que se cobra é que o quadro do
+## arranco não se distinga de um quadro qualquer — contra o teto absoluto da marcha, ~55× abaixo dos
+## 6,67 u que a herança injetava.
+func _familia_ancora() -> void:
+	var game := (load("res://main.tscn") as PackedScene).instantiate()
+	get_root().add_child(game)
+	await _frames(3)
+	var e: Esquadra = game.esquadra
+	# C-semente: o quadro zero tem de ser o valor da fórmula antiga, byte a byte. A comparação é logo
+	# depois de um `montar` novo e com ZERO tick no meio — os três frames acima já rodaram três
+	# `_ancorar`, e uma âncora que já andou não é o quadro zero de nada. Vale por construção: `montar`
+	# crava `centro_*` e `recuo_hostil` e escreve neles mesmo a semente.
+	e.montar(game._nucleos_da_esquadra(true), game._nucleos_da_esquadra(false))
+	var semente_ok := true
+	for lado in ["aliado", "hostil"]:
+		semente_ok = semente_ok and e.estacao(lado) == e._estacao_derivada(lado)
+	_assert("C semente: o quadro zero da estação é o quadro zero de hoje, byte a byte",
+		semente_ok,
+		("aliado %s / hostil %s" % [str(e.estacao("aliado")), str(e.estacao("hostil"))]))
+	# Assenta a muralha (os blocos chegam aos postos e a média converge) medindo a banda natural do
+	# quadro: quanto a âncora anda por dinâmica própria, sem estímulo nenhum.
+	var teto := Esquadra.MARCHA_DE_BLOCO / 60.0 + Voo.CAPTURA_DE_POUSO
+	var banda_estacao := 0.0
+	var banda_media := 0.0
+	for f in range(600):
+		var est_antes := e.estacao("aliado")
+		var med_antes: Vector3 = e._media_da_linha("aliado")
+		game._process(1.0 / 60.0)
+		if f >= 600 - JANELA_DA_BANDA:
+			banda_estacao = maxf(banda_estacao, est_antes.distance_to(e.estacao("aliado")))
+			banda_media = maxf(banda_media, med_antes.distance_to(e._media_da_linha("aliado")))
+	_assert("F banda: a marcha própria da âncora cabe no teto da velocidade, a muralha assentou",
+		banda_estacao <= teto,
+		("maior passo natural %.4f u em %d quadros contra o teto de %.4f u (banda da média %.4f u)" % [
+			banda_estacao, JANELA_DA_BANDA, teto, banda_media]))
+	# O arranco: um núcleo salta 40,0 u em x. A régua antiga é lida antes e depois do tick porque é ela
+	# — não a estação — que ainda herda dos núcleos; a diferença entre as duas é o corte.
+	var nucleo: Node3D = game.fleet[0]["node"]
+	var pos_velha: Vector3 = nucleo.global_position
+	var formula_antes: Vector3 = e._estacao_derivada("aliado")
+	var antes := e.estacao("aliado")
+	var media_antes: Vector3 = e._media_da_linha("aliado")
+	nucleo.global_position = Vector3(pos_velha.x + 40.0, pos_velha.y, pos_velha.z)
+	game._process(1.0 / 60.0)
+	var depois := e.estacao("aliado")
+	var media_depois: Vector3 = e._media_da_linha("aliado")
+	var arranco_da_formula := formula_antes.distance_to(e._estacao_derivada("aliado"))
+	# Precondition, não enfeite: sem ela um quadro em que o casco já morreu (sai dos núcleos) deixaria
+	# os dois portões de arrasto verdes por falta de estímulo, não por falta de herança.
+	_assert("F precondition: o arranco chega de fato na régua antiga (a herança existe para ser cortada)",
+		arranco_da_formula >= 1.0,
+		("_estacao_derivada andou %.4f u com um nucleo a 40,0 u; sem estimulo medido o portao de baixo e vazio" % arranco_da_formula))
+	_assert("F frase do commander: arrancar um núcleo 40 u não empurra a estação para fora do teto do quadro",
+		antes.distance_to(depois) <= teto,
+		("estacao andou %.4f u no quadro do arranco contra o teto de %.4f u; a formula andou %.4f u e a banda natural e %.4f u" % [
+			antes.distance_to(depois), teto, arranco_da_formula, banda_estacao]))
+	_assert("F média: os blocos em custódia continuam colados na estação (ponto fixo da média)",
+		media_depois.distance_to(depois) <= 0.33,
+		("|média dos blocos - estação| = %.4f u no quadro depois do arranco" % [
+			media_depois.distance_to(depois)]))
+	_assert("F sem arrasto: a média dos blocos não seguiu o núcleo que saltou",
+		media_antes.distance_to(media_depois) <= teto,
+		("a média dos blocos andou %.4f u no quadro do arranco contra o teto de %.4f u (banda natural %.4f u)" % [
+			media_antes.distance_to(media_depois), teto, banda_media]))
+	game.queue_free()
 
 
 ## Distância entre duas AABBs de mundo: 0 se se encostam ou sobrepõem, senão a norma dos vãos por eixo.

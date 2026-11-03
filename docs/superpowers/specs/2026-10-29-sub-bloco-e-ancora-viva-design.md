@@ -16,6 +16,15 @@ clique, escala), `docs/superpowers/specs/2026-10-25-dano-por-casco-e-morte-visiv
 
 Três queixas, três causas, todas lidas no código antes de desenhar qualquer coisa:
 
+**Procedência das citações de `arquivo:linha` deste documento.** As seções 1, 3, 4 e 5 foram
+medidas no commit do próprio spec, `32ec664`. As tarefas 1–6 da lapidação 4 incharam o
+`esquadra.gd` (a `passo`, por exemplo, saiu de `:912` e hoje está em `:1328`) e as sondas
+(`tools/probes/esquadra.gd` cresceu com as famílias da peça e da âncora); o `main.gd` não se mexeu
+e as citações dele continuam exatas em HEAD. Onde o número drifted, o identificador é a pista
+estável — hoje `casa_local` está em `esquadra.gd:370`, `centros` em `:715`, `passo` em `:1328` e
+`pintar` em `:2031`. **As seções 2 e 6 foram re-medidas em HEAD na rodada de 2026-11-03** e os
+números delas valem contra o commit que fecha a tarefa 6.
+
 1. **Parece bloco único** porque o bloco tem UMA posição (`b["pos"]`, escrita em
    `esquadra.gd:961`) e as vinte e quatro casas são vinte e quatro deslocamentos rígidos dessa
    posição: `casa_local(c)` (`esquadra.gd:314-323`) é aritmética pura de índice e o
@@ -117,34 +126,58 @@ inteira A/B, não uma promessa de design.
 `estacao(lado)` para de derivar de `centros()` e passa a ser um `Vector3` por lado, escrito por
 integração:
 
-1. **Semeada na largada** exatamente onde a grade nasce hoje. `montar` (`esquadra.gd:579`) já faz
-   `centro_aliado = _centro_de(nucleos_aliados)` (`esquadra.gd:602`) e o recuo hostil sai de
-   `_recuo_alvo()` (`esquadra.gd:643-645`), que lê `centro_aliado.z - 2 * FACHADA_DA_MURALHA -
+1. **Semeada na largada** exatamente onde a grade nasce hoje. `montar` (`esquadra.gd:660`) já faz
+   `centro_aliado = _centro_de(nucleos_aliados)` (`esquadra.gd:683`) e o recuo hostil sai de
+   `_recuo_alvo()` (`esquadra.gd:821-823`), que lê `centro_aliado.z - 2 * FACHADA_DA_MURALHA -
    DISTANCIA_DE_CONTATO` contra `centro_hostil.z`, com `minf(0.0, ...)`. O quadro 0 é byte-idêntico
    ao de hoje, e é essa a asserção C da seção 6.
-2. **Persegue a média dos próprios blocos vivos que estão sob custódia da grade** — ficando de
-   fora os `com_destino` (`esquadra.gd:933`) e os que passam do limite da trela. É essa
-   exclusão que fecha a conta: um bloco que recebeu ordem do comandante e um bloco em rodízio
-   (`esquadra.gd:935-940`) saem da média, então a ordem não arrasta a muralha inteira.
-3. **Anda com `Voo.marchar` capped a `MARCHA_DE_BLOCO` 6,0 u/s** (`esquadra.gd:143`). O ponto fixo
-   é estável por construção: a média dos blocos que perseguem a estação é a estação, e um ponto
-   fixo de uma média não pode fugir de si mesmo.
+2. **O alvo é por lado e é explícito** (ruling R20, dada pelo comandante em 2026-11-03: *muralha
+   segue as capitânias*). Aliado: persegue `centros("aliado")`, o centro das seis capitânias vivas.
+   Hostil: persegue em `z` a cota da coleira de contato (`_cota_de_contato()`, `esquadra.gd:782`) e,
+   em `x`/`y`, a média dos próprios blocos vivos sob custódia da grade (`_media_da_linha()`,
+   `esquadra.gd:760`) — ficando de fora os `com_destino` (`esquadra.gd:764`) e os que passam
+   do limite da trela. É essa exclusão que fecha a conta: um bloco que recebeu ordem do comandante e
+   um bloco em rodízio (`esquadra.gd:765`) saem da média, então a ordem não arrasta a muralha
+   inteira. A conta é lida contra `_posto_de_custodia()` (`esquadra.gd:740`), o mesmo posto que
+   `passo` persegue — uma conta, dois leitores (ruling R19).
+3. **Anda com `Voo.marchar` capped a `MARCHA_DE_BLOCO` 6,0 u/s** (`esquadra.gd:171`, aplicada em
+   `_ancorar()` `esquadra.gd:795`). O cap é o que
+   paga o motor novo: uma capitânia arrancada 40,0 u desloca o alvo em `40 / ESQUADROES_NO_LADO` =
+   6,67 u, e a estação percorre isso em ~1,1 s de marcha — em vez de mover 120 postos no mesmo quadro,
+   que é a queixa original. Onde não há motor, a média estimada dos blocos continua sendo ponto fixo
+   por construção: a média dos blocos que perseguem a estação é a estação, e um ponto fixo de uma
+   média não pode fugir de si mesmo.
 
-Consequência de comando: **o avanço hostil deixa de ser herança e vira alvo explícito.** Hoje o
-hostil anda porque `estacao("hostil")` = `centros("hostil") + (0,0,recuo_hostil)`
-(`esquadra.gd:633-634`) e `recuo_hostil` encolhe sozinho conforme os núcleos avançam. Amanhã a
+Custo declarado da ruling R20: a muralha agora tem **dois corpos encadeados** na marcha — a âncora,
+que rampa, e o bloco, que persegue uma âncora que rampa. Um bloco largado do repouso atrás de uma
+âncora que também parte do repouso leva mais que os 2,0 s da sua própria rampa para chegar ao teto;
+a rampa de 2,0 s (`aceleracao` 3,0 u/s² a 6,0 u/s) passa a ser cobrada no corpo que a lei governa no
+topo da cadeia — a âncora — e o teto de passo por quadro continua cobrado no bloco.
+
+Consequência de comando: **o avanço hostil deixa de ser herança e vira alvo explícito.** No quadro
+do design, o hostil andava porque `estacao("hostil")` = `centros("hostil") + (0,0,recuo_hostil)`
+(a derivada que hoje mora aposentada em `_estacao_derivada()`, `esquadra.gd:724`) e `recuo_hostil`
+encolhia sozinho conforme os núcleos avançavam. Desde a tarefa 6, a
 estação hostil persegue a cota da coleira de contato — `estação_aliada.z - 2 * FACHADA_DA_MURALHA -
 DISTANCIA_DE_CONTATO` — e nada mais. Risco declarado, não escondido: **a família 10 da sonda
 precisa re-asserir a aproximação hostil, ou a muralha pára de marchar e o portão passa a provar um
-jogo que não anda.** O número que ela mede hoje está na régua de `FACHADA_DA_MURALHA` 10,5
-(`esquadra.gd:109`): travessia de 154,0 u para 40,0 u.
+jogo que não anda.** O número que ela mede está na régua de `FACHADA_DA_MURALHA` 10,5
+(`esquadra.gd:116`): travessia de 154,0 u de fachada inicial, e ela **para em 41,0 u** — um grão
+antes do contato de 40,0 u, na boca de `Voo.CAPTURA_DE_POUSO` que mata a velocidade. Medido na
+rodada de 2026-11-03, nas palavras do log: `1275 quadros (21.3 s de tela) para cruzar as 113.0 u:
+maior passo de um bloco em 0.1000 u, teto 0.1000 u` e `a travessia para no contato: nunca encosta,
+nunca atravessa — fachada final 41.0 u em 1275 quadros (minima vista 41.0 u, contato 40 u,
+alcance 73 u)` (`tools/probes/esquadra.gd`, família 10). O corte da herança é o que a sonda `peca`
+crava: `_estacao_derivada andou 6.6667 u com um nucleo a 40,0 u` contra
+`estacao andou 0.0008 u no quadro do arranco contra o teto de 0.1200 u`, e o quadro zero byte-idêntico
+é `aliado (0.0, 0.173831, -40.5) / hostil (0.0, 0.151686, -215.263)`.
 
 `centros()` continua existindo e continua sendo a régua dos núcleos, porque há leitores que querem
 exatamente isso: `main.gd:1976` e `main.gd:2033` (leitura de escala do HUD),
-`tools/probes/esquadra.gd:952` (`sep_nucleos`), `tools/probes/massa_visivel.gd:669` e `:763`
-(estacionam a `bridge_rig` sobre `centro_aliado`). Nove chamadas a `estacao()` nas sondas
-(`tools/probes/comando.gd:255,413,459`, `tools/probes/esquadra.gd:552,594,595,972,1880`,
-`tools/probes/massa_visivel.gd:227`) passam a ler
+`tools/probes/esquadra.gd:956` (`sep_nucleos`), `tools/probes/massa_visivel.gd:703` e `:797`
+(estacionam a `bridge_rig` sobre `centro_aliado`). Dezessete chamadas a `estacao()` em quatro sondas
+(`tools/probes/comando.gd:255,413,459`, `tools/probes/esquadra.gd:556,598,599,983,1588,1610,1918`,
+`tools/probes/massa_visivel.gd:239`, `tools/probes/peca.gd:653,656,663,667,678,682`) passam a ler
 estado em vez de derivada — valor igual na largada, divergente depois, e é essa divergência
 controlada que o comandante pediu.
 
@@ -297,7 +330,7 @@ Sonda nova `tools/probes/peca.gd`, oito famílias:
 
 As sete sondas que tocam essas leis de frente — `batalha_real`, `casas`, `cenarios`, `comando`,
 `esquadra`, `estrela`, `massa_visivel` — mais `fotograma` e `comando_olho` descem um degrau:
-**declaram a precondition no criador do estado** (`montar` `esquadra.gd:579` e o laço de peças),
+**declaram a precondition no criador do estado** (`montar` `esquadra.gd:660` e o laço de peças),
 nunca afrouxam a tolerância. É a regra medida na fatia 3, quando doze sondas foram «consertadas» na
 montagem e voltaram vermelhas porque o estado era rearmado no construtor.
 

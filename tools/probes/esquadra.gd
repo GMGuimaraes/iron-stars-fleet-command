@@ -207,7 +207,7 @@ const TRACO_PULSO := FASE_HOSTIL + 0.012 * 23.0 + 0.55
 ## Espelhos da deriva de custódia (família 13). A folga não é afrouxamento: é o atraso com que o
 ## bloco persegue um posto que anda a ~0,4 u/s, medido e impresso na asserção.
 const FOLGA_DERIVA := 0.35
-## A folga com que `Esquadra.pintar` decide regravar um bloco: `esquadra.gd:925` compara a posição com
+## A folga com que `Esquadra.pintar` decide regravar um bloco: `esquadra.gd:2040` compara a posição com
 ## a última pintada e só escreve quem passou de 0,01 u (é o `0.0001` do quadrado da distância). É a
 ## régua que separa a muralha que anda da muralha que respira: uma anda 0,05 u por quadro e paga todo
 ## quadro, outra anda 0,007 u e paga a cada dois.
@@ -968,8 +968,15 @@ func _initialize() -> void:
 	# O contrafactual do recuo: a grade, sozinha, NAO faz campo. Sem estacao recuada as fachadas
 	# nascem a ~24 u — menos que o proprio contato — e o pedido ("um espaco grande a ser cruzado")
 	# voltaria a ser um acaso de layout, pago com muro contra muro.
+	#
+	# A declinação tem de ser feita na estação, não no recuo: desde a ruling R19 ela é ESTADO semeado
+	# em `montar`, e tocar só `recuo_hostil` não movia nada — medido em `r19/esquadra.log`, o
+	# contrafactual devolveu os 154,0 u da própria largada e a asserção provou o vazio. Resemear pela
+	# fórmula antiga (`_estacao_derivada`) é o que faz o "recuo zero" ser o mundo anterior, que é o
+	# contrafactual pedido, e devolve o número que a lei de antes media.
 	var cf := _nova_esquadra()
 	cf.recuo_hostil = 0.0
+	cf._estacao["hostil"] = cf._estacao_derivada("hostil")
 	for lado_cf in ["aliado", "hostil"]:
 		for b in cf.lista_de(lado_cf):
 			b["pos"] = Esquadra.posto_no_lado(int(b["esquadrao"]), int(b["formacao"]),
@@ -1311,9 +1318,11 @@ func _initialize() -> void:
 		# o passo do bloco é menor que a folga de pintura (`esquadra.gd` só regrava quem andou mais
 		# de 0,01 u), então um quadro de arranque baratinho é a lei funcionando, não uma frota parada.
 		# Fim da rampa de arranque: o primeiro quadro em que a MARCHA paga os cento e vinte blocos que
-		# ela empurra. A estação hostil desta janela é fixa, então quem ali só respira anda menos de
-		# 0,01 u por quadro e regrava a cada dois quadros — cobrar o pleno dos dois lados era cobrar
-		# uma frota que teleporta. O atraso de tela dessa muralha tem régua própria, logo abaixo.
+		# ela empurra. A régua é o lado que a alavanca dirige (o aliado, que persegue a linha a 0,05 u
+		# por quadro desde a ruling R20). A muralha hostil desta janela também anda — ela persegue a
+		# cota da coleira e pagou 23 160 escritas de um teto de 24 000 na rodada r20 — mas o pé dela é
+		# o da própria travessia, não o da alavanca, e cobrar o pleno dos dois no mesmo quadro era
+		# cobrar uma frota que teleporta. O que se cobra dela tem régua própria, logo abaixo.
 		if tocou_a == BLOCOS_POR_LADO:
 			if quadro_pleno < 0:
 				quadro_pleno = w + 1
@@ -1370,9 +1379,10 @@ func _initialize() -> void:
 	# baratos por construção. O portão passa a ser o regime, não a soma: nenhum dos dois lados pode
 	# escrever mais que um por bloco por quadro, e a partir do primeiro quadro pleno a MARCHA paga os
 	# cento e vinte blocos da muralha que anda em todo quadro, sem buraco no meio do caminho. A
-	# muralha hostil desta janela não anda — ela respira, a estação dela é fixa — e por isso não paga
-	# o pleno: o que se cobra dela é a régua de atraso de tela e o teto de custo do caminho, logo
-	# abaixo. Cobrar o pleno dos dois lados era cobrar uma frota que teleporta o traço.
+	# muralha hostil desta janela anda de verdade — persegue a cota da coleira desde a ruling R19/R20 —
+	# mas o pé dela é o da travessia própria, não o da alavanca, então o que se cobra dela é a régua de
+	# atraso de tela e o teto de custo do caminho, logo abaixo. Cobrar o pleno dos dois lados no mesmo
+	# quadro era cobrar uma frota que teleporta o traço.
 	_assert("nenhum lado escreve mais que um por bloco em um quadro",
 		escritas_aliado <= QUADROS * BLOCOS_POR_LADO \
 			and escritas_hostil <= QUADROS * BLOCOS_POR_LADO,
@@ -1384,10 +1394,10 @@ func _initialize() -> void:
 				quadro_pleno, rampa_de_arranque, parcos_na_rampa, paros_depois])
 				+ ("%d escritas no total; " % escritas) + parcos_lidos)
 	# A régua que fica quando o pleno sai de cena: a TELA não pode atrasar da POSIÇÃO VERDADEIRA, e a
-	# folha é a própria cláusula do módulo — `esquadra.gd:925` pula a escrita só quando o bloco já está a
-	# menos de um centésimo do traço pintado. Um bloco que respira anda 0,007 u no quadro de ponta e
-	# regrava a cada dois quadros; em nenhum instante o traço se afasta do mundo mais que a folga, e é
-	# isso — não folga mais um passo — que a janela precisa provar.
+	# folha é a própria cláusula do módulo — `Esquadra.pintar` (`esquadra.gd:2040`) pula a escrita só
+	# quando o bloco já está a menos de um centésimo do traço pintado. Um bloco que respira anda 0,007 u
+	# no quadro de ponta e regrava a cada dois quadros; em nenhum instante o traço se afasta do mundo
+	# mais que a folga, e é isso — não folga mais um passo — que a janela precisa provar.
 	_assert("a pintura nunca fica mais que uma folga atras da muralha: a clausula do modulo em acao",
 		desvio_pintura <= FOLGA_DE_PINTURA + FOLGA_PASSO,
 			"maior atraso de tela %.5f u contra a folga de pintura %.2f u (margem %.5f); passo de um quadro: " % [
@@ -1395,8 +1405,10 @@ func _initialize() -> void:
 				+ "aliado %.5f u, hostil %.5f u; hostil pagou %d escritas em %d quadros" % [
 					passo_max, passo_max_h, escritas_hostil, QUADROS])
 	# E o custo, agora com a origem: entre duas escritas de um bloco o caminho andado tem de passar da
-	# folga, senao a segunda escrita nao teria motivo. Da soma dos caminhos sai o teto do lote parado.
-	_assert("a muralha que so respira paga no maximo o caminho pela folga de pintura",
+	# folga, senao a segunda escrita nao teria motivo. Da soma dos caminhos sai o teto, e a conta vale
+	# para a muralha que anda e para a que só respira — é a cláusula do módulo, não uma tese sobre o
+	# repouso.
+	_assert("a muralha hostil paga no maximo o caminho andado pela folga de pintura",
 		escritas_hostil <= int(curso_hostil / FOLGA_DE_PINTURA) + BLOCOS_POR_LADO,
 			"%d escritas hostis contra %.1f u andados / %.2f de folga + %d do primeiro quadro" % [
 				escritas_hostil, curso_hostil, FOLGA_DE_PINTURA, BLOCOS_POR_LADO])
@@ -1561,8 +1573,19 @@ func _initialize() -> void:
 	var passo_60 := 0.0
 	var passo_120 := 0.0
 	var quadro_do_teto := -1
+	# A rampa é cobrada na ÂNCORA, e o passo por quadro continua no bloco. Desde a ruling R19/R20 a
+	# estação é estado e persegue a cota com o mesmo `Voo.marchar` e a mesma ficha do bloco; o bloco
+	# atrás dela corre um segundo perseguimento. Medido em `r20/esquadra.log`, o bloco da fileira batia
+	# o teto no quadro 710 e andava 0,06479 u no quadro 120 — a marcha correta de um corpo que segue
+	# outro corpo que está arrancando. Cobrar os 2,0 s no bloco era cobrar a lei no degrau errado da
+	# cadeia. Os dois corpos saem impressos, o número pedido é o mesmo, e nenhuma folga mudou.
+	var ancora_1 := 0.0
+	var ancora_60 := 0.0
+	var ancora_120 := 0.0
+	var quadro_teto_ancora := -1
 	var mf := 0
 	while mf < QUADROS_DA_TRAVESSIA and menor_fachada > Esquadra.DISTANCIA_DE_CONTATO + FOLGA_CONTATO:
+		var ancora_antes: Vector3 = t.estacao("hostil")
 		var antes: Array = []
 		for b in t.lista_de("hostil"):
 			antes.append(b["pos"])
@@ -1572,8 +1595,8 @@ func _initialize() -> void:
 		for b in t.lista_de("hostil"):
 			var passo := (b["pos"] as Vector3).distance_to(antes[ki] as Vector3)
 			salto_max = maxf(salto_max, passo)
-			# O bloco 0 é o da fileira: é dele que se lê a rampa, porque é o único que nunca teve
-			# razão para mudar de curso no meio da travessia.
+			# O bloco 0 é o da fileira: é dele que se lê o passo do caminho, porque é o único que nunca
+			# teve razão para mudar de curso no meio da travessia.
 			if ki == 0:
 				if mf == 1:
 					passo_1 = passo
@@ -1584,6 +1607,15 @@ func _initialize() -> void:
 				if quadro_do_teto < 0 and passo >= SALTO_MAXIMO - FOLGA_PASSO:
 					quadro_do_teto = mf
 			ki += 1
+		var ancora_passo := ancora_antes.distance_to(t.estacao("hostil"))
+		if mf == 1:
+			ancora_1 = ancora_passo
+		elif mf == 60:
+			ancora_60 = ancora_passo
+		elif mf == 120:
+			ancora_120 = ancora_passo
+		if quadro_teto_ancora < 0 and ancora_passo >= SALTO_MAXIMO - FOLGA_PASSO:
+			quadro_teto_ancora = mf
 		menor_fachada = minf(menor_fachada, _fachadas(t))
 	_assert("a marcha nao salta: o maior deslocamento de um bloco em um quadro e o passo da marcha",
 		salto_max <= SALTO_MAXIMO + FOLGA_PASSO,
@@ -1591,14 +1623,16 @@ func _initialize() -> void:
 			mf, float(mf) / 60.0, fachada - menor_fachada, salto_max, SALTO_MAXIMO])
 	# A rampa é lei, não desenho: `vel` anda `a × delta` por quadro e a posição anda `vel × delta`,
 	# então o quadro 1 vale `a × delta²`, o 60 meia marcha e o 120 a marcha inteira. Três pontos e o
-	# instante em que a reta para de crescer: sem a lei, o quadro um já daria o passo do teto.
-	_assert("o arranque da massa e linear e dura 2,0 s: a x delta² no quadro 1, meio teto no 60, teto no 120",
-		absf(passo_1 - PASSO_DO_ARRANQUE) < FOLGA_PASSO \
-			and absf(passo_60 - SALTO_MAXIMO * 0.5) < FOLGA_PASSO \
-			and absf(passo_120 - SALTO_MAXIMO) < FOLGA_PASSO and quadro_do_teto == 120,
-		"quadro 1 anda %.5f u (arranque %.5f), quadro 60 anda %.5f u (meio teto %.5f), quadro 120 anda %.5f u, teto em %d" % [
-			passo_1, PASSO_DO_ARRANQUE, passo_60,
-			SALTO_MAXIMO * 0.5, passo_120, quadro_do_teto])
+	# instante em que a reta para de crescer: sem a lei, o quadro um já daria o passo do teto. Quem
+	# arranca é a âncora (a estação tem motor desde a ruling R19/R20); o bloco é lido junto, no mesmo
+	# pé, para a cadeia sair da janela em vez de virar número sem origem.
+	_assert("o arranque da muralha e linear e dura 2,0 s: a x delta² no quadro 1, meio teto no 60, teto no 120",
+		absf(ancora_1 - PASSO_DO_ARRANQUE) < FOLGA_PASSO \
+			and absf(ancora_60 - SALTO_MAXIMO * 0.5) < FOLGA_PASSO \
+			and absf(ancora_120 - SALTO_MAXIMO) < FOLGA_PASSO and quadro_teto_ancora == 120,
+		"ancora: quadro 1 anda %.5f u (arranque %.5f), quadro 60 anda %.5f u (meio teto %.5f), quadro 120 anda %.5f u, teto em %d | bloco da fileira: %.5f / %.5f / %.5f u, teto em %d" % [
+			ancora_1, PASSO_DO_ARRANQUE, ancora_60, SALTO_MAXIMO * 0.5, ancora_120,
+			quadro_teto_ancora, passo_1, passo_60, passo_120, quadro_do_teto])
 	_assert("a travessia para no contato: nunca encosta, nunca atravessa",
 			absf(_fachadas(t) - Esquadra.DISTANCIA_DE_CONTATO) < FOLGA_CONTATO \
 				and menor_fachada >= Esquadra.DISTANCIA_DE_CONTATO - FOLGA_CONTATO,
