@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "command": "validate",
+  "ok": true,
+  "data": {
+    "valid": true,
+    "profile": "qoder-glb-safe",
+    "counts": {
+      "bytes": 13280,
+      "scenes": 1,
+      "nodes": 5,
+      "meshes": 4,
+      "primitives": 4,
+      "vertices": 312,
+      "triangles": 224,
+      "materials": 2,
+      "textures": 0,
+      "animations": 0,
+      "animationTracks": 0,
+      "keyframes": 0,
+      "animationDurationSeconds": 0
+    },
+    "diagnostics": [],
+    "validator": {
+      "errors": 0,
+      "warnings": 0,
+      "infos": 0,
+      "hints": 0
+    }
+  }
+}

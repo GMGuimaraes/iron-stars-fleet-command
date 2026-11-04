@@ -1,0 +1,511 @@
+{
+  "schema": "modeling.program",
+  "schemaVersion": 1,
+  "kind": "model.create",
+  "intent": "casco piloto da muralha: mesmo envelope da réplica, superfície lavrada",
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "time": "s"
+  },
+  "coordinateSystem": {
+    "handedness": "right",
+    "upAxis": "y",
+    "forwardAxis": "z"
+  },
+  "spatialEnvelope": {
+    "min": [
+      -1.8235,
+      -0.5,
+      -2.7
+    ],
+    "max": [
+      1.8235,
+      0.57,
+      2.3
+    ],
+    "tolerance": 0.005
+  },
+  "requires": [
+    "modeling.feature.axis",
+    "modeling.feature.beveled-box",
+    "modeling.feature.box",
+    "modeling.feature.loft",
+    "modeling.pattern.mirror",
+    "modeling.scene",
+    "modeling.spatial-envelope"
+  ],
+  "parameters": [],
+  "operations": [
+    {
+      "op": "appearance.define",
+      "opKey": "casco.aco",
+      "key": "casco.aco",
+      "baseColor": "#5A6472",
+      "metallic": 0.8,
+      "roughness": 0.35,
+      "emissive": "#000000"
+    },
+    {
+      "op": "appearance.define",
+      "opKey": "acabamento.torre",
+      "key": "acabamento.torre",
+      "baseColor": "#454E5C",
+      "metallic": 0.7,
+      "roughness": 0.45,
+      "emissive": "#000000"
+    },
+    {
+      "op": "feature.define",
+      "opKey": "casco.corpo.feature",
+      "key": "casco.corpo.feature",
+      "feature": {
+        "type": "profile.loft",
+        "sections": [
+          {
+            "offset": -1.5,
+            "profile": [
+              [
+                0.6,
+                0
+              ],
+              [
+                0.4243,
+                0.1768
+              ],
+              [
+                0,
+                0.25
+              ],
+              [
+                -0.4243,
+                0.1768
+              ],
+              [
+                -0.6,
+                0
+              ],
+              [
+                -0.4243,
+                -0.1768
+              ],
+              [
+                0,
+                -0.25
+              ],
+              [
+                0.4243,
+                -0.1768
+              ]
+            ]
+          },
+          {
+            "offset": 0.3,
+            "profile": [
+              [
+                0.6,
+                0
+              ],
+              [
+                0.4243,
+                0.1768
+              ],
+              [
+                0,
+                0.25
+              ],
+              [
+                -0.4243,
+                0.1768
+              ],
+              [
+                -0.6,
+                0
+              ],
+              [
+                -0.4243,
+                -0.1768
+              ],
+              [
+                0,
+                -0.25
+              ],
+              [
+                0.4243,
+                -0.1768
+              ]
+            ]
+          },
+          {
+            "offset": 1.5,
+            "profile": [
+              [
+                0.75,
+                0.02
+              ],
+              [
+                0.5303,
+                0.2321
+              ],
+              [
+                0,
+                0.32
+              ],
+              [
+                -0.5303,
+                0.2321
+              ],
+              [
+                -0.75,
+                0.02
+              ],
+              [
+                -0.5303,
+                -0.1921
+              ],
+              [
+                0,
+                -0.28
+              ],
+              [
+                0.5303,
+                -0.1921
+              ]
+            ]
+          },
+          {
+            "offset": 2.3,
+            "profile": [
+              [
+                0.75,
+                0.02
+              ],
+              [
+                0.5303,
+                0.2321
+              ],
+              [
+                0,
+                0.32
+              ],
+              [
+                -0.5303,
+                0.2321
+              ],
+              [
+                -0.75,
+                0.02
+              ],
+              [
+                -0.5303,
+                -0.1921
+              ],
+              [
+                0,
+                -0.28
+              ],
+              [
+                0.5303,
+                -0.1921
+              ]
+            ]
+          }
+        ],
+        "axis": "z"
+      }
+    },
+    {
+      "op": "component.define",
+      "opKey": "casco.corpo.component",
+      "key": "casco.corpo.component",
+      "feature": "casco.corpo.feature",
+      "appearance": "casco.aco"
+    },
+    {
+      "op": "occurrence.define",
+      "opKey": "casco.corpo",
+      "key": "casco.corpo",
+      "name": "HullBody",
+      "component": "casco.corpo.component",
+      "transform": {
+        "translation": [
+          0,
+          0,
+          0
+        ],
+        "rotationRad": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "op": "feature.define",
+      "opKey": "casco.proa.feature",
+      "key": "casco.proa.feature",
+      "feature": {
+        "type": "profile.loft",
+        "sections": [
+          {
+            "offset": -2.7,
+            "profile": [
+              [
+                0.06,
+                0
+              ],
+              [
+                0.0424,
+                0.0424
+              ],
+              [
+                0,
+                0.06
+              ],
+              [
+                -0.0424,
+                0.0424
+              ],
+              [
+                -0.06,
+                0
+              ],
+              [
+                -0.0424,
+                -0.0424
+              ],
+              [
+                0,
+                -0.06
+              ],
+              [
+                0.0424,
+                -0.0424
+              ]
+            ]
+          },
+          {
+            "offset": -2.1,
+            "profile": [
+              [
+                0.5,
+                0
+              ],
+              [
+                0.3536,
+                0.3536
+              ],
+              [
+                0,
+                0.5
+              ],
+              [
+                -0.3536,
+                0.3536
+              ],
+              [
+                -0.5,
+                0
+              ],
+              [
+                -0.3536,
+                -0.3536
+              ],
+              [
+                0,
+                -0.5
+              ],
+              [
+                0.3536,
+                -0.3536
+              ]
+            ]
+          },
+          {
+            "offset": -1.5,
+            "profile": [
+              [
+                0.6,
+                0
+              ],
+              [
+                0.4243,
+                0.1768
+              ],
+              [
+                0,
+                0.25
+              ],
+              [
+                -0.4243,
+                0.1768
+              ],
+              [
+                -0.6,
+                0
+              ],
+              [
+                -0.4243,
+                -0.1768
+              ],
+              [
+                0,
+                -0.25
+              ],
+              [
+                0.4243,
+                -0.1768
+              ]
+            ]
+          }
+        ],
+        "axis": "z"
+      }
+    },
+    {
+      "op": "component.define",
+      "opKey": "casco.proa.component",
+      "key": "casco.proa.component",
+      "feature": "casco.proa.feature",
+      "appearance": "casco.aco"
+    },
+    {
+      "op": "occurrence.define",
+      "opKey": "casco.proa",
+      "key": "casco.proa",
+      "name": "HullBow",
+      "component": "casco.proa.component",
+      "transform": {
+        "translation": [
+          0,
+          0,
+          0
+        ],
+        "rotationRad": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "op": "feature.define",
+      "opKey": "casco.torre.feature",
+      "key": "casco.torre.feature",
+      "feature": {
+        "type": "primitive.beveled-box",
+        "size": [
+          0.6,
+          0.3,
+          1.9
+        ],
+        "bevelRadius": 0.06,
+        "bevelSegments": 1
+      }
+    },
+    {
+      "op": "component.define",
+      "opKey": "casco.torre.component",
+      "key": "casco.torre.component",
+      "feature": "casco.torre.feature",
+      "appearance": "acabamento.torre"
+    },
+    {
+      "op": "occurrence.define",
+      "opKey": "casco.torre",
+      "key": "casco.torre",
+      "name": "BridgeTower",
+      "component": "casco.torre.component",
+      "transform": {
+        "translation": [
+          0,
+          0.42,
+          -0.4
+        ],
+        "rotationRad": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "op": "feature.define",
+      "opKey": "casco.asa.bombordo.feature",
+      "key": "casco.asa.bombordo.feature",
+      "feature": {
+        "type": "primitive.box",
+        "size": [
+          1,
+          0.12,
+          1.8
+        ]
+      }
+    },
+    {
+      "op": "component.define",
+      "opKey": "casco.asa.bombordo.component",
+      "key": "casco.asa.bombordo.component",
+      "feature": "casco.asa.bombordo.feature",
+      "appearance": "casco.aco"
+    },
+    {
+      "op": "occurrence.define",
+      "opKey": "casco.asa.bombordo",
+      "key": "casco.asa.bombordo",
+      "name": "PortWing",
+      "component": "casco.asa.bombordo.component",
+      "transform": {
+        "translation": [
+          -1,
+          -0.02,
+          0.6
+        ],
+        "rotationRad": [
+          0,
+          -0.42,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "op": "pattern.define",
+      "opKey": "casco.asa.boreste",
+      "key": "casco.asa.boreste",
+      "source": "casco.asa.bombordo",
+      "pattern": {
+        "type": "mirror",
+        "axis": "x",
+        "offset": 0
+      }
+    }
+  ],
+  "budget": {
+    "maxBytes": 13280,
+    "maxNodes": 5,
+    "maxVertices": 312,
+    "maxTriangles": 224,
+    "maxOperations": 15,
+    "maxGeneratedInstances": 5
+  }
+}
