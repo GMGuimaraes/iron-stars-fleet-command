@@ -1,8 +1,10 @@
 extends SceneTree
 
-## Fábrica de referências visuais para a modelagem 3D assistida. O Meshy (image-to-3D) só conhece o
-## que aparece no PNG: se a foto for escura, torto ou com o casco pequeno demais no quadro, o GLB
-## vem borrado e a culpa é do material de leitura, não do modelo. Esta sonda fotografa a réplica
+## Fábrica de referências visuais para a modelagem 3D assistida. A rota da casa é offline
+## (`tools/gen3d/local/solution.mjs`, gerada pelo `modeling-glb` do plugin), e a régua continua a
+## mesma: quem lê silhueta — serviço, humano ou comparador automático — só conhece o que aparece no
+## PNG: se a foto for escura, torto ou com o casco pequeno demais no quadro, o corpo vem borrado e a
+## culpa é do material de leitura, não do modelo. Esta sonda fotografa a réplica
 ## isolada — a MESMA malha que o `MultiMesh` da muralha replica 2 880 vezes — sobre fundo chato, com
 ## luz par e moldura derivada da caixa medida do próprio corpo.
 ##
@@ -16,8 +18,8 @@ extends SceneTree
 ##
 ## Uso:
 ##   godot --path . --quit-after 4000 -s res://tools/probes/ref3d_replica.gd
-## Os PNGs saem em `OUT`, um por vista, com o nome da vista no arquivo. É o material que o
-## `tools/gen3d/meshy.mjs` mastiga.
+## Os PNGs saem em `OUT`, um por vista, com o nome da vista no arquivo. É o que `tools/gen3d/aceite.sh`
+## conta pelo IHDR e o que o olho compara contra o casco lavrado quando a silhueta precisa de juízo.
 
 const OUT := "D:/Downloads/tmp-userdata-iron/ref3d/"
 ## Lado do quadro pedido à tela. Se a janela sair cortada, o laço de leitura pede de novo o menor
@@ -26,8 +28,8 @@ const OUT := "D:/Downloads/tmp-userdata-iron/ref3d/"
 const LADO_QUADRO := 900
 const FOV := 35.0
 ## Folga entre a caixa projetada e a borda do quadro. Apertar a moldura economiza pixels e custa o
-## modelo: o extrator de silhueta do serviço lê a borda do objeto, e uma asa encostada no corte vira
-## corpo cortado.
+## modelo: quem lê silhueta trava na borda do objeto, e uma asa encostada no corte vira corpo
+## cortado.
 const FOLGA := 1.12
 ## Pisos da silhueta. A régua dominante é o **vão do corpo no quadro**, não a área acesa: a réplica é
 ## delgada por construção (5,0 u de comprimento por 1,07 u de boca), então contar pixel aceso cobra do
@@ -38,7 +40,7 @@ const FOLGA := 1.12
 ## caixa com FOV e FOLGA abaixo, medido na linha `CONTA` da mesma sonda. A vista que prende é a
 ## frontal, com vão previsto de 53,9% do lado; as outras quatro ficam entre 55,8% e 75,2%. O piso em
 ## 45% deixa nove pontos de margem contra deriva de geometria e ainda exige que o casco atravesse
-## metade do quadro — que é o que o extrator de silhueta do serviço lê. Se a malha mudar e a conta
+## metade do quadro — que é o que a leitura de silhueta come. Se a malha mudar e a conta
 ## cair abaixo daqui, o conserto é mexer na moldura (FOV/FOLGA), nunca neste piso: afrouxar a régua é
 ## desligar a asserção com passos de fantasia.
 const VAO_DOMINANTE := 0.45
