@@ -1,0 +1,564 @@
+{
+  "schema": "modeling.program",
+  "schemaVersion": 1,
+  "kind": "model.create",
+  "intent": "capitânia da vitrine: casco lavrado do piloto mais o mastro dourado do tabuleiro",
+  "units": {
+    "length": "m",
+    "angle": "rad",
+    "time": "s"
+  },
+  "coordinateSystem": {
+    "handedness": "right",
+    "upAxis": "y",
+    "forwardAxis": "z"
+  },
+  "spatialEnvelope": {
+    "min": [
+      -1.8235,
+      -0.5,
+      -2.7
+    ],
+    "max": [
+      1.8235,
+      1.187,
+      2.3
+    ],
+    "tolerance": 0.005
+  },
+  "requires": [
+    "modeling.feature.axis",
+    "modeling.feature.beveled-box",
+    "modeling.feature.box",
+    "modeling.feature.loft",
+    "modeling.pattern.mirror",
+    "modeling.scene",
+    "modeling.spatial-envelope"
+  ],
+  "parameters": [],
+  "operations": [
+    {
+      "op": "appearance.define",
+      "opKey": "casco.aco",
+      "key": "casco.aco",
+      "baseColor": "#5A6472",
+      "metallic": 0.8,
+      "roughness": 0.35,
+      "emissive": "#000000"
+    },
+    {
+      "op": "appearance.define",
+      "opKey": "acabamento.torre",
+      "key": "acabamento.torre",
+      "baseColor": "#454E5C",
+      "metallic": 0.7,
+      "roughness": 0.45,
+      "emissive": "#000000"
+    },
+    {
+      "op": "appearance.define",
+      "opKey": "acabamento.mastro",
+      "key": "acabamento.mastro",
+      "baseColor": "#C8A24A",
+      "metallic": 0.9,
+      "roughness": 0.25,
+      "emissive": "#000000"
+    },
+    {
+      "op": "feature.define",
+      "opKey": "capitania.corpo.feature",
+      "key": "capitania.corpo.feature",
+      "feature": {
+        "type": "profile.loft",
+        "sections": [
+          {
+            "offset": -1.5,
+            "profile": [
+              [
+                0.6,
+                0
+              ],
+              [
+                0.4243,
+                0.1768
+              ],
+              [
+                0,
+                0.25
+              ],
+              [
+                -0.4243,
+                0.1768
+              ],
+              [
+                -0.6,
+                0
+              ],
+              [
+                -0.4243,
+                -0.1768
+              ],
+              [
+                0,
+                -0.25
+              ],
+              [
+                0.4243,
+                -0.1768
+              ]
+            ]
+          },
+          {
+            "offset": 0.3,
+            "profile": [
+              [
+                0.6,
+                0
+              ],
+              [
+                0.4243,
+                0.1768
+              ],
+              [
+                0,
+                0.25
+              ],
+              [
+                -0.4243,
+                0.1768
+              ],
+              [
+                -0.6,
+                0
+              ],
+              [
+                -0.4243,
+                -0.1768
+              ],
+              [
+                0,
+                -0.25
+              ],
+              [
+                0.4243,
+                -0.1768
+              ]
+            ]
+          },
+          {
+            "offset": 1.5,
+            "profile": [
+              [
+                0.75,
+                0.02
+              ],
+              [
+                0.5303,
+                0.2321
+              ],
+              [
+                0,
+                0.32
+              ],
+              [
+                -0.5303,
+                0.2321
+              ],
+              [
+                -0.75,
+                0.02
+              ],
+              [
+                -0.5303,
+                -0.1921
+              ],
+              [
+                0,
+                -0.28
+              ],
+              [
+                0.5303,
+                -0.1921
+              ]
+            ]
+          },
+          {
+            "offset": 2.3,
+            "profile": [
+              [
+                0.75,
+                0.02
+              ],
+              [
+                0.5303,
+                0.2321
+              ],
+              [
+                0,
+                0.32
+              ],
+              [
+                -0.5303,
+                0.2321
+              ],
+              [
+                -0.75,
+                0.02
+              ],
+              [
+                -0.5303,
+                -0.1921
+              ],
+              [
+                0,
+                -0.28
+              ],
+              [
+                0.5303,
+                -0.1921
+              ]
+            ]
+          }
+        ],
+        "axis": "z"
+      }
+    },
+    {
+      "op": "component.define",
+      "opKey": "capitania.corpo.component",
+      "key": "capitania.corpo.component",
+      "feature": "capitania.corpo.feature",
+      "appearance": "casco.aco"
+    },
+    {
+      "op": "occurrence.define",
+      "opKey": "capitania.corpo",
+      "key": "capitania.corpo",
+      "name": "HullBody",
+      "component": "capitania.corpo.component",
+      "transform": {
+        "translation": [
+          0,
+          0,
+          0
+        ],
+        "rotationRad": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "op": "feature.define",
+      "opKey": "capitania.proa.feature",
+      "key": "capitania.proa.feature",
+      "feature": {
+        "type": "profile.loft",
+        "sections": [
+          {
+            "offset": -2.7,
+            "profile": [
+              [
+                0.06,
+                0
+              ],
+              [
+                0.0424,
+                0.0424
+              ],
+              [
+                0,
+                0.06
+              ],
+              [
+                -0.0424,
+                0.0424
+              ],
+              [
+                -0.06,
+                0
+              ],
+              [
+                -0.0424,
+                -0.0424
+              ],
+              [
+                0,
+                -0.06
+              ],
+              [
+                0.0424,
+                -0.0424
+              ]
+            ]
+          },
+          {
+            "offset": -2.1,
+            "profile": [
+              [
+                0.5,
+                0
+              ],
+              [
+                0.3536,
+                0.3536
+              ],
+              [
+                0,
+                0.5
+              ],
+              [
+                -0.3536,
+                0.3536
+              ],
+              [
+                -0.5,
+                0
+              ],
+              [
+                -0.3536,
+                -0.3536
+              ],
+              [
+                0,
+                -0.5
+              ],
+              [
+                0.3536,
+                -0.3536
+              ]
+            ]
+          },
+          {
+            "offset": -1.5,
+            "profile": [
+              [
+                0.6,
+                0
+              ],
+              [
+                0.4243,
+                0.1768
+              ],
+              [
+                0,
+                0.25
+              ],
+              [
+                -0.4243,
+                0.1768
+              ],
+              [
+                -0.6,
+                0
+              ],
+              [
+                -0.4243,
+                -0.1768
+              ],
+              [
+                0,
+                -0.25
+              ],
+              [
+                0.4243,
+                -0.1768
+              ]
+            ]
+          }
+        ],
+        "axis": "z"
+      }
+    },
+    {
+      "op": "component.define",
+      "opKey": "capitania.proa.component",
+      "key": "capitania.proa.component",
+      "feature": "capitania.proa.feature",
+      "appearance": "casco.aco"
+    },
+    {
+      "op": "occurrence.define",
+      "opKey": "capitania.proa",
+      "key": "capitania.proa",
+      "name": "HullBow",
+      "component": "capitania.proa.component",
+      "transform": {
+        "translation": [
+          0,
+          0,
+          0
+        ],
+        "rotationRad": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "op": "feature.define",
+      "opKey": "capitania.torre.feature",
+      "key": "capitania.torre.feature",
+      "feature": {
+        "type": "primitive.beveled-box",
+        "size": [
+          0.6,
+          0.3,
+          1.9
+        ],
+        "bevelRadius": 0.06,
+        "bevelSegments": 1
+      }
+    },
+    {
+      "op": "component.define",
+      "opKey": "capitania.torre.component",
+      "key": "capitania.torre.component",
+      "feature": "capitania.torre.feature",
+      "appearance": "acabamento.torre"
+    },
+    {
+      "op": "occurrence.define",
+      "opKey": "capitania.torre",
+      "key": "capitania.torre",
+      "name": "BridgeTower",
+      "component": "capitania.torre.component",
+      "transform": {
+        "translation": [
+          0,
+          0.42,
+          -0.4
+        ],
+        "rotationRad": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "op": "feature.define",
+      "opKey": "capitania.asa.bombordo.feature",
+      "key": "capitania.asa.bombordo.feature",
+      "feature": {
+        "type": "primitive.box",
+        "size": [
+          1,
+          0.12,
+          1.8
+        ]
+      }
+    },
+    {
+      "op": "component.define",
+      "opKey": "capitania.asa.bombordo.component",
+      "key": "capitania.asa.bombordo.component",
+      "feature": "capitania.asa.bombordo.feature",
+      "appearance": "casco.aco"
+    },
+    {
+      "op": "occurrence.define",
+      "opKey": "capitania.asa.bombordo",
+      "key": "capitania.asa.bombordo",
+      "name": "PortWing",
+      "component": "capitania.asa.bombordo.component",
+      "transform": {
+        "translation": [
+          -1,
+          -0.02,
+          0.6
+        ],
+        "rotationRad": [
+          0,
+          -0.42,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "op": "pattern.define",
+      "opKey": "capitania.asa.boreste",
+      "key": "capitania.asa.boreste",
+      "source": "capitania.asa.bombordo",
+      "pattern": {
+        "type": "mirror",
+        "axis": "x",
+        "offset": 0
+      }
+    },
+    {
+      "op": "feature.define",
+      "opKey": "capitania.mastro.feature",
+      "key": "capitania.mastro.feature",
+      "feature": {
+        "type": "primitive.box",
+        "size": [
+          0.09,
+          0.421,
+          0.09
+        ]
+      }
+    },
+    {
+      "op": "component.define",
+      "opKey": "capitania.mastro.component",
+      "key": "capitania.mastro.component",
+      "feature": "capitania.mastro.feature",
+      "appearance": "acabamento.mastro"
+    },
+    {
+      "op": "occurrence.define",
+      "opKey": "capitania.mastro",
+      "key": "capitania.mastro",
+      "name": "FlagMast",
+      "component": "capitania.mastro.component",
+      "transform": {
+        "translation": [
+          0,
+          0.977,
+          -0.4
+        ],
+        "rotationRad": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  ],
+  "budget": {
+    "maxBytes": 15204,
+    "maxNodes": 6,
+    "maxVertices": 336,
+    "maxTriangles": 236,
+    "maxOperations": 19,
+    "maxGeneratedInstances": 6
+  }
+}

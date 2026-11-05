@@ -210,16 +210,22 @@ func _initialize() -> void:
 	# piloto mediu 236: 2,19×, 368 640 triângulos a mais num lado. Em 2026-11-04 o comandante respondeu à
 	# régua com PAPEL, não com tesselação: a muralha continua vestindo a procedural e o casco lavrado
 	# serve onde existe UM corpo só — a capitânia e os planos de perto. Duas asserções sustentam a
-	# resposta e nenhuma apaga a conta. A primeira trava o papel: se alguém pendurar o GLB na esquadra,
-	# quebra. A segunda cobra o teto de corpo solo, lido da outra malha da casa — os triângulos do
-	# tripulante rigged MEDIDOS aqui, não copiados do README.
-	_assert("a muralha continua vestindo a procedural: o casco desenhado não entra na esquadra",
+	# resposta e nenhuma apaga a conta. A primeira trava o papel — e desde 2026-11-04 ela trava os DOIS
+	# cascos lavrados da casa: o piloto (`casco_replica.glb`, sem corpo em cena) e a vitrine da mesa
+	# (`capitania_vitrine.glb`, corpo único em `holo_capitania`). A lei é da muralha, então mora aqui: se
+	# alguém pendurar um deles na esquadra, esta sonda quebra junto com a dona do corpo. A segunda cobra
+	# o teto de corpo solo, lido da outra malha da casa — os triângulos do tripulante rigged MEDIDOS
+	# aqui, não copiados do README.
+	_assert("a muralha continua vestindo a procedural: nenhum casco lavrado entra na esquadra",
 		not _texto("res://esquadra.gd").contains("casco_replica") \
+			and not _texto("res://esquadra.gd").contains("capitania_vitrine") \
 			and not _texto("res://main.gd").contains("casco_replica") \
-			and not _texto("res://main.tscn").contains("casco_replica"),
-		("nenhum dos três arquivos cita `casco_replica` — com %d triângulos por casco contra os %d da "
-			+ "procedural (razão %0.3f, ou %0.0f triângulos a mais nos 2 880 de um lado) o papel dele é "
-			+ "onde existe um corpo só") % [fundido["tri"], int(bilhetes_proc.size() / 3),
+			and not _texto("res://main.tscn").contains("casco_replica") \
+			and not _texto("res://main.tscn").contains("capitania_vitrine"),
+		("esquadra e cena não citam `casco_replica` nem `capitania_vitrine`, e `main.gd` não cita o "
+			+ "piloto — com %d triângulos por casco contra os %d da procedural (razão %0.3f, ou %0.0f "
+			+ "triângulos a mais nos 2 880 de um lado) o papel deles é onde existe um corpo só") % [
+				fundido["tri"], int(bilhetes_proc.size() / 3),
 				float(fundido["tri"]) / float(int(bilhetes_proc.size() / 3)),
 				float(fundido["tri"] - int(bilhetes_proc.size() / 3)) * 2880.0])
 	var teto_corpo := _triangulos_do_tripulante()

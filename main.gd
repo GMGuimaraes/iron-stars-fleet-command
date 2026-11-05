@@ -170,6 +170,18 @@ const HOLO_RIM := 2.85
 const HOLO_ALT_SCALE := 0.09
 const HOLO_ALT_CEIL := 0.8
 
+## ---- Vitrine da capitânia ----
+## O único corpo do jogo desenhado por programa, não por bilhete: `assets/cascos/
+## capitania_vitrine.glb` nasce de `tools/gen3d/local/vitrine/solution.mjs` e é fundido aqui em
+## uma malha só. Ele mora na mesa holográfica exatamente porque a lei de módulos não o alcança —
+## `holo_capitania` não é unidade de frota, não tem ficha e não entra na conta de blip por casco
+## vivo que `tools/probes/graficos.gd` confere. O tabuleiro continua 100% procedural.
+const VITRINE_GLB := "res://assets/cascos/capitania_vitrine.glb"
+## O casco cru mede 3,6471 × 1,6875 × 5,0000 u, lidos do dry-run do próprio programa. A 0,15 ele
+## entra na mesa com 0,547 de boca e 0,750 de comprimento dentro do aro de 2,85: três vezes um blip
+## de linha, que é o tamanho que uma capitânia tem numa mesa de comando.
+const ESCALA_VITRINE := 0.15
+
 ## ---- Cenários: o obstáculo que se usa, não a decoração que se passa por cima ----
 ## Os mapas são escolhas do comandante no painel, e o contrato deles é o mesmo: nenhum
 ## número se move com o campo aberto (o cenário padrão), cada um cobra um preço próprio e esse
@@ -1477,9 +1489,15 @@ func _build_holo_table() -> void:
 	mat_holo_morto = _holo_mat(Color(0.22, 0.24, 0.28))
 	# O blip da capitânia é dourado e mora no rig, não na lista de blips: o rig não é unidade de
 	# frota, e a conta de blip por casco vivo que `tools/probes/graficos.gd` confere tem de
-	# continuar lendo só `fleet` + `enemies`.
-	holo_capitania = _cylinder(holo_root.position + _holo_de(bridge_rig.position), 0.11, 0.0, 0.34,
-		_holo_mat(HUD_OURO.lightened(0.25)), bridge_rig, Vector3.ZERO, 6)
+	# continuar lendo só `fleet` + `enemies`. O corpo dele hoje é o casco lavrado da vitrine, mas o
+	# nó continua UM `MeshInstance3D` com UM `material_override`: `tools/probes/manobra.gd` lê a
+	# posição daqui, `morte.gd` lê a visibilidade no apagão e `recomecar.gd` lê a volta depois do
+	# recomeçar — e nenhuma das três lê malha.
+	holo_capitania = MeshInstance3D.new()
+	holo_capitania.mesh = _malha_da_vitrine()
+	holo_capitania.position = holo_root.position + _holo_de(bridge_rig.position)
+	holo_capitania.material_override = _holo_mat(HUD_OURO.lightened(0.25))
+	bridge_rig.add_child(holo_capitania)
 	# O aro do setor de fogo é geometria de comando, não contato: mora no rig como o blip da
 	# capitânia e é redesenhado a cada salva. A mesa continua lendo um blip por casco vivo.
 	holo_setor = MeshInstance3D.new()
@@ -1490,6 +1508,74 @@ func _build_holo_table() -> void:
 	holo_setor.material_override = _glasm(Color(0.9, 0.6, 0.18, 0.55))
 	bridge_rig.add_child(holo_setor)
 	_desenhar_setor_de_fogo()
+
+## Colheita à mão dos nós de malha do GLB, com a transformada composta até a raiz. É o mesmo caminho
+## de `tools/probes/glb_replica.gd:_colher`, pelo mesmo motivo: lê o que o importador escreveu sem
+## depender da árvore, e por isso a vitrine existe em `--headless` igual a um quadro de janela.
+func _colher_vitrine(node: Node, xf_pai: Transform3D, out: Array) -> void:
+	var local := Transform3D()
+	if node is Node3D:
+		local = (node as Node3D).transform
+	var comp := xf_pai * local
+	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+		out.append({"malha": (node as MeshInstance3D).mesh, "xf": comp})
+	for filho in node.get_children():
+		_colher_vitrine(filho, comp, out)
+
+## Os seis nós do programa (cinco desenhos: a asa boreste é espelho e instancia a malha da bombordo)
+## viram UMA `ArrayMesh` de UMA superfície, com a transformada aplicada em
+## vértice e em normal (pela base, renormalizada) — o mesmo motivo de `esquadra.gd`: um lote, e o
+## degradê de difusa que a Compatibility lê não se perde. A caixa é traduzida para a origem antes de
+## escalar porque `_cylinder` centraliza o corpo em `position`, e a asserção "blip dourado segue a
+## ponte" de `tools/probes/manobra.gd` lê exatamente essa posição: sem o translamento, o casco
+## flutuaria meio corpo acima do blip que a ponte sempre mostrou.
+func _malha_da_vitrine() -> ArrayMesh:
+	var recurso = load(VITRINE_GLB)
+	if not (recurso is PackedScene):
+		push_error("vitrine: %s não importa como PackedScene (%s)" % [VITRINE_GLB, recurso])
+		return null
+	var partes: Array = []
+	var inst = (recurso as PackedScene).instantiate()
+	_colher_vitrine(inst, Transform3D(), partes)
+	# A instância morre aqui de propósito: os valores já saíram colhidos, e deixar Node3D vivo até o
+	# `quit()` é o que faz uma sonda imprimir `RID leaked` e perder a régua de zero linha de erro.
+	inst.free()
+	var vertices := PackedVector3Array()
+	var normais := PackedVector3Array()
+	var minimo := Vector3(1e18, 1e18, 1e18)
+	var maximo := Vector3(-1e18, -1e18, -1e18)
+	for parte in partes:
+		var malha: Mesh = parte["malha"]
+		var xf: Transform3D = parte["xf"]
+		for s in malha.get_surface_count():
+			var a: Array = malha.surface_get_arrays(s)
+			var vv: PackedVector3Array = a[Mesh.ARRAY_VERTEX]
+			var nn: PackedVector3Array = a[Mesh.ARRAY_NORMAL]
+			var bruto = a[Mesh.ARRAY_INDEX]
+			# O slot de índice de uma malha não indexada é `Nil`, e `Nil` num `PackedInt32Array` tipado
+			# aborta a montagem da ponte. A régua é a mesma da sonda: lê-se o slot sem tipo, e a ordem
+			# vira identidade quando ele vier vazio.
+			var ordem: PackedInt32Array = bruto if bruto != null else PackedInt32Array()
+			if ordem.is_empty():
+				ordem = PackedInt32Array()
+				for k in vv.size():
+					ordem.append(k)
+			for k in ordem:
+				var p := xf * vv[k]
+				vertices.append(p)
+				normais.append((xf.basis * nn[k]).normalized())
+				minimo = Vector3(minf(minimo.x, p.x), minf(minimo.y, p.y), minf(minimo.z, p.z))
+				maximo = Vector3(maxf(maximo.x, p.x), maxf(maximo.y, p.y), maxf(maximo.z, p.z))
+	var centro := (minimo + maximo) * 0.5
+	for i in vertices.size():
+		vertices[i] = (vertices[i] - centro) * ESCALA_VITRINE
+	var superficie: Array = []
+	superficie.resize(Mesh.ARRAY_MAX)
+	superficie[Mesh.ARRAY_VERTEX] = vertices
+	superficie[Mesh.ARRAY_NORMAL] = normais
+	var fundida := ArrayMesh.new()
+	fundida.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, superficie)
+	return fundida
 
 ## O disco desenhado na mesa é a densidade de fogo: o raio sai de FOGO_RAIO na escala da tabela e
 ## o centro é o alvo comandado. Sem ele, "concentrar" e "dispersar" seriam números no relatório.
